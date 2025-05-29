@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createFullRoutePathSchema } from './schema';
 import { createClient } from '@supabase/supabase-js';
-import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchIntraRoutes, SupabaseClient } from '../../../lib/route-helpers';
-import { FullRoutePathResult, Path, IntraRoute } from '../../../types/route';
+import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchIntraRoutes, SupabaseClient } from '@/lib/route-helpers';
+import { FullRoutePathResult, Path, IntraRoute } from '@/types/route';
 import Valkey from 'iovalkey';
 
 // Use environment variables for Supabase

@@ -130,6 +130,31 @@ function composeItineraries(
   return results;
 }
 
+// Simple concurrency pool for async tasks
+async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
+  const results: T[] = [];
+  let i = 0;
+  const executing: Promise<void>[] = [];
+  async function run(task: () => Promise<T>) {
+    const result = await task();
+    results.push(result);
+  }
+  while (i < tasks.length) {
+    while (executing.length < limit && i < tasks.length) {
+      const p = run(tasks[i++]).finally(() => {
+        const idx = executing.indexOf(p);
+        if (idx > -1) executing.splice(idx, 1);
+      });
+      executing.push(p);
+    }
+    if (executing.length >= limit) {
+      await Promise.race(executing);
+    }
+  }
+  await Promise.all(executing);
+  return results;
+}
+
 /**
  * POST /api/build-itineraries
  * Orchestrates route finding and availability composition.
@@ -176,8 +201,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 4. For each group, call availability-v2 in parallel
-    const availabilityPromises = Array.from(routeGroups).map(async (routeId) => {
+    // 4. For each group, call availability-v2 in parallel (limit 10 at a time)
+    const availabilityTasks = Array.from(routeGroups).map((routeId) => async () => {
       const params = {
         routeId,
         startDate,
@@ -204,7 +229,7 @@ export async function POST(req: NextRequest) {
         return { routeId, error: true, data: [] };
       }
     });
-    const availabilityResults = await Promise.all(availabilityPromises);
+    const availabilityResults = await pool(availabilityTasks, 10);
 
     // 5. Build a pool of all segment availabilities from all responses
     const segmentPool: Record<string, AvailabilityGroup[]> = {};
