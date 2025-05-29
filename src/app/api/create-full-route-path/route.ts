@@ -8,6 +8,12 @@ import Valkey from 'iovalkey';
 // Use environment variables for Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+console.log('ENV:', {
+  NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  SUPABASE_URL: process.env.SUPABASE_URL,
+  supabaseUrl: process.env.supabaseUrl,
+});
 
 // --- Valkey (iovalkey) setup ---
 let valkey: any = null;
