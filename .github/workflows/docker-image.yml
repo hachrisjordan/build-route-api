@@ -26,8 +26,24 @@ jobs:
             --secret id=valkey_password,env=VALKEY_PASSWORD \
             --tag my-image-name:latest \
             .
+      - name: Check secrets
+        run: |
+          : "${{ secrets.NEXT_PUBLIC_SUPABASE_URL:?Missing NEXT_PUBLIC_SUPABASE_URL }}"
+          : "${{ secrets.SUPABASE_SERVICE_ROLE_KEY:?Missing SUPABASE_SERVICE_ROLE_KEY }}"
+          : "${{ secrets.VALKEY_HOST:?Missing VALKEY_HOST }}"
+          : "${{ secrets.VALKEY_PORT:?Missing VALKEY_PORT }}"
+          : "${{ secrets.VALKEY_PASSWORD:?Missing VALKEY_PASSWORD }}"
       - name: Run Docker container
         run: |
+          echo "docker run \
+            -e NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
+            -e SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
+            -e SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
+            -e supabaseUrl=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
+            -e VALKEY_HOST=${{ secrets.VALKEY_HOST }} \
+            -e VALKEY_PORT=${{ secrets.VALKEY_PORT }} \
+            -e VALKEY_PASSWORD=${{ secrets.VALKEY_PASSWORD }} \
+            -p 3000:3000 my-image-name:latest"
           docker run \
             -e NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
             -e SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
