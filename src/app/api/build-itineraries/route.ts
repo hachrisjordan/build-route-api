@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import type { FullRoutePathResult } from '@/types/route';
 import { createHash } from 'crypto';
+import Valkey from 'iovalkey';
 
 // Input validation schema
 const buildItinerariesSchema = z.object({
@@ -155,6 +156,30 @@ async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]>
   return results;
 }
 
+// --- Valkey (iovalkey) setup ---
+let valkey: any = null;
+function getValkeyClient(): any {
+  if (valkey) return valkey;
+  const host = process.env.VALKEY_HOST;
+  const port = process.env.VALKEY_PORT ? parseInt(process.env.VALKEY_PORT, 10) : 6379;
+  const password = process.env.VALKEY_PASSWORD;
+  if (!host) return null;
+  valkey = new Valkey({ host, port, password });
+  return valkey;
+}
+
+async function saveRouteIdToRedis(routeId: string) {
+  const client = getValkeyClient();
+  if (!client) return;
+  try {
+    await client.sadd('availability_v2_routeids', routeId);
+    await client.expire('availability_v2_routeids', 86400);
+  } catch (err) {
+    // Non-blocking, log only
+    console.error('Valkey saveRouteIdToRedis error:', err);
+  }
+}
+
 /**
  * POST /api/build-itineraries
  * Orchestrates route finding and availability composition.
@@ -193,16 +218,15 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Extract query params (route groups)
-    const routeGroups = new Set<string>();
-    for (const route of routes) {
-      const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
-      if (codes.length > 1) {
-        routeGroups.add(codes.join('-'));
-      }
+    if (!Array.isArray(routePathData.queryParamsArr) || routePathData.queryParamsArr.length === 0) {
+      return NextResponse.json({ error: 'No route groups found in create-full-route-path response' }, { status: 500 });
     }
+    const routeGroups: string[] = routePathData.queryParamsArr;
 
     // 4. For each group, call availability-v2 in parallel (limit 10 at a time)
-    const availabilityTasks = Array.from(routeGroups).map((routeId) => async () => {
+    const availabilityTasks = routeGroups.map((routeId) => async () => {
+      // Save routeId to Redis/Valkey (non-blocking)
+      saveRouteIdToRedis(routeId).catch(() => {});
       const params = {
         routeId,
         startDate,

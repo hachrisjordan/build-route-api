@@ -438,9 +438,9 @@ export async function POST(req: NextRequest) {
     console.log(queryParamsLog);
 
     console.log(`Total API execution time: ${(performance.now() - startTime).toFixed(2)}ms`);
-    return NextResponse.json({ routes: groupedResults });
+    return NextResponse.json({ routes: groupedResults, queryParamsArr });
   } catch (err) {
     console.error(`Error occurred after ${(performance.now() - startTime).toFixed(2)}ms:`, err);
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });
   }
-} 
+}

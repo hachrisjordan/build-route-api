@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import Valkey from 'iovalkey';
 
 // Zod schema for request validation
 const availabilityV2Schema = z.object({
@@ -14,6 +15,31 @@ const SEATS_SEARCH_URL = "https://seats.aero/partnerapi/search?";
 
 if (!SEATS_SEARCH_URL) {
   throw new Error('SEATS_SEARCH_URL environment variable is not set');
+}
+
+// --- Valkey (iovalkey) setup ---
+let valkey: any = null;
+function getValkeyClient(): any {
+  if (valkey) return valkey;
+  const host = process.env.VALKEY_HOST;
+  const port = process.env.VALKEY_PORT ? parseInt(process.env.VALKEY_PORT, 10) : 6379;
+  const password = process.env.VALKEY_PASSWORD;
+  if (!host) return null;
+  valkey = new Valkey({ host, port, password });
+  return valkey;
+}
+
+async function saveSeatsAeroLink(url: string) {
+  const client = getValkeyClient();
+  if (!client) return;
+  try {
+    // Use a Redis set to deduplicate, and set TTL 24h (86400s)
+    await client.sadd('seats_aero_links', url);
+    await client.expire('seats_aero_links', 86400);
+  } catch (err) {
+    // Non-blocking, log only
+    console.error('Valkey saveSeatsAeroLink error:', err);
+  }
 }
 
 /**
@@ -75,8 +101,12 @@ export async function POST(req: NextRequest) {
       if (skip > 0) searchParams.append('skip', skip.toString());
       if (cursor) searchParams.append('cursor', cursor);
 
+      // Save the full seats.aero link to Redis/Valkey (non-blocking)
+      const seatsAeroUrl = `https://seats.aero/partnerapi/search?${searchParams.toString()}`;
+      saveSeatsAeroLink(seatsAeroUrl).catch(() => {});
+
       // Fetch from external API (use /partnerapi/search)
-      const response = await fetch(`https://seats.aero/partnerapi/search?${searchParams.toString()}`, {
+      const response = await fetch(seatsAeroUrl, {
         method: 'GET',
         headers: {
           accept: 'application/json',
