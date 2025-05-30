@@ -9,47 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      DOCKER_BUILDKIT: 1
     steps:
       - uses: actions/checkout@v4
       - name: Build the Docker image
-        run: |
-          echo "docker build --build-arg NEXT_PUBLIC_SUPABASE_URL=*** --build-arg SUPABASE_URL=*** --build-arg supabaseUrl=*** --build-arg VALKEY_HOST=*** --build-arg VALKEY_PORT=*** --secret id=supabase_service_role_key --secret id=valkey_password ."
-          docker build \
-            --build-arg NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
-            --build-arg SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
-            --build-arg supabaseUrl=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
-            --build-arg VALKEY_HOST=${{ secrets.VALKEY_HOST }} \
-            --build-arg VALKEY_PORT=${{ secrets.VALKEY_PORT }} \
-            --secret id=supabase_service_role_key,env=SUPABASE_SERVICE_ROLE_KEY \
-            --secret id=valkey_password,env=VALKEY_PASSWORD \
-            --tag my-image-name:latest \
-            .
-      - name: Check secrets
-        run: |
-          : "${{ secrets.NEXT_PUBLIC_SUPABASE_URL:?Missing NEXT_PUBLIC_SUPABASE_URL }}"
-          : "${{ secrets.SUPABASE_SERVICE_ROLE_KEY:?Missing SUPABASE_SERVICE_ROLE_KEY }}"
-          : "${{ secrets.VALKEY_HOST:?Missing VALKEY_HOST }}"
-          : "${{ secrets.VALKEY_PORT:?Missing VALKEY_PORT }}"
-          : "${{ secrets.VALKEY_PASSWORD:?Missing VALKEY_PASSWORD }}"
+        run: docker build --build-arg NEXT_PUBLIC_SUPABASE_URL='${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}' --build-arg SUPABASE_SERVICE_ROLE_KEY='${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}' --build-arg SUPABASE_URL='${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}' --build-arg supabaseUrl='${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}' --build-arg VALKEY_HOST='${{ secrets.VALKEY_HOST }}' --build-arg VALKEY_PORT='${{ secrets.VALKEY_PORT }}' --build-arg VALKEY_PASSWORD='${{ secrets.VALKEY_PASSWORD }}' --tag my-image-name:latest .
       - name: Run Docker container
-        run: |
-          echo "docker run \
-            -e NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
-            -e SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
-            -e SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
-            -e supabaseUrl=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
-            -e VALKEY_HOST=${{ secrets.VALKEY_HOST }} \
-            -e VALKEY_PORT=${{ secrets.VALKEY_PORT }} \
-            -e VALKEY_PASSWORD=${{ secrets.VALKEY_PASSWORD }} \
-            -p 3000:3000 my-image-name:latest"
-          docker run \
-            -e NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
-            -e SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
-            -e SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
-            -e supabaseUrl=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
-            -e VALKEY_HOST=${{ secrets.VALKEY_HOST }} \
-            -e VALKEY_PORT=${{ secrets.VALKEY_PORT }} \
-            -e VALKEY_PASSWORD=${{ secrets.VALKEY_PASSWORD }} \
-            -p 3000:3000 my-image-name:latest
+        run: docker run -e NEXT_PUBLIC_SUPABASE_URL='${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}' -e SUPABASE_SERVICE_ROLE_KEY='${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}' -e SUPABASE_URL='${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}' -e supabaseUrl='${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}' -e VALKEY_HOST='${{ secrets.VALKEY_HOST }}' -e VALKEY_PORT='${{ secrets.VALKEY_PORT }}' -e VALKEY_PASSWORD='${{ secrets.VALKEY_PASSWORD }}' -p 3000:3000 my-image-name:latest
