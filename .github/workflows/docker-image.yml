@@ -12,4 +12,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build the Docker image
-        run: docker build . --build-arg NEXT_PUBLIC_SUPABASE_URL='${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}' --build-arg SUPABASE_SERVICE_ROLE_KEY='${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}' --build-arg SUPABASE_URL='${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}' --build-arg supabaseUrl='${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}' --build-arg VALKEY_HOST='${{ secrets.VALKEY_HOST }}' --build-arg VALKEY_PORT='${{ secrets.VALKEY_PORT }}' --build-arg VALKEY_PASSWORD='${{ secrets.VALKEY_PASSWORD }}' --tag my-image-name:latest 
+        run: docker build . --build-arg "NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" --build-arg "SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" --build-arg "SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" --build-arg "supabaseUrl=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" --build-arg "VALKEY_HOST=${{ secrets.VALKEY_HOST }}" --build-arg "VALKEY_PORT=${{ secrets.VALKEY_PORT }}" --build-arg "VALKEY_PASSWORD=${{ secrets.VALKEY_PASSWORD }}" --tag my-image-name:latest 
