@@ -16,6 +16,7 @@ COPY package*.json ./
 RUN npm ci
 COPY . .
 RUN npm run build
+RUN printenv
 
 # Stage 2: Run
 FROM node:18-alpine
