@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
         if (route.all3 && !group.all3.includes(route.all3)) group.all3.push(route.all3);
       }
       const groupedResults = Array.from(groupedMap.values());
-      return NextResponse.json({ routes: groupedResults, cached: true });
+      return NextResponse.json({ routes: groupedResults, cached: true, queryParamsArr });
     }
     console.log(`Cache miss for ${origin}-${destination} (took ${(performance.now() - cacheStart).toFixed(2)}ms)`);
 
