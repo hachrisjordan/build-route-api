@@ -14,10 +14,12 @@
         "@supabase/mcp-utils": "^0.2.0",
         "@supabase/ssr": "^0.6.1",
         "@supabase/supabase-js": "^2.49.8",
+        "bufferutil": "^4.0.9",
         "iovalkey": "^0.3.2",
         "next": "^13.4.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
+        "utf-8-validate": "^6.0.5",
         "zod": "^3.22.2"
     },
     "devDependencies": {
