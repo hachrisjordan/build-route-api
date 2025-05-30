@@ -7,12 +7,6 @@ services:
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_BASE_URL=http://localhost:3000
-      - NEXT_PUBLIC_SUPABASE_URL=https://dbaixrvzmfwhhbgyoebt.supabase.co
-      - NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRiYWl4cnZ6bWZ3aGhiZ3lvZWJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgxOTMzOTcsImV4cCI6MjA2Mzc2OTM5N30.C4GNM4tEd2Ovxpb7eq3XFhL6dJj43lpputNk8-w8xGg
-      - SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRiYWl4cnZ6bWZ3aGhiZ3lvZWJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgxOTMzOTcsImV4cCI6MjA2Mzc2OTM5N30.C4GNM4tEd2Ovxpb7eq3XFhL6dJj43lpputNk8-w8xGg
-      - VALKEY_HOST=redis-17783.c124.us-central1-1.gce.redns.redis-cloud.com
-      - VALKEY_PORT=17783
-      - VALKEY_PASSWORD=crxkwQSbQF6hyysCsSEzuKTjuQDYWDZ3
     depends_on:
       - valkey
 
