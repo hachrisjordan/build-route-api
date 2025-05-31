@@ -283,12 +283,19 @@ export async function POST(req: NextRequest) {
         const segKey = `${from}-${to}`;
         return segmentPool[segKey] || [];
       });
-      // Alliance arrays: all1 for first, all2 for middle, all3 for last
+      // Alliance arrays: determine for each segment based on from/to
       const alliances: (string[] | null)[] = [];
-      for (let i = 0; i < segments.length; i++) {
-        if (i === 0) alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
-        else if (i === segments.length - 1) alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
-        else alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
+      for (const [from, to] of segments) {
+        if (route.O && route.A && from === route.O && to === route.A) {
+          // O-A
+          alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
+        } else if (route.B && route.D && from === route.B && to === route.D) {
+          // B-D
+          alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
+        } else {
+          // All others
+          alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
+        }
       }
       // Compose itineraries (now with UUIDs)
       const routeKey = codes.join('-');
