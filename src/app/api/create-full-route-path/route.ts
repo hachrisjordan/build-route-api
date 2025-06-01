@@ -55,13 +55,18 @@ async function setCachedRoute(origin: string, destination: string, data: FullRou
 }
 
 // Helper function to batch fetch intra routes
-async function batchFetchIntraRoutes(supabase: SupabaseClient, pairs: { origin: string; destination: string }[]) {
+async function batchFetchIntraRoutes(
+  supabase: SupabaseClient,
+  pairs: { origin: string; destination: string }[]
+): Promise<Record<string, IntraRoute[]>> {
   const uniquePairs = Array.from(new Set(pairs.map(p => `${p.origin}-${p.destination}`)));
   const allRoutes = await fetchIntraRoutes(supabase, '', '');
-  return uniquePairs.map(pair => {
+  const pairMap: Record<string, IntraRoute[]> = {};
+  for (const pair of uniquePairs) {
     const [origin, destination] = pair.split('-');
-    return allRoutes.find(ir => ir.Origin === origin && ir.Destination === destination);
-  }).filter(Boolean) as IntraRoute[];
+    pairMap[pair] = allRoutes.filter(ir => ir.Origin === origin && ir.Destination === destination);
+  }
+  return pairMap;
 }
 
 // Helper to get total unique airports in a group (from + to)
@@ -246,12 +251,12 @@ export async function POST(req: NextRequest) {
     const case2AStart = performance.now();
     const case2APaths = paths.filter((p) => p.destination === destination && p.origin !== origin);
     if (case2APaths.length > 0) {
-      const intraRoutes = await batchFetchIntraRoutes(supabase, 
+      const intraRoutesMap = await batchFetchIntraRoutes(supabase, 
         case2APaths.map(p => ({ origin, destination: p.origin }))
       );
-      
       for (const p of case2APaths) {
-        const intraMatches = intraRoutes.filter(ir => ir.Origin === origin && ir.Destination === p.origin);
+        const key = `${origin}-${p.origin}`;
+        const intraMatches = intraRoutesMap[key] || [];
         for (const intra of intraMatches) {
           const cumulativeDistance = p.totalDistance + intra.Distance;
           if (cumulativeDistance <= maxDistance) {
@@ -278,12 +283,12 @@ export async function POST(req: NextRequest) {
     const case2BStart = performance.now();
     const case2BPaths = paths.filter((p) => p.origin === origin && p.destination !== destination);
     if (case2BPaths.length > 0) {
-      const intraRoutes = await batchFetchIntraRoutes(supabase,
+      const intraRoutesMap = await batchFetchIntraRoutes(supabase,
         case2BPaths.map(p => ({ origin: p.destination, destination }))
       );
-
       for (const p of case2BPaths) {
-        const intraMatches = intraRoutes.filter(ir => ir.Origin === p.destination && ir.Destination === destination);
+        const key = `${p.destination}-${destination}`;
+        const intraMatches = intraRoutesMap[key] || [];
         for (const intra of intraMatches) {
           const cumulativeDistance = p.totalDistance + intra.Distance;
           if (cumulativeDistance <= maxDistance) {
@@ -316,11 +321,12 @@ export async function POST(req: NextRequest) {
         { origin: p.destination, destination }
       ]);
       
-      const intraRoutes = await batchFetchIntraRoutes(supabase, allPairs);
-
+      const intraRoutesMap = await batchFetchIntraRoutes(supabase, allPairs);
       for (const p of case3Paths) {
-        const intraLeftMatches = intraRoutes.filter(ir => ir.Origin === origin && ir.Destination === p.origin);
-        const intraRightMatches = intraRoutes.filter(ir => ir.Origin === p.destination && ir.Destination === destination);
+        const leftKey = `${origin}-${p.origin}`;
+        const rightKey = `${p.destination}-${destination}`;
+        const intraLeftMatches = intraRoutesMap[leftKey] || [];
+        const intraRightMatches = intraRoutesMap[rightKey] || [];
         for (const intraLeft of intraLeftMatches) {
           for (const intraRight of intraRightMatches) {
             const cumulativeDistance = p.totalDistance + intraLeft.Distance + intraRight.Distance;
