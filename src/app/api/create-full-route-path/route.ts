@@ -1,19 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createFullRoutePathSchema } from './schema';
 import { createClient } from '@supabase/supabase-js';
-import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchIntraRoutes, SupabaseClient } from '../../../lib/route-helpers';
+import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchIntraRoutes, SupabaseClient } from '@/lib/route-helpers';
 import { FullRoutePathResult, Path, IntraRoute } from '@/types/route';
 import Valkey from 'iovalkey';
 
 // Use environment variables for Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-console.log('ENV:', {
-  NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
-  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-  SUPABASE_URL: process.env.SUPABASE_URL,
-  supabaseUrl: process.env.supabaseUrl,
-});
 
 // --- Valkey (iovalkey) setup ---
 let valkey: any = null;
@@ -102,6 +96,13 @@ function mergeGroups(groups: { keys: string[], dests: string[] }[]): { keys: str
   return merged;
 }
 
+// Instead of grouping, explode all combinations of all1, all2, all3 for each route
+// Helper to ensure value is array
+function toArray<T>(v: T | T[] | null | undefined): T[] {
+  if (v == null) return [];
+  return Array.isArray(v) ? v : [v];
+}
+
 export async function POST(req: NextRequest) {
   const startTime = performance.now();
   try {
@@ -176,7 +177,7 @@ export async function POST(req: NextRequest) {
         if (route.all3 && !group.all3.includes(route.all3)) group.all3.push(route.all3);
       }
       const groupedResults = Array.from(groupedMap.values());
-      return NextResponse.json({ routes: groupedResults, cached: true, queryParamsArr });
+      return NextResponse.json({ routes: groupedResults, cached: true });
     }
     console.log(`Cache miss for ${origin}-${destination} (took ${(performance.now() - cacheStart).toFixed(2)}ms)`);
 
@@ -362,38 +363,43 @@ export async function POST(req: NextRequest) {
       console.error('Valkey cache set error (non-blocking):', err);
     });
 
-    // Group by (O, A, h1, h2, B, D) and aggregate all1, all2, all3 as arrays
-    const groupedMap = new Map<string, any>();
+    // For each filtered result, create all combinations of all1, all2, all3
+    const explodedResults: any[] = [];
     for (const route of filteredResults) {
-      const key = [route.O, route.A, route.h1, route.h2, route.B, route.D].join('|');
-      if (!groupedMap.has(key)) {
-        groupedMap.set(key, {
-          O: route.O,
-          A: route.A,
-          h1: route.h1,
-          h2: route.h2,
-          B: route.B,
-          D: route.D,
-          all1: [],
-          all2: [],
-          all3: [],
-          cumulativeDistance: route.cumulativeDistance,
-          caseType: route.caseType,
-        });
+      const all1Arr = toArray(route.all1);
+      const all2Arr = toArray(route.all2);
+      const all3Arr = toArray(route.all3);
+      // If any are empty, use [null] to preserve the slot
+      const all1Vals = all1Arr.length ? all1Arr : [null];
+      const all2Vals = all2Arr.length ? all2Arr : [null];
+      const all3Vals = all3Arr.length ? all3Arr : [null];
+      for (const a1 of all1Vals) {
+        for (const a2 of all2Vals) {
+          for (const a3 of all3Vals) {
+            explodedResults.push({
+              O: route.O,
+              A: route.A,
+              h1: route.h1,
+              h2: route.h2,
+              B: route.B,
+              D: route.D,
+              all1: a1 !== null ? [a1] : [],
+              all2: a2 !== null ? [a2] : [],
+              all3: a3 !== null ? [a3] : [],
+              cumulativeDistance: route.cumulativeDistance,
+              caseType: route.caseType,
+            });
+          }
+        }
       }
-      const group = groupedMap.get(key);
-      if (route.all1 && !group.all1.includes(route.all1)) group.all1.push(route.all1);
-      if (route.all2 && !group.all2.includes(route.all2)) group.all2.push(route.all2);
-      if (route.all3 && !group.all3.includes(route.all3)) group.all3.push(route.all3);
     }
-    const groupedResults = Array.from(groupedMap.values());
 
     // Group segments by departure airport (except those ending at input destination)
     const segmentMap: Record<string, Set<string>> = {};
     // Group segments by destination (for those ending at input destination)
     const destMap: Record<string, Set<string>> = {};
 
-    for (const route of groupedResults) {
+    for (const route of explodedResults) {
       const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
 
       for (let i = 0; i < codes.length - 1; i++) {
@@ -438,9 +444,9 @@ export async function POST(req: NextRequest) {
     console.log(queryParamsLog);
 
     console.log(`Total API execution time: ${(performance.now() - startTime).toFixed(2)}ms`);
-    return NextResponse.json({ routes: groupedResults, queryParamsArr });
+    return NextResponse.json({ routes: explodedResults });
   } catch (err) {
     console.error(`Error occurred after ${(performance.now() - startTime).toFixed(2)}ms:`, err);
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });
   }
-}
+} 
