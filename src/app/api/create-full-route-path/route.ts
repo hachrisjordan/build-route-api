@@ -242,7 +242,7 @@ export async function POST(req: NextRequest) {
           A: origin,
           h1: null,
           h2: null,
-          B: null,
+          B: destination,
           D: null,
           all1: intra.Alliance ?? null,
           all2: null,
