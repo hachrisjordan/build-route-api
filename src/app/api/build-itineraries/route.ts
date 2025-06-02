@@ -299,7 +299,25 @@ export async function POST(req: NextRequest) {
       }
       // Compose itineraries (now with UUIDs)
       const routeKey = codes.join('-');
-      output[routeKey] = composeItineraries(segments, segmentAvail, alliances, flightMap);
+      const itineraries = composeItineraries(segments, segmentAvail, alliances, flightMap);
+      if (!output[routeKey]) output[routeKey] = {};
+      for (const [date, itinerariesForDate] of Object.entries(itineraries)) {
+        if (!output[routeKey][date]) output[routeKey][date] = [];
+        output[routeKey][date].push(...itinerariesForDate);
+      }
+    }
+
+    // Deduplicate itineraries for each date
+    for (const routeKey of Object.keys(output)) {
+      for (const date of Object.keys(output[routeKey])) {
+        const seen = new Set<string>();
+        output[routeKey][date] = output[routeKey][date].filter(itin => {
+          const key = itin.join('>');
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      }
     }
 
     // Remove empty route keys
