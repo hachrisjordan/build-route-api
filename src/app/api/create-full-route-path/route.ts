@@ -182,7 +182,36 @@ export async function POST(req: NextRequest) {
         if (route.all3 && !group.all3.includes(route.all3)) group.all3.push(route.all3);
       }
       const groupedResults = Array.from(groupedMap.values());
-      return NextResponse.json({ routes: groupedResults, cached: true });
+      // Explode all combinations of all1, all2, all3 for each grouped result (to match non-cached response)
+      const explodedResults: any[] = [];
+      for (const route of groupedResults) {
+        const all1Arr = toArray(route.all1);
+        const all2Arr = toArray(route.all2);
+        const all3Arr = toArray(route.all3);
+        const all1Vals = all1Arr.length ? all1Arr : [null];
+        const all2Vals = all2Arr.length ? all2Arr : [null];
+        const all3Vals = all3Arr.length ? all3Arr : [null];
+        for (const a1 of all1Vals) {
+          for (const a2 of all2Vals) {
+            for (const a3 of all3Vals) {
+              explodedResults.push({
+                O: route.O,
+                A: route.A,
+                h1: route.h1,
+                h2: route.h2,
+                B: route.B,
+                D: route.D,
+                all1: a1 !== null ? [a1] : [],
+                all2: a2 !== null ? [a2] : [],
+                all3: a3 !== null ? [a3] : [],
+                cumulativeDistance: route.cumulativeDistance,
+                caseType: route.caseType,
+              });
+            }
+          }
+        }
+      }
+      return NextResponse.json({ routes: explodedResults, cached: true });
     }
     console.log(`Cache miss for ${origin}-${destination} (took ${(performance.now() - cacheStart).toFixed(2)}ms)`);
 
