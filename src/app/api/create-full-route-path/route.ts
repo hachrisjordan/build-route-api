@@ -211,7 +211,7 @@ export async function POST(req: NextRequest) {
           }
         }
       }
-      return NextResponse.json({ routes: explodedResults, cached: true });
+      return NextResponse.json({ routes: explodedResults, queryParamsArr, cached: true });
     }
     console.log(`Cache miss for ${origin}-${destination} (took ${(performance.now() - cacheStart).toFixed(2)}ms)`);
 
@@ -230,6 +230,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Origin or destination airport not found' }, { status: 404 });
     }
     console.log(`Airport info fetch took: ${(performance.now() - airportStart).toFixed(2)}ms`);
+
+    // 3.5. Case 4: Direct intra_route (origin to destination)
+    const case4Start = performance.now();
+    const results: FullRoutePathResult[] = [];
+    const directIntraRoutes = await fetchIntraRoutes(supabase, origin, destination);
+    if (directIntraRoutes.length > 0) {
+      for (const intra of directIntraRoutes) {
+        results.push({
+          O: null,
+          A: origin,
+          h1: null,
+          h2: null,
+          B: null,
+          D: null,
+          all1: intra.Alliance ?? null,
+          all2: null,
+          all3: null,
+          cumulativeDistance: intra.Distance,
+          caseType: 'case4',
+        });
+      }
+    }
+    console.log(`Case 4 processing took: ${(performance.now() - case4Start).toFixed(2)}ms`);
 
     // 4. Calculate direct distance
     const distanceStart = performance.now();
@@ -258,7 +281,6 @@ export async function POST(req: NextRequest) {
     const case1Paths = paths.filter(
       (p) => p.origin === origin && p.destination === destination
     );
-    const results: FullRoutePathResult[] = [];
     for (const p of case1Paths) {
       results.push({
         O: null,

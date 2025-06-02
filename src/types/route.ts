@@ -45,11 +45,11 @@ export interface FullRoutePathResult {
   A: string;
   h1: string | null;
   h2: string | null;
-  B: string;
+  B: string | null;
   D: string | null;
   all1: string | null;
   all2: string | null;
   all3: string | null;
   cumulativeDistance: number;
-  caseType: 'case1' | 'case2A' | 'case2B' | 'case3';
+  caseType: 'case1' | 'case2A' | 'case2B' | 'case3' | 'case4';
 } 
