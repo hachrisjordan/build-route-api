@@ -266,6 +266,7 @@ export async function POST(req: NextRequest) {
               WCount: entry.WCount,
               JCount: entry.JCount,
               FCount: entry.FCount,
+              distance: entry.distance,
             }
           ]
         });
@@ -294,6 +295,7 @@ export async function POST(req: NextRequest) {
           WCount: entry.WCount,
           JCount: entry.JCount,
           FCount: entry.FCount,
+          distance: entry.distance,
         });
       }
     }
