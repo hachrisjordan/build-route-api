@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { FullRoutePathResult } from '@/types/route';
 import { createHash } from 'crypto';
 import Valkey from 'iovalkey';
-import { parseISO, isBefore, isEqual } from 'date-fns';
+import { parseISO, isBefore, isEqual, startOfDay, endOfDay } from 'date-fns';
 
 // Input validation schema
 const buildItinerariesSchema = z.object({
@@ -375,8 +375,35 @@ export async function POST(req: NextRequest) {
       }
     });
 
-    // Filter itineraries: only include those where the first flight departs on or before user input endDate
-    const parsedUserEndDate = endDate.length > 10 ? parseISO(endDate) : new Date(endDate);
+    // Remove flights that are not in any itinerary
+    const usedFlightUUIDs = new Set<string>();
+    for (const routeKey of Object.keys(output)) {
+      for (const date of Object.keys(output[routeKey])) {
+        for (const itin of output[routeKey][date]) {
+          for (const uuid of itin) {
+            usedFlightUUIDs.add(uuid);
+          }
+        }
+      }
+    }
+    for (const uuid of Array.from(flightMap.keys())) {
+      if (!usedFlightUUIDs.has(uuid)) {
+        flightMap.delete(uuid);
+      }
+    }
+
+    // Robust local YMD parsing (ignores time and timezone)
+    function parseLocalYMD(dateString: string) {
+      // Handles 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:mm:ssZ'
+      const [datePart] = dateString.split('T');
+      const [year, month, day] = datePart.split('-').map(Number);
+      return new Date(year, month - 1, day); // JS months are 0-based
+    }
+    function getLocalYMD(date: Date) {
+      return [date.getFullYear(), date.getMonth(), date.getDate()];
+    }
+    const userEndDateLocal = parseLocalYMD(endDate);
+    const userEndYMD = getLocalYMD(userEndDateLocal);
     for (const routeKey of Object.keys(output)) {
       for (const date of Object.keys(output[routeKey])) {
         output[routeKey][date] = output[routeKey][date].filter(itin => {
@@ -384,8 +411,10 @@ export async function POST(req: NextRequest) {
           const firstFlightUUID = itin[0];
           const firstFlight = flightMap.get(firstFlightUUID);
           if (!firstFlight || !firstFlight.DepartsAt) return false;
-          const depDate = new Date(firstFlight.DepartsAt);
-          return isBefore(depDate, parsedUserEndDate) || isEqual(depDate, parsedUserEndDate);
+          const depDateLocal = parseLocalYMD(firstFlight.DepartsAt);
+          const depYMD = getLocalYMD(depDateLocal);
+          const passes = depYMD[0] === userEndYMD[0] && depYMD[1] === userEndYMD[1] && depYMD[2] === userEndYMD[2];
+          return passes;
         });
         // Remove empty date keys
         if (output[routeKey][date].length === 0) {
