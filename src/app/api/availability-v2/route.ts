@@ -75,6 +75,8 @@ export async function POST(req: NextRequest) {
     let processedCount = 0;
     const uniqueItems = new Map<string, boolean>();
     const results: any[] = [];
+    let seatsAeroRequests = 0;
+    let lastResponse: Response | null = null;
 
     // Continue fetching until all data is retrieved
     while (hasMore) {
@@ -113,6 +115,7 @@ export async function POST(req: NextRequest) {
           'Partner-Authorization': apiKey,
         },
       });
+      seatsAeroRequests++;
 
       if (response.status === 429) {
         // Rate limit hit
@@ -173,6 +176,7 @@ export async function POST(req: NextRequest) {
         skip += 1000;
         cursor = data.cursor;
       }
+      lastResponse = response;
     }
     // Merge duplicates based on originAirport, destinationAirport, date, FlightNumbers
     const mergedMap = new Map<string, any>();
@@ -300,7 +304,17 @@ export async function POST(req: NextRequest) {
       }
     }
     const groupedResults = Array.from(groupedMap.values());
-    return NextResponse.json(groupedResults);
+    // Forward rate limit headers from the last fetch response if present
+    let rlRemaining: string | null = null;
+    let rlReset: string | null = null;
+    if (lastResponse && lastResponse.headers) {
+      rlRemaining = lastResponse.headers.get('x-ratelimit-remaining');
+      rlReset = lastResponse.headers.get('x-ratelimit-reset');
+    }
+    const nextRes = NextResponse.json({ groups: groupedResults, seatsAeroRequests });
+    if (rlRemaining) nextRes.headers.set('x-ratelimit-remaining', rlRemaining);
+    if (rlReset) nextRes.headers.set('x-ratelimit-reset', rlReset);
+    return nextRes;
   } catch (error: any) {
     // Log with context, but avoid flooding logs
     console.error('Error in /api/availability-v2:', error);

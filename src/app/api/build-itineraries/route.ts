@@ -228,6 +228,8 @@ export async function POST(req: NextRequest) {
     console.log('[build-itineraries] total seats.aero API links to run:', routeGroups.length);
 
     // 4. For each group, call availability-v2 in parallel (limit 10 at a time)
+    let minRateLimitRemaining: number | null = null;
+    let minRateLimitReset: number | null = null;
     const availabilityTasks = routeGroups.map((routeId) => async () => {
       // Save routeId to Redis/Valkey (non-blocking)
       saveRouteIdToRedis(routeId).catch(() => {});
@@ -247,6 +249,25 @@ export async function POST(req: NextRequest) {
           },
           body: JSON.stringify(params),
         });
+        // Track rate limit headers
+        const rlRemaining = res.headers.get('x-ratelimit-remaining');
+        const rlReset = res.headers.get('x-ratelimit-reset');
+        if (rlRemaining !== null) {
+          const val = parseInt(rlRemaining, 10);
+          if (!isNaN(val)) {
+            if (minRateLimitRemaining === null || val < minRateLimitRemaining) {
+              minRateLimitRemaining = val;
+            }
+          }
+        }
+        if (rlReset !== null) {
+          const val = parseInt(rlReset, 10);
+          if (!isNaN(val)) {
+            if (minRateLimitReset === null || val < minRateLimitReset) {
+              minRateLimitReset = val;
+            }
+          }
+        }
         if (!res.ok) {
           return { routeId, error: true, data: [] };
         }
@@ -260,11 +281,32 @@ export async function POST(req: NextRequest) {
     const availabilityResults = await pool(availabilityTasks, 10);
     const afterAvailabilityTime = Date.now(); // Time after fetching availability-v2
 
+    // Sum up the total number of actual seats.aero HTTP requests (including paginated)
+    let totalSeatsAeroHttpRequests = 0;
+    for (const result of availabilityResults) {
+      if (
+        !result.error &&
+        result.data &&
+        typeof result.data === 'object' &&
+        result.data !== null &&
+        Array.isArray(result.data.groups) &&
+        typeof result.data.seatsAeroRequests === 'number'
+      ) {
+        totalSeatsAeroHttpRequests += result.data.seatsAeroRequests;
+      }
+    }
+
     // 5. Build a pool of all segment availabilities from all responses
     const segmentPool: Record<string, AvailabilityGroup[]> = {};
     for (const result of availabilityResults) {
-      if (!result.error) {
-        for (const group of result.data as AvailabilityGroup[]) {
+      if (
+        !result.error &&
+        result.data &&
+        typeof result.data === 'object' &&
+        result.data !== null &&
+        Array.isArray(result.data.groups)
+      ) {
+        for (const group of result.data.groups) {
           const segKey = `${group.originAirport}-${group.destinationAirport}`;
           if (!segmentPool[segKey]) segmentPool[segKey] = [];
           segmentPool[segKey].push(group);
@@ -337,7 +379,13 @@ export async function POST(req: NextRequest) {
     const totalTimeMs = Date.now() - startTime;
     console.log(`[build-itineraries] itinerary build time (ms):`, itineraryBuildTimeMs);
     console.log(`[build-itineraries] total running time (ms):`, totalTimeMs);
-    return NextResponse.json({ itineraries: output, flights: Object.fromEntries(flightMap) });
+    return NextResponse.json({
+      itineraries: output,
+      flights: Object.fromEntries(flightMap),
+      minRateLimitRemaining,
+      minRateLimitReset,
+      totalSeatsAeroHttpRequests,
+    });
   } catch (err) {
     console.error('Error in /api/build-itineraries:', err);
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });
