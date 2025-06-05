@@ -398,23 +398,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Remove flights that do not appear in any itinerary
-    const usedFlightUUIDs = new Set<string>();
-    for (const routeKey of Object.keys(output)) {
-      for (const date of Object.keys(output[routeKey])) {
-        for (const itin of output[routeKey][date]) {
-          for (const uuid of itin) {
-            usedFlightUUIDs.add(uuid);
-          }
-        }
-      }
-    }
-    for (const uuid of Array.from(flightMap.keys())) {
-      if (!usedFlightUUIDs.has(uuid)) {
-        flightMap.delete(uuid);
-      }
-    }
-
     // Return itineraries and flights map
     const itineraryBuildTimeMs = Date.now() - afterAvailabilityTime;
     const totalTimeMs = Date.now() - startTime;
