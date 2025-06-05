@@ -224,6 +224,9 @@ export async function POST(req: NextRequest) {
     }
     const routeGroups: string[] = routePathData.queryParamsArr;
 
+    // Log the number of seats.aero API links to run
+    console.log('[build-itineraries] total seats.aero API links to run:', routeGroups.length);
+
     // 4. For each group, call availability-v2 in parallel (limit 10 at a time)
     const availabilityTasks = routeGroups.map((routeId) => async () => {
       // Save routeId to Redis/Valkey (non-blocking)

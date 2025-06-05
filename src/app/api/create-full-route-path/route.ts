@@ -3,56 +3,10 @@ import { createFullRoutePathSchema } from './schema';
 import { createClient } from '@supabase/supabase-js';
 import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchIntraRoutes, SupabaseClient } from '@/lib/route-helpers';
 import { FullRoutePathResult, Path, IntraRoute } from '@/types/route';
-import Valkey from 'iovalkey';
 
 // Use environment variables for Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-// --- Valkey (iovalkey) setup ---
-let valkey: any = null;
-function getValkeyClient(): any {
-  if (valkey) return valkey;
-  const host = process.env.VALKEY_HOST;
-  const port = process.env.VALKEY_PORT ? parseInt(process.env.VALKEY_PORT, 10) : 6379;
-  const password = process.env.VALKEY_PASSWORD;
-  if (!host) return null;
-  valkey = new Valkey({ host, port, password });
-  return valkey;
-}
-
-/**
- * Get cached route result from Valkey.
- */
-async function getCachedRoute(origin: string, destination: string): Promise<FullRoutePathResult[] | null> {
-  const client = getValkeyClient();
-  if (!client) return null;
-  try {
-    const key = `route:${origin}:${destination}`;
-    const cached = await client.get(key);
-    if (cached) {
-      return JSON.parse(cached) as FullRoutePathResult[];
-    }
-    return null;
-  } catch (err) {
-    console.error('Valkey cache get error:', err);
-    return null;
-  }
-}
-
-/**
- * Set cached route result in Valkey with TTL (15 min).
- */
-async function setCachedRoute(origin: string, destination: string, data: FullRoutePathResult[]): Promise<void> {
-  const client = getValkeyClient();
-  if (!client) return;
-  try {
-    const key = `route:${origin}:${destination}`;
-    await client.set(key, JSON.stringify(data), 'EX', 900); // 900s = 15min
-  } catch (err) {
-    console.error('Valkey cache set error:', err);
-  }
-}
 
 // Helper function to batch fetch intra routes
 async function batchFetchIntraRoutes(
@@ -125,96 +79,6 @@ async function getFullRoutePath({
   supabase: SupabaseClient;
   useCache?: boolean;
 }): Promise<{ routes: any[]; queryParamsArr: string[]; cached: boolean }> {
-  // 1.5. Try cache first
-  if (useCache) {
-    const cached = await getCachedRoute(`${origin}:${maxStop}`, destination);
-    if (cached) {
-      // ... (same as before, cache hit logic) ...
-      const segmentMap: Record<string, Set<string>> = {};
-      const destMap: Record<string, Set<string>> = {};
-      for (const route of cached) {
-        const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
-        for (let i = 0; i < codes.length - 1; i++) {
-          const from = codes[i];
-          const to = codes[i + 1];
-          if (to === destination) {
-            if (!destMap[to]) destMap[to] = new Set();
-            destMap[to].add(from);
-          } else {
-            if (!segmentMap[from]) segmentMap[from] = new Set();
-            segmentMap[from].add(to);
-          }
-        }
-      }
-      const groups: { keys: string[], dests: string[] }[] = [];
-      Object.entries(segmentMap).forEach(([from, tos]) => {
-        groups.push({ keys: [from], dests: Array.from(tos).sort() });
-      });
-      Object.entries(destMap).forEach(([to, froms]) => {
-        groups.push({ keys: Array.from(froms).sort(), dests: [to] });
-      });
-      const mergedGroups = mergeGroups(groups);
-      const queryParamsArr = mergedGroups
-        .sort((a, b) => b.dests.length - a.dests.length || a.keys.join('/').localeCompare(b.keys.join('/')))
-        .map(g => `${g.keys.join('/')}-${g.dests.join('/')}`);
-      // Group cached results by (O, A, h1, h2, B, D) and aggregate all1, all2, all3 as arrays
-      const groupedMap = new Map<string, any>();
-      for (const route of cached) {
-        const key = [route.O, route.A, route.h1, route.h2, route.B, route.D].join('|');
-        if (!groupedMap.has(key)) {
-          groupedMap.set(key, {
-            O: route.O,
-            A: route.A,
-            h1: route.h1,
-            h2: route.h2,
-            B: route.B,
-            D: route.D,
-            all1: [],
-            all2: [],
-            all3: [],
-            cumulativeDistance: route.cumulativeDistance,
-            caseType: route.caseType,
-          });
-        }
-        const group = groupedMap.get(key);
-        if (route.all1 && !group.all1.includes(route.all1)) group.all1.push(route.all1);
-        if (route.all2 && !group.all2.includes(route.all2)) group.all2.push(route.all2);
-        if (route.all3 && !group.all3.includes(route.all3)) group.all3.push(route.all3);
-      }
-      const groupedResults = Array.from(groupedMap.values());
-      // Explode all combinations of all1, all2, all3 for each grouped result (to match non-cached response)
-      const explodedResults: any[] = [];
-      for (const route of groupedResults) {
-        const all1Arr = toArray(route.all1);
-        const all2Arr = toArray(route.all2);
-        const all3Arr = toArray(route.all3);
-        const all1Vals = all1Arr.length ? all1Arr : [null];
-        const all2Vals = all2Arr.length ? all2Arr : [null];
-        const all3Vals = all3Arr.length ? all3Arr : [null];
-        for (const a1 of all1Vals) {
-          for (const a2 of all2Vals) {
-            for (const a3 of all3Vals) {
-              explodedResults.push({
-                O: route.O,
-                A: route.A,
-                h1: route.h1,
-                h2: route.h2,
-                B: route.B,
-                D: route.D,
-                all1: a1 !== null ? [a1] : [],
-                all2: a2 !== null ? [a2] : [],
-                all3: a3 !== null ? [a3] : [],
-                cumulativeDistance: route.cumulativeDistance,
-                caseType: route.caseType,
-              });
-            }
-          }
-        }
-      }
-      return { routes: explodedResults, queryParamsArr, cached: true };
-    }
-  }
-  // ... (the rest of the original POST logic, but return { routes, queryParamsArr, cached: false } instead of NextResponse.json)
   // 3. Fetch airport info
   const [originAirport, destinationAirport] = await Promise.all([
     fetchAirportByIata(supabase, origin),
@@ -381,10 +245,6 @@ async function getFullRoutePath({
   if (filteredResults.length === 0) {
     throw new Error('No valid route found for the given maxStop');
   }
-  // Store in cache (fire and forget)
-  setCachedRoute(`${origin}:${maxStop}`, destination, filteredResults).catch((err) => {
-    console.error('Valkey cache set error (non-blocking):', err);
-  });
   // For each filtered result, create all combinations of all1, all2, all3
   const explodedResults: any[] = [];
   for (const route of filteredResults) {
