@@ -420,8 +420,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Filter itineraries to only include those whose first flight departs between startDate and endDate (inclusive), using raw UTC date math
-    const startDateObj = new Date(startDate);
-    const endDateObj = new Date(endDate);
+    const startDateObj = startOfDay(parseISO(startDate));
+    const endDateObj = endOfDay(parseISO(endDate));
     for (const routeKey of Object.keys(output)) {
       for (const date of Object.keys(output[routeKey])) {
         output[routeKey][date] = output[routeKey][date].filter(itin => {
