@@ -185,6 +185,7 @@ async function saveRouteIdToRedis(routeId: string) {
  * Orchestrates route finding and availability composition.
  */
 export async function POST(req: NextRequest) {
+  const startTime = Date.now(); // Track start time
   try {
     // 1. Validate input
     const body = await req.json();
@@ -254,6 +255,7 @@ export async function POST(req: NextRequest) {
       }
     });
     const availabilityResults = await pool(availabilityTasks, 10);
+    const afterAvailabilityTime = Date.now(); // Time after fetching availability-v2
 
     // 5. Build a pool of all segment availabilities from all responses
     const segmentPool: Record<string, AvailabilityGroup[]> = {};
@@ -328,6 +330,10 @@ export async function POST(req: NextRequest) {
     });
 
     // Return itineraries and flights map
+    const itineraryBuildTimeMs = Date.now() - afterAvailabilityTime;
+    const totalTimeMs = Date.now() - startTime;
+    console.log(`[build-itineraries] itinerary build time (ms):`, itineraryBuildTimeMs);
+    console.log(`[build-itineraries] total running time (ms):`, totalTimeMs);
     return NextResponse.json({ itineraries: output, flights: Object.fromEntries(flightMap) });
   } catch (err) {
     console.error('Error in /api/build-itineraries:', err);
