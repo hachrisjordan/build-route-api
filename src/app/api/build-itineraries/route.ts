@@ -368,14 +368,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Remove empty route keys
+    // Remove empty route keys after filtering
     Object.keys(output).forEach((key) => {
       if (!output[key] || Object.keys(output[key]).length === 0) {
         delete output[key];
       }
     });
 
-    // Remove flights that are not in any itinerary
+    // Remove flights that are not in any itinerary (after all filtering)
     const usedFlightUUIDs = new Set<string>();
     for (const routeKey of Object.keys(output)) {
       for (const date of Object.keys(output[routeKey])) {
@@ -392,18 +392,36 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Robust local YMD parsing (ignores time and timezone)
-    function parseLocalYMD(dateString: string) {
-      // Handles 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:mm:ssZ'
-      const [datePart] = dateString.split('T');
-      const [year, month, day] = datePart.split('-').map(Number);
-      return new Date(year, month - 1, day); // JS months are 0-based
+    // Debug: Check if any itinerary references KL809 and if flightMap contains KL809
+    let kl809UUIDs: string[] = [];
+    for (const [uuid, flight] of flightMap.entries()) {
+      if (flight.FlightNumbers === 'KL809') {
+        kl809UUIDs.push(uuid);
+      }
     }
-    function getLocalYMD(date: Date) {
-      return [date.getFullYear(), date.getMonth(), date.getDate()];
+    let kl809InItinerary = false;
+    const kl809Itineraries: { routeKey: string; date: string; itinerary: string[] }[] = [];
+    for (const routeKey of Object.keys(output)) {
+      for (const date of Object.keys(output[routeKey])) {
+        for (const itin of output[routeKey][date]) {
+          for (const uuid of itin) {
+            if (kl809UUIDs.includes(uuid)) {
+              kl809InItinerary = true;
+              kl809Itineraries.push({ routeKey, date, itinerary: itin });
+            }
+          }
+        }
+      }
     }
-    const userEndDateLocal = parseLocalYMD(endDate);
-    const userEndYMD = getLocalYMD(userEndDateLocal);
+    console.log('[DEBUG] KL809 UUIDs in flightMap:', kl809UUIDs);
+    console.log('[DEBUG] Is KL809 referenced in any itinerary?', kl809InItinerary);
+    if (kl809Itineraries.length > 0) {
+      console.log('[DEBUG] KL809 Itineraries:', JSON.stringify(kl809Itineraries, null, 2));
+    }
+
+    // Filter itineraries to only include those whose first flight departs between startDate and endDate (inclusive), using raw UTC date math
+    const startDateObj = new Date(startDate);
+    const endDateObj = new Date(endDate);
     for (const routeKey of Object.keys(output)) {
       for (const date of Object.keys(output[routeKey])) {
         output[routeKey][date] = output[routeKey][date].filter(itin => {
@@ -411,10 +429,8 @@ export async function POST(req: NextRequest) {
           const firstFlightUUID = itin[0];
           const firstFlight = flightMap.get(firstFlightUUID);
           if (!firstFlight || !firstFlight.DepartsAt) return false;
-          const depDateLocal = parseLocalYMD(firstFlight.DepartsAt);
-          const depYMD = getLocalYMD(depDateLocal);
-          const passes = depYMD[0] === userEndYMD[0] && depYMD[1] === userEndYMD[1] && depYMD[2] === userEndYMD[2];
-          return passes;
+          const depDate = new Date(firstFlight.DepartsAt);
+          return depDate >= startDateObj && depDate <= endDateObj;
         });
         // Remove empty date keys
         if (output[routeKey][date].length === 0) {
