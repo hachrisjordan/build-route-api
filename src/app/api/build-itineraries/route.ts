@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { FullRoutePathResult } from '@/types/route';
 import { createHash } from 'crypto';
 import Valkey from 'iovalkey';
+import { parseISO, isBefore, isEqual } from 'date-fns';
 
 // Input validation schema
 const buildItinerariesSchema = z.object({
@@ -373,6 +374,46 @@ export async function POST(req: NextRequest) {
         delete output[key];
       }
     });
+
+    // Filter itineraries: only include those where the first flight departs on or before user input endDate
+    const parsedUserEndDate = endDate.length > 10 ? parseISO(endDate) : new Date(endDate);
+    for (const routeKey of Object.keys(output)) {
+      for (const date of Object.keys(output[routeKey])) {
+        output[routeKey][date] = output[routeKey][date].filter(itin => {
+          if (!itin.length) return false;
+          const firstFlightUUID = itin[0];
+          const firstFlight = flightMap.get(firstFlightUUID);
+          if (!firstFlight || !firstFlight.DepartsAt) return false;
+          const depDate = new Date(firstFlight.DepartsAt);
+          return isBefore(depDate, parsedUserEndDate) || isEqual(depDate, parsedUserEndDate);
+        });
+        // Remove empty date keys
+        if (output[routeKey][date].length === 0) {
+          delete output[routeKey][date];
+        }
+      }
+      // Remove empty route keys after filtering
+      if (Object.keys(output[routeKey]).length === 0) {
+        delete output[routeKey];
+      }
+    }
+
+    // Remove flights that do not appear in any itinerary
+    const usedFlightUUIDs = new Set<string>();
+    for (const routeKey of Object.keys(output)) {
+      for (const date of Object.keys(output[routeKey])) {
+        for (const itin of output[routeKey][date]) {
+          for (const uuid of itin) {
+            usedFlightUUIDs.add(uuid);
+          }
+        }
+      }
+    }
+    for (const uuid of Array.from(flightMap.keys())) {
+      if (!usedFlightUUIDs.has(uuid)) {
+        flightMap.delete(uuid);
+      }
+    }
 
     // Return itineraries and flights map
     const itineraryBuildTimeMs = Date.now() - afterAvailabilityTime;

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import Valkey from 'iovalkey';
+import { addDays, parseISO, format } from 'date-fns';
 
 // Zod schema for request validation
 const availabilityV2Schema = z.object({
@@ -62,6 +63,16 @@ export async function POST(req: NextRequest) {
     }
     const { routeId, startDate, endDate, cabin, carriers } = parseResult.data;
 
+    // Compute seatsAeroEndDate as +3 days after user input endDate
+    let seatsAeroEndDate: string;
+    try {
+      // Accept both ISO and YYYY-MM-DD formats
+      const parsedEndDate = endDate.length > 10 ? parseISO(endDate) : new Date(endDate);
+      seatsAeroEndDate = format(addDays(parsedEndDate, 3), 'yyyy-MM-dd');
+    } catch (e) {
+      return NextResponse.json({ error: 'Invalid endDate format' }, { status: 400 });
+    }
+
     // Parse route segments
     const segments = routeId.split('-');
     const originAirports = segments[0].split('/');
@@ -93,7 +104,7 @@ export async function POST(req: NextRequest) {
         origin_airport: allOrigins.join(','),
         destination_airport: allDestinations.join(','),
         start_date: startDate,
-        end_date: endDate,
+        end_date: seatsAeroEndDate,
         take: '1000',
         include_trips: 'true',
         only_direct_flights: 'true',
