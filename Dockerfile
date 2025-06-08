@@ -20,7 +20,7 @@ ARG NEXT_PUBLIC_SUPABASE_URL
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
 
 # Install cron
-RUN apk update && apk add --no-cache cron
+RUN apk update && apk add --no-cache dcron
 
 # Copy your crontab file
 COPY docker/jetblue-crontab /etc/cron.d/jetblue-crontab
