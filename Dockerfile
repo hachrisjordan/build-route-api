@@ -32,4 +32,4 @@ RUN chmod 0644 /etc/cron.d/jetblue-crontab
 RUN crontab /etc/cron.d/jetblue-crontab
 
 # Start cron and your app
-CMD cron && npm run dev
+CMD crond -f && npm run dev
