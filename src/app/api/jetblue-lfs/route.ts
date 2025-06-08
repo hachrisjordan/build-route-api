@@ -4,10 +4,10 @@ import { createClient } from '@supabase/supabase-js';
 import { customAlphabet } from 'nanoid';
 import { parseISO } from 'date-fns';
 import { v4 as uuidv4 } from 'uuid';
+import { SupabaseClient } from '@/lib/route-helpers';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const nanoid = customAlphabet('1234567890abcdef', 32);
 
@@ -105,13 +105,13 @@ function parseItinerary(itin: any) {
   };
 }
 
-async function upsertSegments(segments: any[]) {
+async function upsertSegments(segments: any[], supabase: SupabaseClient) {
   for (const seg of segments) {
     await supabase.from('segments').upsert(seg, { onConflict: 'id' });
   }
 }
 
-async function upsertItinerary(itin: any) {
+async function upsertItinerary(itin: any, supabase: SupabaseClient) {
   const { segments, ...itinDb } = itin;
   await supabase.from('itinerary').upsert({
     ...itinDb,
@@ -124,6 +124,8 @@ export async function POST(req: NextRequest) {
   if (req.method !== 'POST') {
     return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
   }
+  // Create Supabase client at runtime
+  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   try {
     const body = await req.json();
     const parsed = JetBlueSchema.safeParse(body);
@@ -172,7 +174,7 @@ export async function POST(req: NextRequest) {
     const itineraries = (data.itinerary || []).map(parseItinerary);
     let totalSegments = 0;
     for (const itin of itineraries) {
-      await upsertSegments(itin.segments);
+      await upsertSegments(itin.segments, supabase);
       // Build upsert payload with only valid columns and correct types, no undefined, no extra fields
       const { segments, price, ...itinDb } = itin;
       const priceObj = Array.isArray(price) && price.length > 0 ? price[0] : {};
@@ -198,25 +200,15 @@ export async function POST(req: NextRequest) {
           message: upsertResult.error.message,
           from_airport: upsertPayload.from_airport,
           to_airport: upsertPayload.to_airport,
-          id: upsertPayload.id
+          depart: upsertPayload.depart,
         });
       } else {
-        console.log('[Itinerary Upsert] Success:', {
-          status: upsertResult.status,
-          from_airport: upsertPayload.from_airport,
-          to_airport: upsertPayload.to_airport,
-          id: upsertPayload.id
-        });
+        totalSegments += Array.isArray(segments) ? segments.length : 0;
       }
-      totalSegments += itin.segments.length;
     }
-    return NextResponse.json({
-      upsertedItineraries: itineraries.length,
-      upsertedSegments: totalSegments,
-      itineraries,
-      dategroup: data.dategroup || undefined,
-    });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ itineraries, totalSegments });
+  } catch (err) {
+    console.error('Error in JetBlue LFS POST:', err);
+    return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });
   }
 } 
