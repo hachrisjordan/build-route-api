@@ -4,7 +4,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 
 const FROM_AIRPORTS = ['IAD','ORD','JFK','ATL','BOS','YYZ'];
 const TO_AIRPORTS = [
-  'BKK','BAH','PEK','CAI','AHD','BLR','MAA','DEL','HYD','JAI','COK','CCU','CCJ','TRV','BOM','DPS','CGK','AMM','KWI','BEY','KUL','MLE','CMH','MCT','ISB','KHI','LHE','MNL','DOH','JED','DMM','SEZ','CMB','HKT','IST','RUH'
+  'BKK','BAH','PEK','CAI','AMD','BLR','MAA','DEL','HYD','JAI','COK','CCU','CCJ','TRV','BOM','DPS','CGK','AMM','KWI','BEY','KUL','MLE','CMH','MCT','ISB','KHI','LHE','MNL','DOH','JED','DMM','SEZ','CMB','HKT','IST','RUH'
 ];
 const API_URL = process.env.BATCH_API_URL || 'http://localhost:3000/api/jetblue-lfs-batch';
 const DAYS = 16;
