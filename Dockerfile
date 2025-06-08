@@ -3,6 +3,7 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 COPY package*.json ./
+RUN apk add --no-cache python3 make g++
 RUN npm ci
 COPY . .
 RUN npm run build
@@ -32,4 +33,6 @@ RUN chmod 0644 /etc/cron.d/jetblue-crontab
 RUN crontab /etc/cron.d/jetblue-crontab
 
 # Start cron and your app
-CMD crond -f && npm run dev
+CMD sh -c "crond -f & npm start"
+
+RUN touch /var/log/cron.log
