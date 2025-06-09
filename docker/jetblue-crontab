@@ -1,3 +1,5 @@
-0 2 * * * cd /app && npx ts-node scripts/jetblue-batch-cron.ts >> /app/batch.log 2>&1
-0 14 * * * cd /app && npx ts-node scripts/jetblue-batch-cron.ts --reverse >> /app/batch.log 2>&1
-* * * * * /app/scripts/my-script.sh >> /var/log/cron.log 2>&1
+# Run batch cron at 2:00 AM daily
+0 2 * * * root cd /app && npx ts-node scripts/jetblue-batch-cron.ts >> /app/batch.log 2>&1
+
+# Run batch cron in reverse at 2:00 PM daily
+0 14 * * * root cd /app && npx ts-node scripts/jetblue-batch-cron.ts --reverse >> /app/batch.log 2>&1
