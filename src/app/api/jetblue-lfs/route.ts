@@ -133,6 +133,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid input', details: parsed.error.errors }, { status: 400 });
     }
     const { from, to, depart } = parsed.data;
+    const departDate = depart.slice(0, 10); // 'YYYY-MM-DD'
+    await supabase
+      .from('itinerary')
+      .delete()
+      .eq('from_airport', from)
+      .eq('to_airport', to)
+      .gte('depart', `${departDate} 00:00:00`)
+      .lt('depart', `${departDate} 23:59:59.999`);
+    // Now fetch from JetBlue API
     const payload = {
       tripType: 'oneWay',
       from,
@@ -154,24 +163,26 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify(payload),
     });
     if (!resp.ok) {
-      // If JetBlue API error is 502, delete any existing itinerary rows for this from/to/depart
-      if (resp.status === 502) {
-        const { data: deletedRows, error: deleteError } = await supabase
-          .from('itinerary')
-          .delete()
-          .eq('from_airport', from)
-          .eq('to_airport', to)
-          .eq('depart', depart);
-        if (deleteError) {
-          console.error(`[Itinerary Delete] Failed to delete itinerary for ${from} -> ${to} on ${depart}:`, deleteError);
-        } else {
-          console.log(`[Itinerary Delete] Deleted itinerary rows for ${from} -> ${to} on ${depart}`);
-        }
-      }
-      return NextResponse.json({ error: 'JetBlue API error', status: resp.status }, { status: 502 });
+      return NextResponse.json({ error: 'JetBlue API error', status: resp.status }, { status: resp.status });
     }
     const data = await resp.json();
     const itineraries = (data.itinerary || []).map(parseItinerary);
+    // Build dategroup from the raw JetBlue API data
+    let dategroup = [];
+    if (Array.isArray(data.dategroup)) {
+      dategroup = data.dategroup;
+    } else if (Array.isArray(data.group)) {
+      // Some JetBlue responses may have group at the top level
+      dategroup = [{ from, to, group: data.group }];
+    } else if (Array.isArray(data.itinerary)) {
+      // Fallback: build dategroup from itineraries if group is not present
+      const group = data.itinerary.map((itin: any) => ({
+        date: itin.depart,
+        points: Array.isArray(itin.bundles) && itin.bundles[0]?.points ? itin.bundles[0].points : 'N/A',
+        fareTax: Array.isArray(itin.bundles) && itin.bundles[0]?.fareTax ? itin.bundles[0].fareTax : 'N/A',
+      }));
+      dategroup = [{ from, to, group }];
+    }
     let totalSegments = 0;
     for (const itin of itineraries) {
       await upsertSegments(itin.segments, supabase);
@@ -192,6 +203,7 @@ export async function POST(req: NextRequest) {
         fare_tax: priceObj.fareTax !== undefined ? String(priceObj.fareTax) : null,
         cabin_class: priceObj.cabinclass !== undefined ? String(priceObj.cabinclass) : null,
         inventory_quantity: priceObj.inventoryQuantity !== undefined ? String(priceObj.inventoryQuantity) : null,
+        last_updated: new Date().toISOString(),
       };
       const upsertResult = await supabase.from('itinerary').upsert(upsertPayload, { onConflict: 'id' });
       if (upsertResult.error) {
@@ -206,7 +218,7 @@ export async function POST(req: NextRequest) {
         totalSegments += Array.isArray(segments) ? segments.length : 0;
       }
     }
-    return NextResponse.json({ itineraries, totalSegments });
+    return NextResponse.json({ itineraries, totalSegments, dategroup });
   } catch (err) {
     console.error('Error in JetBlue LFS POST:', err);
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });

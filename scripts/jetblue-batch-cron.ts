@@ -1,8 +1,8 @@
-import fetch from 'node-fetch';
-import { format } from 'date-fns';
-import { HttpsProxyAgent } from 'https-proxy-agent';
+const nodeFetch = (url: string, options?: any) => import('node-fetch').then(mod => mod.default(url, options));
+const { format } = require('date-fns');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 
-const FROM_AIRPORTS = ['IAD','ORD','JFK','ATL','BOS','YYZ'];
+const FROM_AIRPORTS = ['ORD','JFK','BOS','YYZ','ATL','IAD'];
 const TO_AIRPORTS = [
   'BKK','BAH','PEK','CAI','AMD','BLR','MAA','DEL','HYD','JAI','COK','CCU','CCJ','TRV','BOM','DPS','CGK','AMM','KWI','BEY','KUL','MLE','CMH','MCT','ISB','KHI','LHE','MNL','DOH','JED','DMM','SEZ','CMB','HKT','IST','RUH'
 ];
@@ -34,7 +34,7 @@ async function runBatch(from: string, to: string) {
     if (USE_PROXY) {
       fetchOptions.agent = proxyAgent;
     }
-    const res = await fetch(API_URL, fetchOptions);
+    const res = await nodeFetch(API_URL, fetchOptions);
     let data: any = null;
     const text = await res.text();
     try {
