@@ -1,0 +1,119 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+
+const JETBLUE_LFS_URL = 'https://jbrest.jetblue.com/lfs-rwb/outboundLFS';
+const JETBLUE_HEADERS = {
+  'accept': 'application/json, text/plain, */*',
+  'content-type': 'application/json',
+  'API-Version': 'v3',
+  'Application-Channel': 'Desktop_Web',
+  'Booking-Application-Type': 'NGB',
+  'sec-ch-ua-platform': '"Windows"',
+  'sec-ch-ua': '"Google Chrome";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
+  'sec-ch-ua-mobile': '?0',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
+  'Referer': 'https://www.jetblue.com/booking/flights',
+};
+
+const LiveSearchSchema = z.object({
+  from: z.string().min(3),
+  to: z.string().min(3),
+  depart: z.string().min(8),
+  ADT: z.number().int().min(1).max(9),
+});
+
+const bundleClassMap: Record<string, string> = {
+  'PREM._ECONOMY_REDEMPTION': 'W',
+  'ECONOMY_REDEMPTION': 'Y',
+  'BUSINESS_REDEMPTION': 'J',
+  'FIRST_REDEMPTION': 'F',
+};
+
+function removeTimezone(dt: string | null | undefined): string | null {
+  if (!dt) return null;
+  // Remove timezone info (e.g., "+07:00" or "-05:00")
+  return dt.replace(/([\+\-][0-9]{2}:?[0-9]{2}|Z)$/g, '');
+}
+
+function isoDurationToMinutes(duration: string | null | undefined): number | null {
+  if (!duration) return null;
+  const match = duration.match(/^P(?:([0-9]+)D)?T?(?:(\d+)H)?(?:(\d+)M)?$/);
+  if (!match) return null;
+  const days = match[1] ? parseInt(match[1], 10) : 0;
+  const hours = match[2] ? parseInt(match[2], 10) : 0;
+  const minutes = match[3] ? parseInt(match[3], 10) : 0;
+  return days * 24 * 60 + hours * 60 + minutes;
+}
+
+function normalizeItinerary(itin: any) {
+  return {
+    from: itin.from,
+    to: itin.to,
+    connections: itin.connections || [],
+    depart: removeTimezone(itin.depart),
+    arrive: removeTimezone(itin.arrive),
+    duration: isoDurationToMinutes(itin.duration),
+    bundles: (itin.bundles || []).map((b: any) => ({
+      class: bundleClassMap[b.code] || b.code,
+      points: b.points,
+      fareTax: b.fareTax,
+    })),
+    segments: (itin.segments || []).map((s: any) => ({
+      from: s.from,
+      to: s.to,
+      aircraft: s.aircraft,
+      stops: s.stops,
+      depart: removeTimezone(s.depart),
+      arrive: removeTimezone(s.arrive),
+      flightnumber: (s.flightno || '').replace(/\s+/g, ''),
+      duration: isoDurationToMinutes(s.duration),
+      layover: s.layover ? isoDurationToMinutes(s.layover) : undefined,
+      distance: s.distance,
+    })),
+  };
+}
+
+export async function POST(req: NextRequest) {
+  if (req.method !== 'POST') {
+    return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
+  }
+  try {
+    const body = await req.json();
+    const parsed = LiveSearchSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Invalid input', details: parsed.error.errors }, { status: 400 });
+    }
+    const { from, to, depart, ADT } = parsed.data;
+    const payload = {
+      tripType: 'oneWay',
+      from,
+      to,
+      depart,
+      cabin: 'economy',
+      refundable: false,
+      dates: { before: '3', after: '3' },
+      pax: { ADT, CHD: 0, INF: 0, UNN: 0 },
+      redempoint: true,
+      pointsBreakup: { option: '', value: 0 },
+      isMultiCity: false,
+      isDomestic: false,
+      'outbound-source': 'fare-setSearchParameters',
+    };
+    const resp = await fetch(JETBLUE_LFS_URL, {
+      method: 'POST',
+      headers: JETBLUE_HEADERS,
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      return NextResponse.json({ error: 'JetBlue API error', status: resp.status }, { status: resp.status });
+    }
+    const data = await resp.json();
+    const itineraries = Array.isArray(data.itinerary)
+      ? data.itinerary.map(normalizeItinerary)
+      : [];
+    return NextResponse.json({ itinerary: itineraries });
+  } catch (err) {
+    console.error('Error in live-search-B6 POST:', err);
+    return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });
+  }
+} 
