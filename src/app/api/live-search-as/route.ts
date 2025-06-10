@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import JSON5 from 'json5';
+import { getHtmlWithPlaywright } from '@/lib/playwright-html';
 
 const ALASKA_SEARCH_URL = 'https://www.alaskaair.com/search/results';
 
@@ -236,29 +237,8 @@ export async function POST(req: NextRequest) {
       ShoppingMethod: 'onlineaward',
     });
     const url = `${ALASKA_SEARCH_URL}?${params.toString()}`;
-    // Wait for the full HTML response
-    const resp = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        'Referer': 'https://www.alaskaair.com/',
-        'Origin': 'https://www.alaskaair.com',
-        'Sec-Fetch-Site': 'same-origin',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-User': '?1',
-        'Connection': 'keep-alive',
-        'Pragma': 'no-cache',
-        'Cache-Control': 'no-cache',
-      },
-    });
-    if (!resp.ok) {
-      return NextResponse.json({ error: 'Alaska Airlines site error', status: resp.status }, { status: resp.status });
-    }
-    const html = await resp.text();
+    // Use Playwright to fetch the full HTML response, bypassing JS challenges
+    const html = await getHtmlWithPlaywright(url);
     // Extract and normalize JSON
     const { json, debug } = extractJsonFromHtml(html);
     if (!json) {
