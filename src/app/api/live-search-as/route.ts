@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import JSON5 from 'json5';
+import { fetchWithPuppeteer } from '@/lib/browser-fetch';
 
 const ALASKA_SEARCH_URL = 'https://www.alaskaair.com/search/results';
 
@@ -236,12 +237,13 @@ export async function POST(req: NextRequest) {
       ShoppingMethod: 'onlineaward',
     });
     const url = `${ALASKA_SEARCH_URL}?${params.toString()}`;
-    // Wait for the full HTML response
-    const resp = await fetch(url, { method: 'GET' });
-    if (!resp.ok) {
-      return NextResponse.json({ error: 'Alaska Airlines site error', status: resp.status }, { status: resp.status });
+    // Use Puppeteer to fetch the HTML response robustly
+    let html: string;
+    try {
+      html = await fetchWithPuppeteer(url, { method: 'GET' }) as string;
+    } catch (err) {
+      return NextResponse.json({ error: 'Failed to fetch with Puppeteer', details: (err as Error).message }, { status: 500 });
     }
-    const html = await resp.text();
     // Extract and normalize JSON
     const { json, debug } = extractJsonFromHtml(html);
     if (!json) {
