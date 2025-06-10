@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { fetchWithPuppeteer } from '@/lib/browser-fetch';
 
 const AA_SEARCH_URL = 'https://www.aa.com/booking/api/search/itinerary';
 
@@ -195,18 +194,18 @@ export async function POST(req: NextRequest) {
         sort: 'CARRIER',
       },
     };
-    // Use Puppeteer to fetch the JSON response robustly
-    let data: any;
-    try {
-      data = await fetchWithPuppeteer(AA_SEARCH_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify(aaBody),
-        isJson: true,
-      });
-    } catch (err) {
-      return NextResponse.json({ error: 'Failed to fetch with Puppeteer', details: (err as Error).message }, { status: 500 });
+    const resp = await fetch(AA_SEARCH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(aaBody),
+    });
+    if (!resp.ok) {
+      return NextResponse.json({ error: 'AA API error', status: resp.status }, { status: resp.status });
     }
+    const data = await resp.json();
     // Normalize the response
     const normalized = normalizeAAResponse(data);
     return NextResponse.json(normalized);
