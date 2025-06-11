@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import crypto from 'crypto';
 
 const JETBLUE_LFS_URL = 'https://jbrest.jetblue.com/lfs-rwb/outboundLFS';
 const JETBLUE_HEADERS = {
@@ -99,9 +100,20 @@ export async function POST(req: NextRequest) {
       isDomestic: false,
       'outbound-source': 'fare-setSearchParameters',
     };
+
+    // Generate random trace/span IDs
+    const traceId = crypto.randomBytes(8).toString('hex');
+    const spanId = Date.now().toString();
+
+    const headers = {
+      ...JETBLUE_HEADERS,
+      'X-B3-TraceId': traceId,
+      'X-B3-SpanId': spanId,
+    };
+
     const resp = await fetch(JETBLUE_LFS_URL, {
       method: 'POST',
-      headers: JETBLUE_HEADERS,
+      headers,
       body: JSON.stringify(payload),
     });
     if (!resp.ok) {
