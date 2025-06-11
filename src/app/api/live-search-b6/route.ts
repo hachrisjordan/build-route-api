@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import crypto from 'crypto';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 const JETBLUE_LFS_URL = 'https://jbrest.jetblue.com/lfs-rwb/outboundLFS';
 const JETBLUE_HEADERS = {
@@ -74,6 +75,15 @@ function normalizeItinerary(itin: any) {
   };
 }
 
+// Proxy configuration
+const USE_PROXY = true;
+const proxy_host = "geo.iproyal.com";
+const proxy_port = 12321;
+const proxy_username = "kPMj8aoitK1MVa3e";
+const proxy_password = "pookydooki_country-us";
+const PROXY_URL = `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`;
+const proxyAgent = new HttpsProxyAgent(PROXY_URL);
+
 export async function POST(req: NextRequest) {
   if (req.method !== 'POST') {
     return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
@@ -111,11 +121,16 @@ export async function POST(req: NextRequest) {
       'X-B3-SpanId': spanId,
     };
 
-    const resp = await fetch(JETBLUE_LFS_URL, {
+    const fetchOptions: any = {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
-    });
+    };
+    if (USE_PROXY) {
+      fetchOptions.agent = proxyAgent;
+    }
+
+    const resp = await fetch(JETBLUE_LFS_URL, fetchOptions);
     if (!resp.ok) {
       return NextResponse.json({ error: 'JetBlue API error', status: resp.status }, { status: resp.status });
     }
