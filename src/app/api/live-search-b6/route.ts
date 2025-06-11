@@ -117,6 +117,7 @@ export async function POST(req: NextRequest) {
 
     const headers = {
       ...JETBLUE_HEADERS,
+      'Referer': `https://www.jetblue.com/booking/flights?from=${from}&to=${to}&depart=${depart}&isMultiCity=false&noOfRoute=1&adults=${ADT}&children=0&infants=0&sharedMarket=false&roundTripFaresFlag=false&usePoints=true`,
       'X-B3-TraceId': traceId,
       'X-B3-SpanId': spanId,
     };
