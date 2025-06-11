@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:20.18.0 AS builder
+FROM node:20.18.0-alpine
 
 WORKDIR /app
 COPY package*.json ./
@@ -9,7 +9,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Run
-FROM node:20.18.0
+FROM node:20.18.0-alpine
 
 WORKDIR /app
 COPY --from=builder /app ./
