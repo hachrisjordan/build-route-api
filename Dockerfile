@@ -1,4 +1,3 @@
-# Stage 1: Build
 FROM node:20.18.0-alpine
 
 WORKDIR /app
@@ -7,14 +6,9 @@ RUN apk add --no-cache python3 make g++
 RUN npm ci
 COPY . .
 RUN npm run build
-
-# Stage 2: Run
-FROM node:20.18.0-alpine
-
-WORKDIR /app
-COPY --from=builder /app ./
 ENV NODE_ENV=production
 EXPOSE 3000
+CMD ["npm", "run", "start"]
 
 # Install cron
 RUN apk update && apk add --no-cache dcron
