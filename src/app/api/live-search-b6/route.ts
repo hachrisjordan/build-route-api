@@ -3,15 +3,6 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 
-// Proxy configuration
-const USE_PROXY = true;
-const proxy_host = "geo.iproyal.com";
-const proxy_port = 12321;
-const proxy_username = "kPMj8aoitK1MVa3e";
-const proxy_password = "pookydooki_country-us";
-const PROXY_URL = `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`;
-const proxyAgent = new HttpsProxyAgent(PROXY_URL);
-
 const JETBLUE_LFS_URL = 'https://jbrest.jetblue.com/lfs-rwb/outboundLFS';
 const JETBLUE_HEADERS = {
   'accept': 'application/json, text/plain, */*',
@@ -84,6 +75,15 @@ function normalizeItinerary(itin: any) {
   };
 }
 
+// Proxy configuration
+const USE_PROXY = true;
+const proxy_host = "geo.iproyal.com";
+const proxy_port = 12321;
+const proxy_username = "kPMj8aoitK1MVa3e";
+const proxy_password = "pookydooki_country-us";
+const PROXY_URL = `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`;
+const proxyAgent = new HttpsProxyAgent(PROXY_URL);
+
 export async function POST(req: NextRequest) {
   if (req.method !== 'POST') {
     return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
@@ -121,18 +121,18 @@ export async function POST(req: NextRequest) {
       'X-B3-SpanId': spanId,
     };
 
-    // Use node-fetch for JetBlue API call
-    const fetch = (await import('node-fetch')).default;
-    const fetchOptions = {
+    const fetchOptions: any = {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
-      agent: USE_PROXY ? proxyAgent : undefined,
     };
+    if (USE_PROXY) {
+      fetchOptions.agent = proxyAgent;
+    }
+
     const resp = await fetch(JETBLUE_LFS_URL, fetchOptions);
     if (!resp.ok) {
-      const errorText = await resp.text();
-      return NextResponse.json({ error: 'JetBlue API error', status: resp.status, body: errorText }, { status: resp.status });
+      return NextResponse.json({ error: 'JetBlue API error', status: resp.status }, { status: resp.status });
     }
     const data = await resp.json();
     const itineraries = Array.isArray(data.itinerary)
