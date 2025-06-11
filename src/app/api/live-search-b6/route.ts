@@ -132,7 +132,9 @@ export async function POST(req: NextRequest) {
 
     const resp = await fetch(JETBLUE_LFS_URL, fetchOptions);
     if (!resp.ok) {
-      return NextResponse.json({ error: 'JetBlue API error', status: resp.status }, { status: resp.status });
+      const errorText = await resp.text();
+      console.error('JetBlue API error:', resp.status, errorText);
+      return NextResponse.json({ error: 'JetBlue API error', status: resp.status, body: errorText }, { status: resp.status });
     }
     const data = await resp.json();
     const itineraries = Array.isArray(data.itinerary)
