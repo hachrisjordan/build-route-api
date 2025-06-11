@@ -131,13 +131,18 @@ export async function POST(req: NextRequest) {
       fetchOptions.agent = proxyAgent;
     }
 
-    const resp = await fetch(JETBLUE_LFS_URL, fetchOptions);
-    if (!resp.ok) {
-      const errorText = await resp.text();
-      console.error('JetBlue API error:', resp.status, errorText);
-      return NextResponse.json({ error: 'JetBlue API error', status: resp.status, body: errorText }, { status: resp.status });
+    const microserviceUrl = 'http://localhost:4000/jetblue';
+    const microResp = await fetch(microserviceUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to, depart, ADT }),
+    });
+    if (!microResp.ok) {
+      const errorText = await microResp.text();
+      console.error('JetBlue microservice error:', microResp.status, errorText);
+      return NextResponse.json({ error: 'JetBlue microservice error', status: microResp.status, body: errorText }, { status: microResp.status });
     }
-    const data = await resp.json();
+    const data = await microResp.json();
     const itineraries = Array.isArray(data.itinerary)
       ? data.itinerary.map(normalizeItinerary)
       : [];
