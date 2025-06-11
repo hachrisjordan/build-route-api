@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import JSON5 from 'json5';
-import { getHtmlWithPlaywright } from '@/lib/playwright-html';
 
 const ALASKA_SEARCH_URL = 'https://www.alaskaair.com/search/results';
 
@@ -225,20 +224,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid input', details: parsed.error.errors }, { status: 400 });
     }
     const { from, to, depart, ADT } = parsed.data;
-    // Map to Alaska Airlines query params
-    const params = new URLSearchParams({
-      O: from,
-      D: to,
-      OD: depart,
-      A: String(ADT),
-      C: '0', // Children
-      L: '0', // Lap infants
-      RT: 'false',
-      ShoppingMethod: 'onlineaward',
+    // Call Alaska microservice
+    const microserviceUrl = 'http://localhost:4001/alaska';
+    const microResp = await fetch(microserviceUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to, depart, ADT }),
     });
-    const url = `${ALASKA_SEARCH_URL}?${params.toString()}`;
-    // Use Playwright to fetch the full HTML response, bypassing JS challenges
-    const html = await getHtmlWithPlaywright(url);
+    if (!microResp.ok) {
+      const errorText = await microResp.text();
+      return NextResponse.json({ error: 'Alaska microservice error', status: microResp.status, body: errorText }, { status: microResp.status });
+    }
+    const { html } = await microResp.json();
     // Extract and normalize JSON
     const { json, debug } = extractJsonFromHtml(html);
     if (!json) {

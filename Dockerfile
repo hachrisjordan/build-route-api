@@ -8,7 +8,6 @@ COPY . .
 RUN npm run build
 ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["npm", "run", "start"]
 
 # Install cron
 RUN apk update && apk add --no-cache dcron
@@ -26,7 +25,7 @@ RUN crontab /etc/cron.d/jetblue-crontab
 RUN touch /app/batch.log /var/log/cron.log
 
 # (Optional) Make sure any shell scripts are executable
-# RUN chmod +x /app/scripts/*.sh || true
+RUN chmod +x /app/scripts/start-all.sh
 
-# Start cron and your app
-CMD sh -c "crond -f & npm start"
+# Start cron and all services
+CMD sh -c "crond -f & /app/scripts/start-all.sh"

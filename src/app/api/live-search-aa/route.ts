@@ -153,71 +153,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid input', details: parsed.error.errors }, { status: 400 });
     }
     const { from, to, depart, ADT } = parsed.data;
-    const aaBody = {
-      metadata: {
-        selectedProducts: [],
-        tripType: 'OneWay',
-        udo: {},
-      },
-      passengers: [
-        { type: 'adult', count: ADT }
-      ],
-      requestHeader: {
-        clientId: 'AAcom',
-      },
-      slices: [
-        {
-          allCarriers: true,
-          cabin: '',
-          departureDate: depart,
-          destination: to,
-          destinationNearbyAirports: false,
-          maxStops: null,
-          origin: from,
-          originNearbyAirports: false,
-        }
-      ],
-      tripOptions: {
-        corporateBooking: false,
-        fareType: 'Lowest',
-        locale: 'en_US',
-        pointOfSale: null,
-        searchType: 'Award',
-      },
-      loyaltyInfo: null,
-      version: '',
-      queryParams: {
-        sliceIndex: 0,
-        sessionId: '',
-        solutionSet: '',
-        solutionId: '',
-        sort: 'CARRIER',
-      },
-    };
-    const resp = await fetch(AA_SEARCH_URL, {
+    // Instead of direct AA fetch, call the American microservice
+    const microserviceUrl = 'http://localhost:4002/american';
+    const microResp = await fetch(microserviceUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        'Referer': 'https://www.aa.com/booking/find-flights',
-        'Origin': 'https://www.aa.com',
-        'Sec-Fetch-Site': 'same-origin',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-User': '?1',
-        'Connection': 'keep-alive',
-        'Pragma': 'no-cache',
-        'Cache-Control': 'no-cache',
-      },
-      body: JSON.stringify(aaBody),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to, depart, ADT }),
     });
-    if (!resp.ok) {
-      return NextResponse.json({ error: 'AA API error', status: resp.status }, { status: resp.status });
+    if (!microResp.ok) {
+      const errorText = await microResp.text();
+      return NextResponse.json({ error: 'American microservice error', status: microResp.status, body: errorText }, { status: microResp.status });
     }
-    const data = await resp.json();
+    const data = await microResp.json();
     // Normalize the response
     const normalized = normalizeAAResponse(data);
     return NextResponse.json(normalized);
