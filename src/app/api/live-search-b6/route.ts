@@ -108,13 +108,12 @@ function transformItineraries(itineraryArr: any[]): any[] {
         return keys.some((k) => k !== 'class');
       });
 
-    // Determine if we have Y or J class
-    const validClasses = filteredBundles.map((b: any) => b.class);
-    const shouldPrepend = validClasses.includes('Y') || validClasses.includes('J');
+    // Determine if we have BLUE_BASIC or MINT class in the original bundles
+    const hasBlueBasicOrMint = (itin.bundles || []).some((b: any) => b.class === 'BLUE_BASIC' || b.class === 'MINT');
 
     // Update segments
     const updatedSegments = (itin.segments || []).map((seg: any) => {
-      if (shouldPrepend && seg.flightnumber && !seg.flightnumber.startsWith('B6')) {
+      if (hasBlueBasicOrMint && seg.flightnumber && !seg.flightnumber.startsWith('B6')) {
         return { ...seg, flightnumber: `B6${seg.flightnumber}` };
       }
       return seg;
