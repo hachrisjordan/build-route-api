@@ -96,10 +96,10 @@ function transformItineraries(itineraryArr: any[]): any[] {
   return itineraryArr.map((itin) => {
     // Filter and map bundles
     const filteredBundles = (itin.bundles || [])
-      .filter((b: any) => b.class === 'BLUE_BASIC' || b.class === 'MINT')
+      .filter((b: any) => ['Y', 'J', 'W', 'F', 'BLUE_BASIC', 'MINT'].includes(b.class))
       .map((b: any) => ({
         ...b,
-        class: b.class === 'BLUE_BASIC' ? 'Y' : 'J',
+        class: b.class === 'BLUE_BASIC' ? 'Y' : b.class === 'MINT' ? 'J' : b.class,
       }))
       // Remove bundles that only have 'class' property (no points or fareTax)
       .filter((b: any) => {
