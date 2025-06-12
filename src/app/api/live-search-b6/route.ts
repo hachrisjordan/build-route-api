@@ -84,6 +84,50 @@ const proxy_password = "pookydooki_country-us";
 const PROXY_URL = `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`;
 const proxyAgent = new HttpsProxyAgent(PROXY_URL);
 
+/**
+ * Transforms the itinerary array:
+ * - Keeps only BLUE_BASIC (as Y) and MINT (as J) bundles
+ * - Removes all other bundles
+ * - Prepends 'B6' to segment flight numbers if class is Y or J
+ * @param itineraryArr The original itinerary array
+ * @returns The transformed itinerary array
+ */
+function transformItineraries(itineraryArr: any[]): any[] {
+  return itineraryArr.map((itin) => {
+    // Filter and map bundles
+    const filteredBundles = (itin.bundles || [])
+      .filter((b: any) => b.class === 'BLUE_BASIC' || b.class === 'MINT')
+      .map((b: any) => ({
+        ...b,
+        class: b.class === 'BLUE_BASIC' ? 'Y' : 'J',
+      }))
+      // Remove bundles that only have 'class' property (no points or fareTax)
+      .filter((b: any) => {
+        const keys = Object.keys(b);
+        // Keep if there is at least one property besides 'class'
+        return keys.some((k) => k !== 'class');
+      });
+
+    // Determine if we have Y or J class
+    const validClasses = filteredBundles.map((b: any) => b.class);
+    const shouldPrepend = validClasses.includes('Y') || validClasses.includes('J');
+
+    // Update segments
+    const updatedSegments = (itin.segments || []).map((seg: any) => {
+      if (shouldPrepend && seg.flightnumber && !seg.flightnumber.startsWith('B6')) {
+        return { ...seg, flightnumber: `B6${seg.flightnumber}` };
+      }
+      return seg;
+    });
+
+    return {
+      ...itin,
+      bundles: filteredBundles,
+      segments: updatedSegments,
+    };
+  });
+}
+
 export async function POST(req: NextRequest) {
   if (req.method !== 'POST') {
     return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
@@ -146,7 +190,8 @@ export async function POST(req: NextRequest) {
     const itineraries = Array.isArray(data.itinerary)
       ? data.itinerary.map(normalizeItinerary)
       : [];
-    return NextResponse.json({ itinerary: itineraries });
+    const transformedItineraries = transformItineraries(itineraries);
+    return NextResponse.json({ itinerary: transformedItineraries });
   } catch (err) {
     console.error('Error in live-search-B6 POST:', err);
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });
