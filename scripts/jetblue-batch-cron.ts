@@ -9,22 +9,6 @@ const TO_AIRPORTS = [
 const API_URL = process.env.BATCH_API_URL || 'http://localhost:3000/api/jetblue-lfs-batch';
 const DAYS = 16;
 
-// Proxy credentials
-const USE_PROXY = true;
-const proxy_host = process.env.PROXY_HOST;
-const proxy_port = process.env.PROXY_PORT;
-const proxy_username = process.env.PROXY_USERNAME;
-const proxy_password = process.env.PROXY_PASSWORD;
-
-if (USE_PROXY && (!proxy_host || !proxy_port || !proxy_username || !proxy_password)) {
-  throw new Error('Proxy configuration is missing. Please set PROXY_HOST, PROXY_PORT, PROXY_USERNAME, and PROXY_PASSWORD in your environment variables.');
-}
-
-const PROXY_URL = USE_PROXY
-  ? `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`
-  : undefined;
-const proxyAgent = USE_PROXY && PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
-
 /**
  * Required environment variables for proxy:
  * - PROXY_HOST
@@ -40,6 +24,20 @@ async function runBatch(from: string, to: string) {
   const start = format(startDate, 'yyyy-MM-dd');
   const body = { from, to, days: DAYS, start };
   try {
+    // Proxy config (runtime only)
+    const USE_PROXY = true;
+    const proxy_host = process.env.PROXY_HOST;
+    const proxy_port = process.env.PROXY_PORT;
+    const proxy_username = process.env.PROXY_USERNAME;
+    const proxy_password = process.env.PROXY_PASSWORD;
+    if (USE_PROXY && (!proxy_host || !proxy_port || !proxy_username || !proxy_password)) {
+      throw new Error('Proxy configuration is missing. Please set PROXY_HOST, PROXY_PORT, PROXY_USERNAME, and PROXY_PASSWORD in your environment variables.');
+    }
+    const PROXY_URL = USE_PROXY
+      ? `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`
+      : undefined;
+    const proxyAgent = USE_PROXY && PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
+
     const fetchOptions: any = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

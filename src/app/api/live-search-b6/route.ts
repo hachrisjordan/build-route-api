@@ -75,30 +75,6 @@ function normalizeItinerary(itin: any) {
   };
 }
 
-// Proxy configuration
-const USE_PROXY = true;
-const proxy_host = process.env.PROXY_HOST;
-const proxy_port = process.env.PROXY_PORT;
-const proxy_username = process.env.PROXY_USERNAME;
-const proxy_password = process.env.PROXY_PASSWORD;
-
-if (USE_PROXY && (!proxy_host || !proxy_port || !proxy_username || !proxy_password)) {
-  throw new Error('Proxy configuration is missing. Please set PROXY_HOST, PROXY_PORT, PROXY_USERNAME, and PROXY_PASSWORD in your environment variables.');
-}
-
-const PROXY_URL = USE_PROXY
-  ? `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`
-  : undefined;
-const proxyAgent = USE_PROXY && PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
-
-/**
- * Required environment variables for proxy:
- * - PROXY_HOST
- * - PROXY_PORT
- * - PROXY_USERNAME
- * - PROXY_PASSWORD
- */
-
 /**
  * Transforms the itinerary array:
  * - Keeps only BLUE_BASIC (as Y) and MINT (as J) bundles
@@ -142,6 +118,14 @@ function transformItineraries(itineraryArr: any[]): any[] {
   });
 }
 
+/**
+ * Required environment variables for proxy:
+ * - PROXY_HOST
+ * - PROXY_PORT
+ * - PROXY_USERNAME
+ * - PROXY_PASSWORD
+ */
+
 export async function POST(req: NextRequest) {
   if (req.method !== 'POST') {
     return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
@@ -168,6 +152,20 @@ export async function POST(req: NextRequest) {
       isDomestic: false,
       'outbound-source': 'fare-setSearchParameters',
     };
+
+    // Proxy config (runtime only)
+    const USE_PROXY = true;
+    const proxy_host = process.env.PROXY_HOST;
+    const proxy_port = process.env.PROXY_PORT;
+    const proxy_username = process.env.PROXY_USERNAME;
+    const proxy_password = process.env.PROXY_PASSWORD;
+    if (USE_PROXY && (!proxy_host || !proxy_port || !proxy_username || !proxy_password)) {
+      return NextResponse.json({ error: 'Proxy configuration is missing. Please set PROXY_HOST, PROXY_PORT, PROXY_USERNAME, and PROXY_PASSWORD in your environment variables.' }, { status: 500 });
+    }
+    const PROXY_URL = USE_PROXY
+      ? `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`
+      : undefined;
+    const proxyAgent = USE_PROXY && PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
 
     // Generate random trace/span IDs
     const traceId = crypto.randomBytes(8).toString('hex');
