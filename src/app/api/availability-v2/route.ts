@@ -44,6 +44,17 @@ async function saveSeatsAeroLink(url: string) {
 }
 
 /**
+ * Normalizes a flight number by removing leading zeros after the airline prefix.
+ * E.g., BA015 → BA15, JL001 → JL1
+ */
+function normalizeFlightNumber(flightNumber: string): string {
+  const match = flightNumber.match(/^([A-Z]{2,3})(0*)(\d+)$/i);
+  if (!match) return flightNumber;
+  const [, prefix, , number] = match;
+  return `${prefix.toUpperCase()}${parseInt(number, 10)}`;
+}
+
+/**
  * POST /api/availability-v2
  * @param req NextRequest
  */
@@ -161,12 +172,13 @@ export async function POST(req: NextRequest) {
               if (trip.Stops !== 0) continue;
               const flightNumbersArr = (trip.FlightNumbers || '').split(/,\s*/);
               for (const flightNumber of flightNumbersArr) {
+                const normalizedFlightNumber = normalizeFlightNumber(flightNumber);
                 results.push({
                   originAirport: item.Route.OriginAirport,
                   destinationAirport: item.Route.DestinationAirport,
                   date: item.Date,
                   distance: item.Route.Distance,
-                  FlightNumbers: flightNumber,
+                  FlightNumbers: normalizedFlightNumber,
                   TotalDuration: trip.TotalDuration || 0,
                   Aircraft: Array.isArray(trip.Aircraft) && trip.Aircraft.length > 0 ? trip.Aircraft[0] : '',
                   DepartsAt: trip.DepartsAt || '',
@@ -197,7 +209,7 @@ export async function POST(req: NextRequest) {
         entry.originAirport,
         entry.destinationAirport,
         entry.date,
-        entry.FlightNumbers
+        normalizeFlightNumber(entry.FlightNumbers)
       ].join('|');
       if (!mergedMap.has(key)) {
         mergedMap.set(key, {
@@ -275,7 +287,7 @@ export async function POST(req: NextRequest) {
           latestArrival: entry.ArrivesAt,
           flights: [
             {
-              FlightNumbers: entry.FlightNumbers,
+              FlightNumbers: normalizeFlightNumber(entry.FlightNumbers),
               TotalDuration: entry.TotalDuration,
               Aircraft: entry.Aircraft,
               DepartsAt: entry.DepartsAt,
@@ -304,7 +316,7 @@ export async function POST(req: NextRequest) {
           group.latestArrival = entry.ArrivesAt;
         }
         group.flights.push({
-          FlightNumbers: entry.FlightNumbers,
+          FlightNumbers: normalizeFlightNumber(entry.FlightNumbers),
           TotalDuration: entry.TotalDuration,
           Aircraft: entry.Aircraft,
           DepartsAt: entry.DepartsAt,
