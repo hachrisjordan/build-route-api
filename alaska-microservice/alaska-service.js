@@ -3,12 +3,19 @@ const fetch = require('node-fetch');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const USE_PROXY = true;
-const proxy_host = "geo.iproyal.com";
-const proxy_port = 12321;
-const proxy_username = "kPMj8aoitK1MVa3e";
-const proxy_password = "pookydooki_country-us";
-const PROXY_URL = `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`;
-const proxyAgent = new HttpsProxyAgent(PROXY_URL);
+const proxy_host = process.env.PROXY_HOST;
+const proxy_port = process.env.PROXY_PORT;
+const proxy_username = process.env.PROXY_USERNAME;
+const proxy_password = process.env.PROXY_PASSWORD;
+
+if (USE_PROXY && (!proxy_host || !proxy_port || !proxy_username || !proxy_password)) {
+  throw new Error('Proxy configuration is missing. Please set PROXY_HOST, PROXY_PORT, PROXY_USERNAME, and PROXY_PASSWORD in your environment variables.');
+}
+
+const PROXY_URL = USE_PROXY
+  ? `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`
+  : undefined;
+const proxyAgent = USE_PROXY && PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
 
 const app = express();
 app.use(express.json());
@@ -42,4 +49,12 @@ app.post('/alaska', async (req, res) => {
   }
 });
 
-app.listen(4001, () => console.log('Alaska microservice running on port 4001')); 
+app.listen(4001, () => console.log('Alaska microservice running on port 4001'));
+
+/**
+ * Required environment variables for proxy:
+ * - PROXY_HOST
+ * - PROXY_PORT
+ * - PROXY_USERNAME
+ * - PROXY_PASSWORD
+ */ 

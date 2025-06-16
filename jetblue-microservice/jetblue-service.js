@@ -5,7 +5,28 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const app = express();
 app.use(express.json());
 
-const proxyAgent = new HttpsProxyAgent('http://kPMj8aoitK1MVa3e:pookydooki_country-us@geo.iproyal.com:12321');
+const USE_PROXY = true;
+const proxy_host = process.env.PROXY_HOST;
+const proxy_port = process.env.PROXY_PORT;
+const proxy_username = process.env.PROXY_USERNAME;
+const proxy_password = process.env.PROXY_PASSWORD;
+
+if (USE_PROXY && (!proxy_host || !proxy_port || !proxy_username || !proxy_password)) {
+  throw new Error('Proxy configuration is missing. Please set PROXY_HOST, PROXY_PORT, PROXY_USERNAME, and PROXY_PASSWORD in your environment variables.');
+}
+
+const PROXY_URL = USE_PROXY
+  ? `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`
+  : undefined;
+const proxyAgent = USE_PROXY && PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
+
+/**
+ * Required environment variables for proxy:
+ * - PROXY_HOST
+ * - PROXY_PORT
+ * - PROXY_USERNAME
+ * - PROXY_PASSWORD
+ */
 
 app.post('/jetblue', async (req, res) => {
   const { from, to, depart, ADT } = req.body;

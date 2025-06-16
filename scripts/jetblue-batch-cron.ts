@@ -10,14 +10,28 @@ const API_URL = process.env.BATCH_API_URL || 'http://localhost:3000/api/jetblue-
 const DAYS = 16;
 
 // Proxy credentials
-const USE_PROXY = false;
-const proxy_host = "geo.iproyal.com";
-const proxy_port = 12321;
-const proxy_username = "kPMj8aoitK1MVa3e";
-const proxy_password = "pookydooki_country-us";
+const USE_PROXY = true;
+const proxy_host = process.env.PROXY_HOST;
+const proxy_port = process.env.PROXY_PORT;
+const proxy_username = process.env.PROXY_USERNAME;
+const proxy_password = process.env.PROXY_PASSWORD;
 
-const PROXY_URL = `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`;
-const proxyAgent = new HttpsProxyAgent(PROXY_URL);
+if (USE_PROXY && (!proxy_host || !proxy_port || !proxy_username || !proxy_password)) {
+  throw new Error('Proxy configuration is missing. Please set PROXY_HOST, PROXY_PORT, PROXY_USERNAME, and PROXY_PASSWORD in your environment variables.');
+}
+
+const PROXY_URL = USE_PROXY
+  ? `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`
+  : undefined;
+const proxyAgent = USE_PROXY && PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
+
+/**
+ * Required environment variables for proxy:
+ * - PROXY_HOST
+ * - PROXY_PORT
+ * - PROXY_USERNAME
+ * - PROXY_PASSWORD
+ */
 
 async function runBatch(from: string, to: string) {
   if (from === to) return;
