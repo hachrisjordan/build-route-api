@@ -1,3 +1,4 @@
+require('dotenv').config();
 const nodeFetch = (url: string, options?: any) => import('node-fetch').then(mod => mod.default(url, options));
 const { format } = require('date-fns');
 const { HttpsProxyAgent } = require('https-proxy-agent');

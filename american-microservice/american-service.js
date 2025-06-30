@@ -9,7 +9,7 @@ app.use(express.json());
 
 app.post('/american', async (req, res) => {
   // Proxy config (runtime only)
-  const USE_PROXY = true;
+  const USE_PROXY = false;
   const proxy_host = process.env.PROXY_HOST;
   const proxy_port = process.env.PROXY_PORT;
   const proxy_username = process.env.PROXY_USERNAME;

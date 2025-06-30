@@ -257,12 +257,14 @@ export async function POST(req: NextRequest) {
       ];
       const etihad = ['EY'];
       const emirates = ['EK'];
-      let alliance: 'SA' | 'ST' | 'OW' | 'EY' | 'EK' | undefined;
+      const starlux = ['JX'];
+      let alliance: 'SA' | 'ST' | 'OW' | 'EY' | 'EK' | 'JX' | undefined;
       if (starAlliance.includes(flightPrefix)) alliance = 'SA';
       else if (skyTeam.includes(flightPrefix)) alliance = 'ST';
       else if (oneWorld.includes(flightPrefix)) alliance = 'OW';
       else if (etihad.includes(flightPrefix)) alliance = 'EY';
       else if (emirates.includes(flightPrefix)) alliance = 'EK';
+      else if (starlux.includes(flightPrefix)) alliance = 'JX';
       else alliance = undefined;
       return alliance ? { ...rest, alliance } : null;
     }).filter(Boolean);
