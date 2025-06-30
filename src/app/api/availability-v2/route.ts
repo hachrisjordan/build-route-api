@@ -253,7 +253,7 @@ export async function POST(req: NextRequest) {
         'AR','AM','UX','AF','CI','MU','DL','GA','KQ','ME','KL','KE','SV','SK','RO','VN','VS','MF'
       ];
       const oneWorld = [
-        'AS','AA','BA','CX','FJ','AY','IB','JL','MS','QF','QR','RJ','AT','UL','MH'
+        'AS','AA','BA','CX','FJ','AY','IB','JL','MS','QF','QR','RJ','AT','UL','MH','WY'
       ];
       const etihad = ['EY'];
       const emirates = ['EK'];
