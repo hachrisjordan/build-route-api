@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import Valkey from 'iovalkey';
 import { addDays, parseISO, format } from 'date-fns';
-import { createSupabaseServerClient } from '@/lib/supabase-server';
+import { createClient } from '@supabase/supabase-js';
 
 // Zod schema for request validation
 const availabilityV2Schema = z.object({
@@ -55,9 +55,13 @@ function normalizeFlightNumber(flightNumber: string): string {
   return `${prefix.toUpperCase()}${parseInt(number, 10)}`;
 }
 
+// Use environment variables for Supabase
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
 // Helper to fetch reliability table (no cache)
 async function getReliabilityTable() {
-  const supabase = createSupabaseServerClient();
+  const supabase = createClient(supabaseUrl, supabaseKey);
   const { data, error } = await supabase.from('reliability').select('code, min_count, exemption, ffp_program');
   if (error) {
     console.error('Failed to fetch reliability table:', error);
