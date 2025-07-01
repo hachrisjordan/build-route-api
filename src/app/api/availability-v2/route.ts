@@ -55,23 +55,15 @@ function normalizeFlightNumber(flightNumber: string): string {
   return `${prefix.toUpperCase()}${parseInt(number, 10)}`;
 }
 
-// Helper to fetch reliability table (cache in memory for 5 min)
-let reliabilityCache: any[] | null = null;
-let reliabilityCacheTime = 0;
+// Helper to fetch reliability table (no cache)
 async function getReliabilityTable() {
-  const now = Date.now();
-  if (reliabilityCache && now - reliabilityCacheTime < 5 * 60 * 1000) return reliabilityCache;
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase.from('reliability').select('code, min_count, exemption, ffp_program');
   if (error) {
     console.error('Failed to fetch reliability table:', error);
-    reliabilityCache = [];
-    reliabilityCacheTime = now;
     return [];
   }
-  reliabilityCache = data || [];
-  reliabilityCacheTime = now;
-  return reliabilityCache;
+  return data || [];
 }
 
 /**
