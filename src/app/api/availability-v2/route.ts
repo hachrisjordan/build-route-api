@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import Valkey from 'iovalkey';
 import { addDays, parseISO, format } from 'date-fns';
+import { createSupabaseServerClient } from '@/lib/supabase-server';
 
 // Zod schema for request validation
 const availabilityV2Schema = z.object({
@@ -54,6 +55,38 @@ function normalizeFlightNumber(flightNumber: string): string {
   return `${prefix.toUpperCase()}${parseInt(number, 10)}`;
 }
 
+// Helper to fetch reliability table (cache in memory for 5 min)
+let reliabilityCache: any[] | null = null;
+let reliabilityCacheTime = 0;
+async function getReliabilityTable() {
+  const now = Date.now();
+  if (reliabilityCache && now - reliabilityCacheTime < 5 * 60 * 1000) return reliabilityCache;
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase.from('reliability').select('code, min_count, exemption, ffp_program');
+  if (error) {
+    console.error('Failed to fetch reliability table:', error);
+    reliabilityCache = [];
+    reliabilityCacheTime = now;
+    return [];
+  }
+  reliabilityCache = data || [];
+  reliabilityCacheTime = now;
+  return reliabilityCache;
+}
+
+/**
+ * Returns the count multiplier for a given flight/cabin/source based on reliability table.
+ */
+function getCountMultiplier({ code, cabin, source, reliabilityTable }: { code: string, cabin: string, source: string, reliabilityTable: any[] }) {
+  const entry = reliabilityTable.find((r) => r.code === code);
+  if (!entry) return 1;
+  if (entry.exemption && typeof entry.exemption === 'string' && entry.exemption.toUpperCase() === (cabin || '').slice(0, 1).toUpperCase()) return 1;
+  if (Array.isArray(entry.ffp_program) && entry.ffp_program.length > 0) {
+    if (entry.ffp_program.includes(source)) return entry.min_count || 1;
+  }
+  return 1;
+}
+
 /**
  * POST /api/availability-v2
  * @param req NextRequest
@@ -100,6 +133,9 @@ export async function POST(req: NextRequest) {
     let seatsAeroRequests = 0;
     let lastResponse: Response | null = null;
 
+    // Fetch reliability table
+    const reliabilityTable = await getReliabilityTable();
+
     // Continue fetching until all data is retrieved
     while (hasMore) {
       // Combine all origins and connections
@@ -119,6 +155,7 @@ export async function POST(req: NextRequest) {
         take: '1000',
         include_trips: 'true',
         only_direct_flights: 'true',
+        include_filtered: 'false',
         carriers: 'A3%2CEY%2CAC%2CCA%2CAI%2CNZ%2CNH%2COZ%2COS%2CAV%2CSN%2CCM%2COU%2CMS%2CET%2CBR%2CLO%2CLH%2CCL%2CZH%2CSQ%2CSA%2CLX%2CTP%2CTG%2CTK%2CUA%2CAR%2CAM%2CUX%2CAF%2CCI%2CMU%2CDL%2CGA%2CKQ%2CME%2CKL%2CKE%2CSV%2CSK%2CRO%2CMH%2CVN%2CVS%2CMF%2CAS%2CAA%2CBA%2CCX%2CFJ%2CAY%2CIB%2CJL%2CMS%2CQF%2CQR%2CRJ%2CAT%2CUL%2CWY%2CJX%2CEK'
       });
       if (cabin) searchParams.append('cabin', cabin);
@@ -187,6 +224,8 @@ export async function POST(req: NextRequest) {
                   WMile: (trip.Cabin && trip.Cabin.toLowerCase() === 'premium') ? (trip.MileageCost || 0) : 0,
                   JMile: (trip.Cabin && trip.Cabin.toLowerCase() === 'business') ? (trip.MileageCost || 0) : 0,
                   FMile: (trip.Cabin && trip.Cabin.toLowerCase() === 'first') ? (trip.MileageCost || 0) : 0,
+                  Source: trip.Source || item.Source || '',
+                  Cabin: trip.Cabin || '',
                 });
               }
             }
@@ -211,13 +250,14 @@ export async function POST(req: NextRequest) {
         entry.date,
         normalizeFlightNumber(entry.FlightNumbers)
       ].join('|');
+      const flightPrefix = (entry.FlightNumbers || '').slice(0, 2).toUpperCase();
       if (!mergedMap.has(key)) {
         mergedMap.set(key, {
           ...entry,
-          YCount: entry.YMile > 0 ? 1 : 0,
-          WCount: entry.WMile > 0 ? 1 : 0,
-          JCount: entry.JMile > 0 ? 1 : 0,
-          FCount: entry.FMile > 0 ? 1 : 0,
+          YCount: entry.YMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'Y', source: entry.Source, reliabilityTable }) : 0,
+          WCount: entry.WMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'W', source: entry.Source, reliabilityTable }) : 0,
+          JCount: entry.JMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'J', source: entry.Source, reliabilityTable }) : 0,
+          FCount: entry.FMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'F', source: entry.Source, reliabilityTable }) : 0,
           YMile: undefined,
           WMile: undefined,
           JMile: undefined,
@@ -225,10 +265,10 @@ export async function POST(req: NextRequest) {
         });
       } else {
         const merged = mergedMap.get(key);
-        merged.YCount += entry.YMile > 0 ? 1 : 0;
-        merged.WCount += entry.WMile > 0 ? 1 : 0;
-        merged.JCount += entry.JMile > 0 ? 1 : 0;
-        merged.FCount += entry.FMile > 0 ? 1 : 0;
+        merged.YCount += entry.YMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'Y', source: entry.Source, reliabilityTable }) : 0;
+        merged.WCount += entry.WMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'W', source: entry.Source, reliabilityTable }) : 0;
+        merged.JCount += entry.JMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'J', source: entry.Source, reliabilityTable }) : 0;
+        merged.FCount += entry.FMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'F', source: entry.Source, reliabilityTable }) : 0;
         // Accept the longer Aircraft string
         if ((entry.Aircraft || '').length > (merged.Aircraft || '').length) {
           merged.Aircraft = entry.Aircraft;
