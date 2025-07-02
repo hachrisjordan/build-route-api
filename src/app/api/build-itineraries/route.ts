@@ -4,6 +4,7 @@ import type { FullRoutePathResult } from '@/types/route';
 import { createHash } from 'crypto';
 import Valkey from 'iovalkey';
 import { parseISO, isBefore, isEqual, startOfDay, endOfDay } from 'date-fns';
+import { createClient } from '@supabase/supabase-js';
 
 // Input validation schema
 const buildItinerariesSchema = z.object({
@@ -12,7 +13,7 @@ const buildItinerariesSchema = z.object({
   maxStop: z.number().min(0).max(4),
   startDate: z.string().min(8),
   endDate: z.string().min(8),
-  apiKey: z.string().min(8),
+  apiKey: z.string().min(8).nullable(),
   cabin: z.string().optional(),
   carriers: z.string().optional(),
 });
@@ -187,6 +188,8 @@ async function saveRouteIdToRedis(routeId: string) {
  */
 export async function POST(req: NextRequest) {
   const startTime = Date.now(); // Track start time
+  let usedProKey: string | null = null;
+  let usedProKeyRowId: string | null = null;
   try {
     // 1. Validate input
     const body = await req.json();
@@ -194,7 +197,30 @@ export async function POST(req: NextRequest) {
     if (!parseResult.success) {
       return NextResponse.json({ error: 'Invalid input', details: parseResult.error.errors }, { status: 400 });
     }
-    const { origin, destination, maxStop, startDate, endDate, apiKey, cabin, carriers } = parseResult.data;
+    let { origin, destination, maxStop, startDate, endDate, apiKey, cabin, carriers } = parseResult.data;
+
+    // If apiKey is null, fetch pro_key with largest remaining from Supabase
+    if (apiKey === null) {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!supabaseUrl || !supabaseServiceRoleKey) {
+        return NextResponse.json({ error: 'Supabase credentials not set' }, { status: 500 });
+      }
+      const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+      // Get pro_key with largest remaining
+      const { data, error } = await supabase
+        .from('pro_key')
+        .select('pro_key, remaining, last_updated')
+        .order('remaining', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error || !data || !data.pro_key) {
+        return NextResponse.json({ error: 'No available pro_key found', details: error?.message }, { status: 500 });
+      }
+      apiKey = data.pro_key;
+      usedProKey = data.pro_key;
+      usedProKeyRowId = data.pro_key; // pro_key is the primary key
+    }
 
     // Build absolute base URL for internal fetches
     let baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
@@ -242,12 +268,15 @@ export async function POST(req: NextRequest) {
         ...(carriers ? { carriers } : {}),
       };
       try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        if (typeof apiKey === 'string') {
+          headers['partner-authorization'] = apiKey;
+        }
         const res = await fetch(`${baseUrl}/api/availability-v2`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'partner-authorization': apiKey,
-          },
+          headers,
           body: JSON.stringify(params),
         });
         // Track rate limit headers
@@ -440,6 +469,24 @@ export async function POST(req: NextRequest) {
       // Remove empty route keys after filtering
       if (Object.keys(output[routeKey]).length === 0) {
         delete output[routeKey];
+      }
+    }
+
+    // After all processing, if we used a pro_key, update its remaining and last_updated
+    if (usedProKey && usedProKeyRowId && typeof minRateLimitRemaining === 'number') {
+      try {
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (supabaseUrl && supabaseServiceRoleKey) {
+          const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+          const updateResult = await supabase
+            .from('pro_key')
+            .update({ remaining: minRateLimitRemaining, last_updated: new Date().toISOString() })
+            .eq('pro_key', usedProKeyRowId);
+          console.log(`[pro_key] Updated: pro_key=${usedProKeyRowId}, remaining=${minRateLimitRemaining}, last_updated=${new Date().toISOString()}`, updateResult);
+        }
+      } catch (err) {
+        console.error('Failed to update pro_key remaining:', err);
       }
     }
 
