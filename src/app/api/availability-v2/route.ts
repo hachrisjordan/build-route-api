@@ -59,15 +59,26 @@ function normalizeFlightNumber(flightNumber: string): string {
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-// Helper to fetch reliability table (no cache)
-async function getReliabilityTable() {
+// --- Reliability Table In-Memory Cache ---
+let reliabilityCache: any[] | null = null;
+let reliabilityCacheTimestamp = 0;
+const RELIABILITY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+async function getReliabilityTableCached() {
+  const now = Date.now();
+  if (reliabilityCache && now - reliabilityCacheTimestamp < RELIABILITY_CACHE_TTL_MS) {
+    return reliabilityCache;
+  }
   const supabase = createClient(supabaseUrl, supabaseKey);
   const { data, error } = await supabase.from('reliability').select('code, min_count, exemption, ffp_program');
   if (error) {
     console.error('Failed to fetch reliability table:', error);
-    return [];
+    reliabilityCache = [];
+  } else {
+    reliabilityCache = data || [];
   }
-  return data || [];
+  reliabilityCacheTimestamp = now;
+  return reliabilityCache;
 }
 
 /**
@@ -129,77 +140,123 @@ export async function POST(req: NextRequest) {
     let seatsAeroRequests = 0;
     let lastResponse: Response | null = null;
 
-    // Fetch reliability table
-    const reliabilityTable = await getReliabilityTable();
+    // Fetch reliability table (cached)
+    const reliabilityTable = await getReliabilityTableCached();
 
-    // Continue fetching until all data is retrieved
-    while (hasMore) {
-      // Combine all origins and connections
-      const allOrigins = [...originAirports];
-      const allDestinations = [...destinationSegments];
-      middleSegments.forEach(segment => {
-        allOrigins.push(...segment);
-        allDestinations.unshift(...segment);
-      });
-
-      // Construct search params (only include known working params)
-      const searchParams = new URLSearchParams({
-        origin_airport: allOrigins.join(','),
-        destination_airport: allDestinations.join(','),
-        start_date: startDate,
-        end_date: seatsAeroEndDate,
-        take: '1000',
-        include_trips: 'true',
-        only_direct_flights: 'true',
-        include_filtered: 'false',
-        carriers: 'A3%2CEY%2CAC%2CCA%2CAI%2CNZ%2CNH%2COZ%2COS%2CAV%2CSN%2CCM%2COU%2CMS%2CET%2CBR%2CLO%2CLH%2CCL%2CZH%2CSQ%2CSA%2CLX%2CTP%2CTG%2CTK%2CUA%2CAR%2CAM%2CUX%2CAF%2CCI%2CMU%2CDL%2CGA%2CKQ%2CME%2CKL%2CKE%2CSV%2CSK%2CRO%2CMH%2CVN%2CVS%2CMF%2CAS%2CAA%2CBA%2CCX%2CFJ%2CAY%2CIB%2CJL%2CMS%2CQF%2CQR%2CRJ%2CAT%2CUL%2CWY%2CJX%2CEK'
-      });
-      if (cabin) searchParams.append('cabin', cabin);
-      if (carriers) searchParams.append('carriers', carriers);
-      if (skip > 0) searchParams.append('skip', skip.toString());
-      if (cursor) searchParams.append('cursor', cursor);
-
-      // Save the full seats.aero link to Redis/Valkey (non-blocking)
-      const seatsAeroUrl = `https://seats.aero/partnerapi/search?${searchParams.toString()}`;
-      saveSeatsAeroLink(seatsAeroUrl).catch(() => {});
-
-      // Fetch from external API (use /partnerapi/search)
-      const response = await fetch(seatsAeroUrl, {
-        method: 'GET',
-        headers: {
-          accept: 'application/json',
-          'Partner-Authorization': apiKey,
+    // --- Parallelized Paginated Fetches ---
+    // Fetch first page to get hasMore and cursor
+    const allOrigins = [...originAirports];
+    const allDestinations = [...destinationSegments];
+    middleSegments.forEach(segment => {
+      allOrigins.push(...segment);
+      allDestinations.unshift(...segment);
+    });
+    const baseParams: Record<string, string> = {
+      origin_airport: allOrigins.join(','),
+      destination_airport: allDestinations.join(','),
+      start_date: startDate,
+      end_date: seatsAeroEndDate,
+      take: '1000',
+      include_trips: 'true',
+      only_direct_flights: 'true',
+      include_filtered: 'false',
+      carriers: 'A3%2CEY%2CAC%2CCA%2CAI%2CNZ%2CNH%2COZ%2COS%2CAV%2CSN%2CCM%2COU%2CMS%2CET%2CBR%2CLO%2CLH%2CCL%2CZH%2CSQ%2CSA%2CLX%2CTP%2CTG%2CTK%2CUA%2CAR%2CAM%2CUX%2CAF%2CCI%2CMU%2CDL%2CGA%2CKQ%2CME%2CKL%2CKE%2CSV%2CSK%2CRO%2CMH%2CVN%2CVS%2CMF%2CAS%2CAA%2CBA%2CCX%2CFJ%2CAY%2CIB%2CJL%2CMS%2CQF%2CQR%2CRJ%2CAT%2CUL%2CWY%2CJX%2CEK'
+    };
+    if (cabin) baseParams.cabin = cabin;
+    if (carriers) baseParams.carriers = carriers;
+    // Helper to build URL
+    const buildUrl = (params: Record<string, string | number>) => {
+      const sp = new URLSearchParams(params as any);
+      return `https://seats.aero/partnerapi/search?${sp.toString()}`;
+    };
+    // Fetch first page
+    const firstUrl = buildUrl({ ...baseParams });
+    saveSeatsAeroLink(firstUrl); // fire-and-forget
+    const firstRes = await fetch(firstUrl, {
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+        'Partner-Authorization': apiKey,
+      },
+    });
+    seatsAeroRequests++;
+    if (firstRes.status === 429) {
+      const retryAfter = firstRes.headers.get('Retry-After');
+      return NextResponse.json(
+        {
+          error: 'Rate limit exceeded. Please try again later.',
+          retryAfter: retryAfter ? Number(retryAfter) : undefined,
         },
-      });
-      seatsAeroRequests++;
-
-      if (response.status === 429) {
-        // Rate limit hit
-        const retryAfter = response.headers.get('Retry-After');
-        return NextResponse.json(
-          {
-            error: 'Rate limit exceeded. Please try again later.',
-            retryAfter: retryAfter ? Number(retryAfter) : undefined,
+        { status: 429 }
+      );
+    }
+    if (!firstRes.ok) {
+      return NextResponse.json(
+        { error: `Seats.aero API Error: ${firstRes.statusText}` },
+        { status: firstRes.status }
+      );
+    }
+    const firstData = await firstRes.json();
+    lastResponse = firstRes;
+    let allPages = [firstData];
+    let cursors: string[] = [];
+    hasMore = firstData.hasMore || false;
+    cursor = firstData.cursor;
+    // If skip is supported, fire off parallel fetches
+    if (hasMore && typeof skip === 'number') {
+      // Try to estimate number of pages (if possible)
+      // If total count is not available, fetch up to 5 more pages in parallel as a safe default
+      const maxPages = 5;
+      const fetches = [];
+      for (let i = 1; i <= maxPages; i++) {
+        const params = { ...baseParams, skip: i * 1000 };
+        const url = buildUrl(params);
+        saveSeatsAeroLink(url); // fire-and-forget
+        fetches.push(
+          fetch(url, {
+            method: 'GET',
+            headers: {
+              accept: 'application/json',
+              'Partner-Authorization': apiKey,
+            },
+          })
+            .then(async (res) => {
+              seatsAeroRequests++;
+              if (res.ok) return res.json();
+              return null;
+            })
+            .catch(() => null)
+        );
+      }
+      const morePages = await Promise.all(fetches);
+      allPages = [firstData, ...morePages.filter(Boolean)];
+    } else {
+      // Fallback: sequential fetch using cursor
+      while (hasMore && cursor) {
+        const params = { ...baseParams, cursor };
+        const url = buildUrl(params);
+        saveSeatsAeroLink(url); // fire-and-forget
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: {
+            accept: 'application/json',
+            'Partner-Authorization': apiKey,
           },
-          { status: 429 }
-        );
+        });
+        seatsAeroRequests++;
+        if (!res.ok) break;
+        const data = await res.json();
+        allPages.push(data);
+        hasMore = data.hasMore || false;
+        cursor = data.cursor;
+        lastResponse = res;
       }
-
-      if (!response.ok) {
-        // Other errors
-        return NextResponse.json(
-          { error: `Seats.aero API Error: ${response.statusText}` },
-          { status: response.status }
-        );
-      }
-
-      const data = await response.json();
-
-      // Process and buffer each item
-      if (data.data && Array.isArray(data.data) && data.data.length > 0) {
-        for (const item of data.data) {
+    }
+    // --- Optimized Deduplication and Merging ---
+    for (const page of allPages) {
+      if (page && page.data && Array.isArray(page.data) && page.data.length > 0) {
+        for (const item of page.data) {
           if (uniqueItems.has(item.ID)) continue;
-          // Only process direct flights (Stops === 0) and flatten
           if (item.AvailabilityTrips && Array.isArray(item.AvailabilityTrips) && item.AvailabilityTrips.length > 0) {
             for (const trip of item.AvailabilityTrips) {
               if (trip.Stops !== 0) continue;
@@ -227,15 +284,8 @@ export async function POST(req: NextRequest) {
             }
           }
           uniqueItems.set(item.ID, true);
-          processedCount++;
         }
       }
-      hasMore = data.hasMore || false;
-      if (hasMore) {
-        skip += 1000;
-        cursor = data.cursor;
-      }
-      lastResponse = response;
     }
     // Merge duplicates based on originAirport, destinationAirport, date, FlightNumbers
     const mergedMap = new Map<string, any>();
