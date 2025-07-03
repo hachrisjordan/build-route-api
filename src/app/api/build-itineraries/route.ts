@@ -16,6 +16,7 @@ const buildItinerariesSchema = z.object({
   apiKey: z.string().min(8).nullable(),
   cabin: z.string().optional(),
   carriers: z.string().optional(),
+  minReliabilityPercent: z.number().min(0).max(100).optional(),
 });
 
 // Types for availability response
@@ -182,6 +183,99 @@ async function saveRouteIdToRedis(routeId: string) {
   }
 }
 
+// --- Reliability Table In-Memory Cache ---
+let reliabilityCache: any[] | null = null;
+let reliabilityCacheTimestamp = 0;
+const RELIABILITY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+async function getReliabilityTableCached() {
+  const now = Date.now();
+  if (reliabilityCache && now - reliabilityCacheTimestamp < RELIABILITY_CACHE_TTL_MS) {
+    return reliabilityCache;
+  }
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !supabaseKey) return [];
+  const supabase = createClient(supabaseUrl, supabaseKey);
+  const { data, error } = await supabase.from('reliability').select('code, min_count, exemption');
+  if (error) {
+    console.error('Failed to fetch reliability table:', error);
+    reliabilityCache = [];
+  } else {
+    reliabilityCache = data || [];
+  }
+  reliabilityCacheTimestamp = now;
+  return reliabilityCache;
+}
+
+function getReliabilityMap(table: any[]): Record<string, { min_count: number; exemption?: string }> {
+  const map: Record<string, { min_count: number; exemption?: string }> = {};
+  for (const row of table) {
+    map[row.code] = { min_count: row.min_count, exemption: row.exemption };
+  }
+  return map;
+}
+
+function isUnreliableFlight(flight: AvailabilityFlight, reliability: Record<string, { min_count: number; exemption?: string }>) {
+  const code = flight.FlightNumbers.slice(0, 2).toUpperCase();
+  const rel = reliability[code];
+  const min = rel?.min_count ?? 1;
+  const exemption = rel?.exemption || '';
+  const minY = exemption.includes('Y') ? 1 : min;
+  const minW = exemption.includes('W') ? 1 : min;
+  const minJ = exemption.includes('J') ? 1 : min;
+  const minF = exemption.includes('F') ? 1 : min;
+  return (
+    (flight.YCount < minY) &&
+    (flight.WCount < minW) &&
+    (flight.JCount < minJ) &&
+    (flight.FCount < minF)
+  );
+}
+
+function filterReliableItineraries(
+  itineraries: Record<string, Record<string, string[][]>>,
+  flights: Map<string, AvailabilityFlight>,
+  reliability: Record<string, { min_count: number; exemption?: string }>,
+  minReliabilityPercent: number
+) {
+  const filtered: Record<string, Record<string, string[][]>> = {};
+  const usedFlightUUIDs = new Set<string>();
+  for (const routeKey of Object.keys(itineraries)) {
+    for (const date of Object.keys(itineraries[routeKey])) {
+      const keptItins: string[][] = [];
+      for (const itin of itineraries[routeKey][date]) {
+        const flightsArr = itin.map(uuid => flights.get(uuid)).filter(Boolean) as AvailabilityFlight[];
+        if (!flightsArr.length) continue;
+        const totalDuration = flightsArr.reduce((sum, f) => sum + f.TotalDuration, 0);
+        const unreliableDuration = flightsArr.filter(f => isUnreliableFlight(f, reliability)).reduce((sum, f) => sum + f.TotalDuration, 0);
+        if (unreliableDuration === 0) {
+          keptItins.push(itin);
+          itin.forEach(uuid => usedFlightUUIDs.add(uuid));
+          continue;
+        }
+        if (totalDuration === 0) continue;
+        const unreliablePct = (unreliableDuration / totalDuration) * 100;
+        if (unreliablePct <= (100 - minReliabilityPercent)) {
+          keptItins.push(itin);
+          itin.forEach(uuid => usedFlightUUIDs.add(uuid));
+        }
+      }
+      if (keptItins.length) {
+        if (!filtered[routeKey]) filtered[routeKey] = {};
+        filtered[routeKey][date] = keptItins;
+      }
+    }
+  }
+  // Remove unused flights
+  for (const uuid of Array.from(flights.keys())) {
+    if (!usedFlightUUIDs.has(uuid)) {
+      flights.delete(uuid);
+    }
+  }
+  return filtered;
+}
+
 /**
  * POST /api/build-itineraries
  * Orchestrates route finding and availability composition.
@@ -197,7 +291,10 @@ export async function POST(req: NextRequest) {
     if (!parseResult.success) {
       return NextResponse.json({ error: 'Invalid input', details: parseResult.error.errors }, { status: 400 });
     }
-    let { origin, destination, maxStop, startDate, endDate, apiKey, cabin, carriers } = parseResult.data;
+    let { origin, destination, maxStop, startDate, endDate, apiKey, cabin, carriers, minReliabilityPercent } = parseResult.data;
+    if (typeof minReliabilityPercent !== 'number' || isNaN(minReliabilityPercent)) {
+      minReliabilityPercent = 85;
+    }
 
     // If apiKey is null, fetch pro_key with largest remaining from Supabase
     if (apiKey === null) {
@@ -472,6 +569,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // --- SERVER-SIDE RELIABILITY FILTERING ---
+    // Fetch reliability table and filter itineraries
+    const reliabilityTable = await getReliabilityTableCached();
+    const reliabilityMap = getReliabilityMap(reliabilityTable);
+    const filteredOutput = filterReliableItineraries(output, flightMap, reliabilityMap, minReliabilityPercent);
+    // Remove empty route keys after filtering
+    Object.keys(filteredOutput).forEach((key) => {
+      if (!filteredOutput[key] || Object.keys(filteredOutput[key]).length === 0) {
+        delete filteredOutput[key];
+      }
+    });
+
     // After all processing, if we used a pro_key, update its remaining and last_updated
     if (usedProKey && usedProKeyRowId && typeof minRateLimitRemaining === 'number') {
       try {
@@ -496,7 +605,7 @@ export async function POST(req: NextRequest) {
     console.log(`[build-itineraries] itinerary build time (ms):`, itineraryBuildTimeMs);
     console.log(`[build-itineraries] total running time (ms):`, totalTimeMs);
     return NextResponse.json({
-      itineraries: output,
+      itineraries: filteredOutput,
       flights: Object.fromEntries(flightMap),
       minRateLimitRemaining,
       minRateLimitReset,
