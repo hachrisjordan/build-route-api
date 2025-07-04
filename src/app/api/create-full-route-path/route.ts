@@ -8,18 +8,51 @@ import { FullRoutePathResult, Path, IntraRoute } from '@/types/route';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
+// In-memory per-request caches
+interface RoutePathCache {
+  airport: Map<string, any>;
+  intraRoute: Map<string, IntraRoute[]>;
+  path: Map<string, Path[]>;
+}
+
+// Helper function to fetch airport with cache
+async function fetchAirportCached(supabase: SupabaseClient, iata: string, cache: RoutePathCache) {
+  if (cache.airport.has(iata)) return cache.airport.get(iata);
+  const airport = await fetchAirportByIata(supabase, iata);
+  cache.airport.set(iata, airport);
+  return airport;
+}
+
+// Helper function to fetch intra routes with cache
+async function fetchIntraRoutesCached(supabase: SupabaseClient, origin: string, destination: string, cache: RoutePathCache) {
+  const key = `${origin}-${destination}`;
+  if (cache.intraRoute.has(key)) return cache.intraRoute.get(key)!;
+  const routes = await fetchIntraRoutes(supabase, origin, destination);
+  cache.intraRoute.set(key, routes);
+  return routes;
+}
+
+// Helper function to fetch paths with cache
+async function fetchPathsCached(supabase: SupabaseClient, originRegion: string, destinationRegion: string, maxDistance: number, cache: RoutePathCache) {
+  const key = `${originRegion}-${destinationRegion}-${maxDistance}`;
+  if (cache.path.has(key)) return cache.path.get(key)!;
+  const paths = await fetchPaths(supabase, originRegion, destinationRegion, maxDistance);
+  cache.path.set(key, paths);
+  return paths;
+}
+
 // Helper function to batch fetch intra routes
 async function batchFetchIntraRoutes(
   supabase: SupabaseClient,
-  pairs: { origin: string; destination: string }[]
+  pairs: { origin: string; destination: string }[],
+  cache: RoutePathCache
 ): Promise<Record<string, IntraRoute[]>> {
   const uniquePairs = Array.from(new Set(pairs.map(p => `${p.origin}-${p.destination}`)));
-  const allRoutes = await fetchIntraRoutes(supabase, '', '');
   const pairMap: Record<string, IntraRoute[]> = {};
-  for (const pair of uniquePairs) {
+  await Promise.all(uniquePairs.map(async (pair) => {
     const [origin, destination] = pair.split('-');
-    pairMap[pair] = allRoutes.filter(ir => ir.Origin === origin && ir.Destination === destination);
-  }
+    pairMap[pair] = await fetchIntraRoutesCached(supabase, origin, destination, cache);
+  }));
   return pairMap;
 }
 
@@ -72,24 +105,26 @@ async function getFullRoutePath({
   maxStop,
   supabase,
   useCache = true,
+  cache,
 }: {
   origin: string;
   destination: string;
   maxStop: number;
   supabase: SupabaseClient;
   useCache?: boolean;
+  cache: RoutePathCache;
 }): Promise<{ routes: any[]; queryParamsArr: string[]; cached: boolean }> {
-  // 3. Fetch airport info
+  // 3. Fetch airport info (with cache)
   const [originAirport, destinationAirport] = await Promise.all([
-    fetchAirportByIata(supabase, origin),
-    fetchAirportByIata(supabase, destination),
+    fetchAirportCached(supabase, origin, cache),
+    fetchAirportCached(supabase, destination, cache),
   ]);
   if (!originAirport || !destinationAirport) {
     throw new Error('Origin or destination airport not found');
   }
   // 3.5. Case 4: Direct intra_route (origin to destination)
   const results: FullRoutePathResult[] = [];
-  const directIntraRoutes = await fetchIntraRoutes(supabase, origin, destination);
+  const directIntraRoutes = await fetchIntraRoutesCached(supabase, origin, destination, cache) ?? [];
   if (directIntraRoutes.length > 0) {
     for (const intra of directIntraRoutes) {
       results.push({
@@ -118,8 +153,8 @@ async function getFullRoutePath({
   // 5. Get regions
   const originRegion = originAirport.region;
   const destinationRegion = destinationAirport.region;
-  // 6. Fetch candidate paths
-  const paths = await fetchPaths(supabase, originRegion, destinationRegion, maxDistance);
+  // 6. Fetch candidate paths (with cache)
+  const paths = await fetchPathsCached(supabase, originRegion, destinationRegion, maxDistance, cache) ?? [];
   // 7. Case 1: Direct path
   const case1Paths = paths.filter(
     (p) => p.origin === origin && p.destination === destination
@@ -143,7 +178,8 @@ async function getFullRoutePath({
   const case2APaths = paths.filter((p) => p.destination === destination && p.origin !== origin);
   if (case2APaths.length > 0) {
     const intraRoutesMap = await batchFetchIntraRoutes(supabase, 
-      case2APaths.map(p => ({ origin, destination: p.origin }))
+      case2APaths.map(p => ({ origin, destination: p.origin })),
+      cache
     );
     for (const p of case2APaths) {
       const key = `${origin}-${p.origin}`;
@@ -172,7 +208,8 @@ async function getFullRoutePath({
   const case2BPaths = paths.filter((p) => p.origin === origin && p.destination !== destination);
   if (case2BPaths.length > 0) {
     const intraRoutesMap = await batchFetchIntraRoutes(supabase,
-      case2BPaths.map(p => ({ origin: p.destination, destination }))
+      case2BPaths.map(p => ({ origin: p.destination, destination })),
+      cache
     );
     for (const p of case2BPaths) {
       const key = `${p.destination}-${destination}`;
@@ -205,7 +242,7 @@ async function getFullRoutePath({
       { origin, destination: p.origin },
       { origin: p.destination, destination }
     ]);
-    const intraRoutesMap = await batchFetchIntraRoutes(supabase, allPairs);
+    const intraRoutesMap = await batchFetchIntraRoutes(supabase, allPairs, cache);
     for (const p of case3Paths) {
       const leftKey = `${origin}-${p.origin}`;
       const rightKey = `${p.destination}-${destination}`;
@@ -369,11 +406,18 @@ export async function POST(req: NextRequest) {
     const supabase: SupabaseClient = createClient(supabaseUrl, supabaseKey);
     console.log(`Supabase client creation took: ${(performance.now() - clientStart).toFixed(2)}ms`);
 
+    // 2.5. Create per-request cache
+    const cache: RoutePathCache = {
+      airport: new Map(),
+      intraRoute: new Map(),
+      path: new Map(),
+    };
+
     // 3. For each origin-destination pair, run the route-finding logic in parallel
     const pairPromises = [];
     for (const o of originList) {
       for (const d of destinationList) {
-        pairPromises.push(getFullRoutePath({ origin: o, destination: d, maxStop, supabase }));
+        pairPromises.push(getFullRoutePath({ origin: o, destination: d, maxStop, supabase, cache }));
       }
     }
     const pairResults = await Promise.allSettled(pairPromises);
@@ -470,9 +514,6 @@ export async function POST(req: NextRequest) {
     const queryParamsArr = finalGroups
       .sort((a, b) => b.dests.length - a.dests.length || a.keys.join('/').localeCompare(b.keys.join('/')))
       .map(g => `${g.keys.join('/')}-${g.dests.join('/')}`);
-    // 5. Log the merged query params
-    const queryParamsLog = `query params: {${queryParamsArr.map(s => `"${s}"`).join(",\n")}}`;
-    console.log(queryParamsLog);
     console.log(`Total API execution time: ${(performance.now() - startTime).toFixed(2)}ms`);
     return NextResponse.json({ routes: allRoutes, queryParamsArr });
   } catch (err) {

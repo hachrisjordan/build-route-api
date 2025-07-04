@@ -518,33 +518,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Debug: Check if any itinerary references KL809 and if flightMap contains KL809
-    let kl809UUIDs: string[] = [];
-    for (const [uuid, flight] of flightMap.entries()) {
-      if (flight.FlightNumbers === 'KL809') {
-        kl809UUIDs.push(uuid);
-      }
-    }
-    let kl809InItinerary = false;
-    const kl809Itineraries: { routeKey: string; date: string; itinerary: string[] }[] = [];
-    for (const routeKey of Object.keys(output)) {
-      for (const date of Object.keys(output[routeKey])) {
-        for (const itin of output[routeKey][date]) {
-          for (const uuid of itin) {
-            if (kl809UUIDs.includes(uuid)) {
-              kl809InItinerary = true;
-              kl809Itineraries.push({ routeKey, date, itinerary: itin });
-            }
-          }
-        }
-      }
-    }
-    console.log('[DEBUG] KL809 UUIDs in flightMap:', kl809UUIDs);
-    console.log('[DEBUG] Is KL809 referenced in any itinerary?', kl809InItinerary);
-    if (kl809Itineraries.length > 0) {
-      console.log('[DEBUG] KL809 Itineraries:', JSON.stringify(kl809Itineraries, null, 2));
-    }
-
     // Filter itineraries to only include those whose first flight departs between startDate and endDate (inclusive), using raw UTC date math
     const startDateObj = startOfDay(parseISO(startDate));
     const endDateObj = endOfDay(parseISO(endDate));
