@@ -577,12 +577,53 @@ export async function POST(req: NextRequest) {
     const totalTimeMs = Date.now() - startTime;
     console.log(`[build-itineraries] itinerary build time (ms):`, itineraryBuildTimeMs);
     console.log(`[build-itineraries] total running time (ms):`, totalTimeMs);
-    return NextResponse.json({
+
+    // --- RESPONSE COMPRESSION LOGIC ---
+    const responseObj = {
       itineraries: filteredOutput,
       flights: Object.fromEntries(flightMap),
       minRateLimitRemaining,
       minRateLimitReset,
       totalSeatsAeroHttpRequests,
+    };
+    const jsonString = JSON.stringify(responseObj);
+    const acceptEncoding = req.headers.get('accept-encoding') || '';
+    let compressedBuffer: Buffer | null = null;
+    let encoding: string | null = null;
+    try {
+      if (acceptEncoding.includes('br')) {
+        // Brotli
+        const zlib = await import('zlib');
+        compressedBuffer = zlib.brotliCompressSync(Buffer.from(jsonString));
+        encoding = 'br';
+      } else if (acceptEncoding.includes('gzip')) {
+        // Gzip
+        const zlib = await import('zlib');
+        compressedBuffer = zlib.gzipSync(Buffer.from(jsonString));
+        encoding = 'gzip';
+      }
+    } catch (err) {
+      console.error('Compression error:', err);
+      compressedBuffer = null;
+      encoding = null;
+    }
+    if (compressedBuffer && encoding) {
+      return new NextResponse(compressedBuffer, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Encoding': encoding,
+          'Vary': 'Accept-Encoding',
+        },
+      });
+    }
+    // Fallback: uncompressed JSON
+    return new NextResponse(jsonString, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Vary': 'Accept-Encoding',
+      },
     });
   } catch (err) {
     console.error('Error in /api/build-itineraries:', err);
