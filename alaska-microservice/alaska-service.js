@@ -1,6 +1,7 @@
 const express = require('express');
 const fetch = require('node-fetch');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const compression = require('compression'); // 1. Import compression
 
 /**
  * Required environment variables for proxy:
@@ -12,6 +13,7 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const app = express();
 app.use(express.json());
+app.use(compression()); // 2. Use compression middleware
 
 app.post('/alaska', async (req, res) => {
   // Proxy config (runtime only)
@@ -45,12 +47,15 @@ app.post('/alaska', async (req, res) => {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br', // 3. Request compressed content
       },
     };
     if (USE_PROXY) fetchOptions.agent = proxyAgent;
     const response = await fetch(url, fetchOptions);
+
+    // If AlaskaAir returns compressed data, node-fetch will decompress it automatically.
     const html = await response.text();
-    res.status(200).json({ html });
+    res.status(200).json({ html }); // 4. This will be compressed by Express
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
