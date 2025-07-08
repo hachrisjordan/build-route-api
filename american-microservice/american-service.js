@@ -4,10 +4,30 @@ const fetch = require('node-fetch');
 const fetchCookie = require('fetch-cookie');
 const { CookieJar } = require('tough-cookie');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const fs = require('fs');
 
 const jar = new CookieJar();
-// Seed the jar with the working cookie string from curl
-jar.setCookieSync('_abck=E88330E2FA18B3CAE62C64C036328BFE~-1~YAAQ20ItF8PCALKXAQAAptdL6g54eIXFO5x4bqfDlsV3F+iRwc2oYzo5qu9KrteZaH5Rqiea0iFAchFLxk9j0bxz8fpxj+6+Q2La8HK+lLHJkOiGIkXatq6l8BTNMj3OI3vSTQQpnwrOIR1E0Pr0FoozeW20lMiS9T+VIciXpnhl2TAfwOgFb3K/udN0u6R1DWKjoYqBM1fpRgLd24mwHE8MVybmcvozNcBc6a7LoqF0ZgBcZPAP86Wz35QIAB8Duo5SIE/ZGNJ9sU+TMe8krTfgj8oOAGpHkd8Ia21y2vR71N6o7LvNs2tlNzmEkhBu7ulF1eFN1PIZGWx1XCMLMs4a5YbcE/WM0vMLEEVZi1PbbY4su518IMEYa5I9/1sPRRTjFIX2F0tCJk8Hx1ArTCXAjBpYbkirDq1KpKL1BaREs4ykzClojE6eXOr5H3OGJoR2LIbUnbLP1Xz4p91QvAo4Zmh44Ar8EbjdY/SDvk2gBZmKbEWfyrVJrDW3dk12JJERsUl5v9Es41AiQLAPzY3cDmbouuHLkNl/aNWKIkSBraKPLChFi/jtgsK7IMQS52seJaEWE6xmRM3cHbL/cR5iwOvgzq/mVyc8aoNxhO59gNFoNYlDrAW98cJTcKwAOWhK/pY5fpCyi/+VoL+ZjaQM+2H/yPs3qi3zloMxzPfAvVFQwlmF8J7zDESM/CbALsk4nYVhTKHQ0sVRF7WtlrWfp9/TvkEXSh8v4eYd5s+mwpaI28/iSyHu9kDR6cx0PuB2AwZq753f09NyZF6OleLc4dBNfssOTCdmKDVwTY1JaVaR5hIn3xTsHLae6DZSnBA43laK6dXjjoUbAro/YrH7Xgo6Hh60u491z2COeOiunrVUzhOP4+b5AEMstDf8aFPLtokBlFjUMq8pC0fZGwQcybKP7rW/7Z1gkb2GVGd1JuivC4u3o6c89vQK+AVRtT0YvLKitlcmmHFLLp4=~-1~-1~-1; bm_s=YAAQ20ItF8TCALKXAQAAptdL6gNHeAr8BtguWLmp+1T52Mp910ZBQHz6bkitl+s/y6BeGqjVJVV5XJyGg331+FM9H8HOiJh/TVqux2oKsBuEuD0CTr2QFOPIBqMQJx0wIt8KmxjsYZG3p99tSboU9wl0JKhSC44I8VThoW9JYqs6Huax9GfpAXULb9WKnkTZfaeJU2K5XYu3aMHRdQ49j1LvoEj63Sn7ennIBvI2oaZ29MftCsveqeExqyU/oSt9dBDe/cETd1nxIitZnbZvrWYo9ag1dfxx16o7rwZ8B7B0UJaimLD1jQi6UDPAlpNM097cqeWvNG9QA6Uq24fe1DrZC9B37jb8oQWPgFd/elDPvXTkX4A0G6kOhxB8ZxXifdVEXqORpSOvTxMPO5slBNk4dg98VNLs9h8YCpJqt08kFSN3tZ4vasQ6Dg9z1IIDr3pW7dLrWTu7YF+uO64OKk0dIF4MHZzdhxadKPWrTYneri4BlTElm9e+AND+P+5dvYd5nD5HK/QqPgz67w1t0CjFTzFy8DOFfcW6hdvLahTcz47h; bm_ss=ab8e18ef4e; bm_sz=B222DE2547BD467C6E36342EDA1C26FE~YAAQ20ItF8XCALKXAQAAptdL6hwSNNHWy4fkTDYnpcovmeDp1QtICLNmaUJQbXz3+8OQVAgas9EjWFjL2DWpuWDVGFPzhRaMUgGrW0PRor/VZMxoaxoluhxalKcaFMH3/286qITi2K9x5I6ZNCJGLw3YZdPrKQ+VtJwOsoXuaxpE6DNWObQJqQtwk7Rp7q5YpaRaM6DaPxefpeJ+J7jmSqfaOWcOphUFIXne/MTw8JzfiK+f55WE9FWpT5HiflkoRaH9FckSu1W2kDf2mcWFWgEVu4dZkA+FjaSIOYgoBx4+1pJZJVqYSK6MFXuZlVyXHyt+aNsNjavMeFiUGaDp3xbkP7KQ2+EvtHSAYLiyy/XcEz6b4ahQMHRVooMGhUY0LqEv2d3MwXSizA==~4408370~4403508; aka_cr_code=US-OH; aka_lc_code=ML; aka_state_code=OH; akavpau_www_aafullsite=1751982828~id=4a9d982305254433f23b4af7b5d98ca4', 'https://www.aa.com');
+const cookieFilePath = './aa-cookies.txt';
+let cookies = [];
+try {
+  cookies = JSON.parse(fs.readFileSync('./aa-cookies.json', 'utf-8'));
+  cookies.forEach(cookie => {
+    // tough-cookie expects a Set-Cookie string, so reconstruct it
+    let cookieStr = `${cookie.name}=${cookie.value}`;
+    if (cookie.domain) cookieStr += `; Domain=${cookie.domain}`;
+    if (cookie.path) cookieStr += `; Path=${cookie.path}`;
+    if (cookie.expires && cookie.expires !== -1) cookieStr += `; Expires=${new Date(cookie.expires * 1000).toUTCString()}`;
+    if (cookie.httpOnly) cookieStr += '; HttpOnly';
+    if (cookie.secure) cookieStr += '; Secure';
+    try {
+      jar.setCookieSync(cookieStr, 'https://www.aa.com');
+    } catch (err) {
+      console.warn('Failed to set cookie:', cookieStr, err.message);
+    }
+  });
+} catch (err) {
+  console.warn('Could not read AA cookies JSON file:', err.message);
+}
 const fetchWithCookies = fetchCookie(fetch, jar);
 
 const AA_SEARCH_URL = 'https://www.aa.com/booking/api/search/itinerary';

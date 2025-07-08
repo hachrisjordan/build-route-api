@@ -1,0 +1,92 @@
+[
+  {
+    "name": "aka_state_code",
+    "value": "OH",
+    "domain": "www.aa.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": false,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "aka_cr_code",
+    "value": "US-OH",
+    "domain": "www.aa.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": false,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "AKA_A2",
+    "value": "A",
+    "domain": ".aa.com",
+    "path": "/",
+    "expires": 1751987966.423919,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "akavpau_www_aafullsite",
+    "value": "1751984666~id=ff8aff0b17f97d42d884e72691b68e8d",
+    "domain": "www.aa.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "aka_lc_code",
+    "value": "ML",
+    "domain": "www.aa.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "bm_ss",
+    "value": "ab8e18ef4e",
+    "domain": ".aa.com",
+    "path": "/",
+    "expires": 1751987966.423965,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "_abck",
+    "value": "B2C283801F92BEF36A17EED0D6DA8048~-1~YAAQ20ItF28hBbKXAQAAxuNn6g54Cz1XyFjRgKDKbjTL8HOfhKdBWAeYyCar46PagZGArjfLO5SqmCeOcFlhhN6fYgiate7nlYOP2aauXYHy47RQhMvvRLFduFtt0cLlcdAiu2xw92W9RFN3dT24Q7e6dxDVNy1u88nOakoEsfm3ZNkdXH6MbR9ppZTrhe0Z44mO9MRE6b/HrNRF1mMeFyueE+9NNljZEiahgarSE6dA+MYz1T/9yNsrkpjn+2dZPKCgpFDI1k7pLVJC35dcC42oMu+yFVcv7xaHBRySE+y00OYsTMZCwGhVABbWxETiuJC3A0qrzkBHTNQ71RiqcEhEVYMhbA2tN92neggZNoNp3hyrYPOZkORQdwyvyIWoBuCo0I0j0EgrLQkVU2I904+71AhGrFV862Bd9loxLIPohYuWn51uwZE6PCScOPZn~-1~-1~-1",
+    "domain": ".aa.com",
+    "path": "/",
+    "expires": 1783520366.423974,
+    "httpOnly": false,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "bm_s",
+    "value": "YAAQ20ItF3AhBbKXAQAAxuNn6gPJcchOwEnvT7i5AjG/Mhs3sqhXU+EberwZqmAjKx8H+6zOig41BXCC/h1wxn9tGfvUzX81fzv5Vgl7x+aS8oCiM54+ADM7KX82RIgk1D9p5DM+TYLx/44GOAMgAOBQRBdAUpmyEW7Z+bRIAoYekAv1ZzmUD+vsTozP0XG/o0pNHk9VYF/RHTdV3zPxrepzrYxLpXHDtBwCPvU82sr9hN0FrJEBCBfiBMBkDmdBNmphxlr1eq/69hI+wRwnd8w7vu0tBhRI9eAqDqKZqxKb2Z5QcVdFDl1GxV9lIQq/Hcw3Dfflvlxo36toKrHD1/0N9AQn1MtUL9KpqIqU4CjOt89xYxE0RxS5gstFli0NPRrovy0mUJByjcuYpl9zr/qdAH6kgeBvezAaRhGFzajC0+RdE07IacbV0GnDotO5l6DJgZvN78SX+VlpeyMXg7AOB8gxxc7tpO+ZIlWgASCjmUr4Vqb89UaLZhbIwLIQNcRDQBbht02yz/ZJMr4Z534c+awyOK7I690=",
+    "domain": ".aa.com",
+    "path": "/",
+    "expires": 1754662766.423988,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "bm_sz",
+    "value": "3B964F07B4AD052F913F26A2008DD7D2~YAAQ20ItF3EhBbKXAQAAxuNn6hwIxRXFHuDhUxOeWXwWalMw+76iAwW5d8fzRolQ7Nowldo44M5oIAraAY+fqdelqLKrnJc6tgQZrVv7NQUCVbKobuUBRrx5u38Q+LrG+ML5xKrLh/v3fFhNhNHf6TKD/U62FM9FcS2MQFM+7hSx3B3vnqkEed4VIB3Nqj2G9xEYMnhQULGui0LJ4IkgUC55QUee2aBHRYUMLlzEyPUzVQfhM8QNkUWRfyO36H3nvSwI7ntJF3+vsx02SZ7a10yuhs6Y2AyJY4o39yiQDSIGSULP+hPQSSmbE6z7tn1JdgyMG9NapyzPGmUT1j+ZHW8Vx/6S7IzMNPhIOxWL/t7Efq9lIF5lyWRFDmYsjfE1yZszYM5/gzVBHQ==~3228469~3683125",
+    "domain": ".aa.com",
+    "path": "/",
+    "expires": 1751998766.424001,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  }
+]
