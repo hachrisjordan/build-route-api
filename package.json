@@ -19,6 +19,7 @@
         "date-fns": "^4.1.0",
         "dotenv": "^16.5.0",
         "express": "^5.1.0",
+        "fetch-cookie": "^2.2.0",
         "https-proxy-agent": "^7.0.6",
         "iovalkey": "^0.3.2",
         "json5": "^2.2.3",
@@ -29,6 +30,7 @@
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
         "socks-proxy-agent": "^8.0.5",
+        "tough-cookie": "^5.1.2",
         "utf-8-validate": "^6.0.5",
         "uuid": "^11.1.0",
         "zod": "^3.22.2"
