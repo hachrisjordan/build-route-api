@@ -9,6 +9,9 @@ node alaska-microservice/alaska-service.js &
 # Start JetBlue microservice
 node jetblue-microservice/jetblue-service.js &
 
+# Start Finnair microservice
+node finnair-microservice/finnair-service.js &
+
 # Start the script to fetch AA cookies
 node scripts/fetch-aa-cookies.js &
 
