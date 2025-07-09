@@ -33,30 +33,79 @@ app.post('/alaska', async (req, res) => {
 
   const { from, to, depart, ADT } = req.body;
   try {
-    const params = new URLSearchParams({
-      O: from,
-      D: to,
-      OD: depart,
-      A: String(ADT),
-      C: '0',
-      L: '0',
-      RT: 'false',
-      ShoppingMethod: 'onlineaward',
-    });
-    const url = `https://www.alaskaair.com/search/results?${params.toString()}`;
-    const fetchOptions = {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br', // 3. Request compressed content
+    const postData = {
+      origins: [from],
+      destinations: [to],
+      dates: [depart],
+      numADTs: ADT,
+      numINFs: 0,
+      numCHDs: 0,
+      fareView: 'as_awards',
+      onba: false,
+      dnba: false,
+      discount: {
+        code: '',
+        status: 0,
+        expirationDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 3).toISOString(),
+        message: '',
+        memo: '',
+        type: 0,
+        searchContainsDiscountedFare: false,
+        campaignName: '',
+        campaignCode: '',
+        distribution: 0,
+        amount: 0,
+        validationErrors: [],
+        maxPassengers: 0
       },
+      isAlaska: false,
+      isMobileApp: false,
+      isWholeTripPricing: false,
+      sliceId: 0,
+      businessRequest: {
+        TravelerId: '',
+        BusinessRequestType: 0,
+        CountryCode: '',
+        StateCode: '',
+        ShowOnlySpecialFares: false
+      },
+      umnrAgeGroup: '',
+      lockFare: false,
+      sessionID: '',
+      solutionIDs: [],
+      solutionSetIDs: [],
+      qpxcVersion: '',
+      trackingTags: [],
+      isMultiCityAwards: false
+    };
+    const url = 'https://www.alaskaair.com/search/api/flightresults';
+    const fetchOptions = {
+      method: 'POST',
+      headers: {
+        'accept': '*/*',
+        'accept-encoding': 'gzip, deflate, br',
+        'accept-language': 'en-US,en;q=0.9',
+        'adrum': 'isAjax:true',
+        'connection': 'keep-alive',
+        'content-type': 'text/plain;charset=UTF-8',
+        'host': 'www.alaskaair.com',
+        'origin': 'https://www.alaskaair.com',
+        'referer': `https://www.alaskaair.com/search/results?A=${ADT}&O=${from}&D=${to}&OD=${depart}&OT=Anytime&RT=false&UPG=none&ShoppingMethod=onlineaward&awardType=MilesOnly`,
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+        'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X; en-us) ALKApp/iOS',
+      },
+      body: JSON.stringify(postData),
     };
     if (USE_PROXY) fetchOptions.agent = proxyAgent;
     const response = await fetch(url, fetchOptions);
-
-    // If AlaskaAir returns compressed data, node-fetch will decompress it automatically.
-    const html = await response.text();
-    res.status(200).json({ html }); // 4. This will be compressed by Express
+    if (!response.ok) {
+      const errorText = await response.text();
+      return res.status(response.status).json({ error: 'Alaska API error', status: response.status, body: errorText });
+    }
+    const json = await response.json();
+    res.status(200).json(json);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
