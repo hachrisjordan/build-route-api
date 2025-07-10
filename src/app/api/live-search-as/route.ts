@@ -24,7 +24,7 @@ function normalizeBundlesAndSegmentClasses(solutions: any, segments: any[]) {
     else if (key.includes("FIRST")) overallClass = "F";
     return {
       class: overallClass,
-      points: String(sol.milesPoints),
+      points: String(sol.atmosPoints),
       fareTax: String(sol.grandTotal),
       cabins: Array.isArray(sol.cabins) ? sol.cabins.map(mapCabinToClass) : [],
       overallClass,

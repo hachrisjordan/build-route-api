@@ -160,7 +160,7 @@ export async function POST(req: NextRequest) {
       include_trips: 'true',
       only_direct_flights: 'true',
       include_filtered: 'false',
-      carriers: 'A3%2CEY%2CAC%2CCA%2CAI%2CNZ%2CNH%2COZ%2COS%2CAV%2CSN%2CCM%2COU%2CMS%2CET%2CBR%2CLO%2CLH%2CCL%2CZH%2CSQ%2CSA%2CLX%2CTP%2CTG%2CTK%2CUA%2CAR%2CAM%2CUX%2CAF%2CCI%2CMU%2CDL%2CGA%2CKQ%2CME%2CKL%2CKE%2CSV%2CSK%2CRO%2CMH%2CVN%2CVS%2CMF%2CAS%2CAA%2CBA%2CCX%2CFJ%2CAY%2CIB%2CJL%2CMS%2CQF%2CQR%2CRJ%2CAT%2CUL%2CWY%2CJX%2CEK'
+      carriers: 'A3%2CEY%2CAC%2CCA%2CAI%2CNZ%2CNH%2COZ%2COS%2CAV%2CSN%2CCM%2COU%2CMS%2CET%2CBR%2CLO%2CLH%2CCL%2CZH%2CSQ%2CSA%2CLX%2CTP%2CTG%2CTK%2CUA%2CAR%2CAM%2CUX%2CAF%2CCI%2CMU%2CDL%2CGA%2CKQ%2CME%2CKL%2CKE%2CSV%2CSK%2CRO%2CMH%2CVN%2CVS%2CMF%2CAS%2CAA%2CBA%2CCX%2CFJ%2CAY%2CIB%2CJL%2CMS%2CQF%2CQR%2CRJ%2CAT%2CUL%2CWY%2CJX%2CEK%2CB6'
     };
     if (cabin) baseParams.cabin = cabin;
     if (carriers) baseParams.carriers = carriers;
@@ -344,13 +344,15 @@ export async function POST(req: NextRequest) {
       const etihad = ['EY'];
       const emirates = ['EK'];
       const starlux = ['JX'];
-      let alliance: 'SA' | 'ST' | 'OW' | 'EY' | 'EK' | 'JX' | undefined;
+      const b6 = ['B6'];
+      let alliance: 'SA' | 'ST' | 'OW' | 'EY' | 'EK' | 'JX' | 'B6' | undefined;
       if (starAlliance.includes(flightPrefix)) alliance = 'SA';
       else if (skyTeam.includes(flightPrefix)) alliance = 'ST';
       else if (oneWorld.includes(flightPrefix)) alliance = 'OW';
       else if (etihad.includes(flightPrefix)) alliance = 'EY';
       else if (emirates.includes(flightPrefix)) alliance = 'EK';
       else if (starlux.includes(flightPrefix)) alliance = 'JX';
+      else if (b6.includes(flightPrefix)) alliance = 'B6';
       else alliance = undefined;
       return alliance ? { ...rest, alliance } : null;
     }).filter(Boolean);
