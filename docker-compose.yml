@@ -16,6 +16,22 @@ services:
     depends_on:
       - valkey
 
+  united-microservice:
+    build: .
+    ports:
+      - "4004:4004"
+    environment:
+      - NODE_ENV=production
+      - PROXY_HOST=${PROXY_HOST}
+      - PROXY_PORT=${PROXY_PORT}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
+    volumes:
+      - ./united-microservice:/app/united-microservice
+      - ./arkalis:/app/arkalis
+    working_dir: /app
+    command: npx tsx united-microservice/united-service.ts
+
   valkey:
     image: redis:7-alpine
     ports:

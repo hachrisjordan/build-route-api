@@ -1,0 +1,108 @@
+{
+    "itinerary": [
+        {
+            "from": "HAN",
+            "to": "CVG",
+            "connections": [
+                "BKK",
+                "NRT",
+                "ORD"
+            ],
+            "depart": "2025-07-17T20:45:00",
+            "arrive": "2025-07-18T20:34:00",
+            "duration": 2089,
+            "bundles": [
+                {
+                    "class": "J",
+                    "points": "220000",
+                    "fareTax": "65.31"
+                },
+                {
+                    "class": "F",
+                    "points": "220000",
+                    "fareTax": "65.31"
+                }
+            ],
+            "segments": [
+                {
+                    "from": "HAN",
+                    "to": "BKK",
+                    "aircraft": "788",
+                    "stops": 0,
+                    "depart": "2025-07-17T20:45:00",
+                    "arrive": "2025-07-17T22:35:00",
+                    "flightnumber": "TG565",
+                    "duration": 110,
+                    "layover": 310,
+                    "distance": 550,
+                    "bundleClasses": [
+                        {
+                            "JClass": "J"
+                        },
+                        {
+                            "FClass": "J"
+                        }
+                    ]
+                },
+                {
+                    "from": "BKK",
+                    "to": "NRT",
+                    "aircraft": "77W",
+                    "stops": 0,
+                    "depart": "2025-07-18T07:45:00",
+                    "arrive": "2025-07-18T15:55:00",
+                    "flightnumber": "TG676",
+                    "duration": 370,
+                    "layover": 65,
+                    "distance": 2887,
+                    "bundleClasses": [
+                        {
+                            "JClass": "J"
+                        },
+                        {
+                            "FClass": "F"
+                        }
+                    ]
+                },
+                {
+                    "from": "NRT",
+                    "to": "ORD",
+                    "aircraft": "77W",
+                    "stops": 0,
+                    "depart": "2025-07-18T17:00:00",
+                    "arrive": "2025-07-18T14:55:00",
+                    "flightnumber": "NH12",
+                    "duration": 715,
+                    "layover": 195,
+                    "distance": 6256,
+                    "bundleClasses": [
+                        {
+                            "JClass": "F"
+                        },
+                        {
+                            "FClass": "F"
+                        }
+                    ]
+                },
+ {
+                    "from": "ORD",
+                    "to": "CVG",
+                    "aircraft": "73G",
+                    "stops": 0,
+                    "depart": "2025-07-18T18:10:00",
+                    "arrive": "2025-07-18T20:34:00",
+                    "flightnumber": "UA2494",
+                    "duration": 84,
+                    "layover": 0,
+                    "distance": 264,
+                    "bundleClasses": [
+                        {
+                            "JClass": "Y"
+                        },
+                        {
+                            "FClass": "Y"
+                        }
+                    ]
+                },
+            ]
+        },

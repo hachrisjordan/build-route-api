@@ -14,9 +14,14 @@
         "@supabase/mcp-utils": "^0.2.0",
         "@supabase/ssr": "^0.6.1",
         "@supabase/supabase-js": "^2.49.8",
+        "ansi-colors": "^4.1.3",
+        "bezier-js": "^6.1.4",
         "bufferutil": "^4.0.9",
+        "chrome-launcher": "^1.2.0",
+        "chrome-remote-interface": "^0.33.3",
         "compression": "^1.8.0",
         "date-fns": "^4.1.0",
+        "dayjs": "^1.11.13",
         "dotenv": "^16.5.0",
         "express": "^5.1.0",
         "fetch-cookie": "^2.2.0",
@@ -25,6 +30,7 @@
         "json5": "^2.2.3",
         "next": "^13.4.0",
         "node-fetch": "^2.7.0",
+        "p-retry": "^6.2.1",
         "playwright": "^1.53.0",
         "python": "^0.0.4",
         "react": "^18.2.0",
@@ -33,15 +39,20 @@
         "tough-cookie": "^5.1.2",
         "utf-8-validate": "^6.0.5",
         "uuid": "^11.1.0",
+        "winston": "^3.17.0",
         "zod": "^3.22.2"
     },
     "devDependencies": {
         "@eslint/js": "^9.27.0",
+        "@types/chrome-remote-interface": "^0.31.14",
+        "@types/compression": "^1.8.1",
+        "@types/express": "^5.0.3",
         "@types/node-fetch": "^2.6.12",
         "@types/react": "19.1.6",
         "eslint": "^9.27.0",
         "eslint-plugin-react": "^7.37.5",
         "globals": "^16.2.0",
+        "tsx": "^4.20.3",
         "typescript": "5.8.3"
     }
 }
