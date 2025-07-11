@@ -39,7 +39,7 @@ export const arkalisPageHelpers = (arkalis: ArkalisCore) => {
     waitFor: async (items: Record<string, WaitForType>): Promise<WaitForReturn> => {
       type SubscriptionCancelation = () => void
       const subscriptions: SubscriptionCancelation[] = []
-      const pollingTimers: NodeJS.Timer[] = []
+      const pollingTimers: NodeJS.Timeout[] = []
       let timeout: NodeJS.Timeout | undefined
 
       try {
