@@ -1,7 +1,7 @@
 // TODO: net log gets cut off if the browser isn't closed properly
 
 import { readFile, writeFile } from "fs/promises"
-import type { Entry, Log, PostData, QueryString } from "har-format" // TODO: why does depcheck not detect this
+import type { Entry, Log, PostData, QueryString } from "har-format";
 import c from "ansi-colors"
 import { ArkalisCore } from "./arkalis.js"
 import { NetlogEvent, NetlogEventParams, NetlogJson, NetlogPhase } from "./har-types.js"
