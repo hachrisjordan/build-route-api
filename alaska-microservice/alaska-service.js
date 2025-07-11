@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const fetch = require('node-fetch');
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const compression = require('compression'); // 1. Import compression
 

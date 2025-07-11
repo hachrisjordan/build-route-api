@@ -93,11 +93,13 @@ export const arkalisBrowser = async (arkalis: ArkalisCore) => {
   }
 
   // launch chrome
+  arkalis.log('Attempting to launch Chrome browser...');
   const instance = await ChromeLauncher.launch({
     chromeFlags: switches.map(s => s.length > 0 ? `--${s}` : ""),
     ignoreDefaultFlags: true,
     logLevel: arkalis.debugOptions.browserDebug ? "verbose" : "silent",
-  })
+  });
+  arkalis.log('Chrome browser launched!');
 
   // connect to cdp client
   arkalis.debugOptions.browserDebug && arkalis.log("connecting to cdp client")

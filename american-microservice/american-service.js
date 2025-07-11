@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const fetch = require('node-fetch');
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const fetchCookie = require('fetch-cookie');
 const { CookieJar } = require('tough-cookie');
 const { HttpsProxyAgent } = require('https-proxy-agent');

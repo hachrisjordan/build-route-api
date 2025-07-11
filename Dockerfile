@@ -1,10 +1,32 @@
-FROM node:20.18.0-alpine
+FROM --platform=linux/amd64 node:20.18.0-alpine
 
 WORKDIR /app
+# Install system dependencies
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    nss \
+    chromium \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    nodejs \
+    yarn \
+    xvfb \
+    xdpyinfo
+
+# Install Node.js dependencies
 COPY package*.json ./
-RUN apk add --no-cache python3 make g++
 RUN npm ci
+
+# Install Playwright browsers
+RUN npx playwright install
+
+# Copy the rest of your app
 COPY . .
+
+# Build your app
 RUN npm run build
 ENV NODE_ENV=production
 EXPOSE 3000
@@ -28,4 +50,4 @@ RUN touch /app/batch.log /var/log/cron.log
 RUN chmod +x /app/scripts/start-all.sh
 
 # Start cron and all services
-CMD sh -c "crond -f & /app/scripts/start-all.sh"
+CMD Xvfb :99 -screen 0 1920x1080x24 & export DISPLAY=:99 && sh -c "crond -f & /app/scripts/start-all.sh"
