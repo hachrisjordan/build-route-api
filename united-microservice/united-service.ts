@@ -21,6 +21,22 @@ app.post('/united', async (req: Request, res: Response) => {
     console.log(`United microservice: Searching for flights from ${from} to ${to} on ${depart} for ${ADT} adults`);
     console.log(`URL: ${searchUrl}`);
 
+    // Proxy config (runtime only)
+    const USE_PROXY = process.env.USE_PROXY === 'true';
+    const proxy_host = process.env.PROXY_HOST;
+    const proxy_port = process.env.PROXY_PORT;
+    const proxy_username = process.env.PROXY_USERNAME;
+    const proxy_password = process.env.PROXY_PASSWORD;
+    let proxyUrl: string | undefined = undefined;
+    if (USE_PROXY) {
+      if (!proxy_host || !proxy_port || !proxy_username || !proxy_password) {
+        return res.status(500).json({ error: 'Proxy configuration is missing. Please set PROXY_HOST, PROXY_PORT, PROXY_USERNAME, and PROXY_PASSWORD in your environment variables.' });
+      }
+      proxyUrl = `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`;
+      // Set the environment variable for Arkalis to pick up
+      process.env.PROXY_ADDRESS_UNITED_MICROSERVICE = proxyUrl;
+    }
+
     const results = await runArkalis(
       async (arkalis) => {
         arkalis.goto(searchUrl);
@@ -47,7 +63,7 @@ app.post('/united', async (req: Request, res: Response) => {
         return rawResponse;
       },
       {
-        useProxy: true,
+        useProxy: USE_PROXY,
         browserDebug: false,
         showRequests: true,
         maxAttempts: 3
@@ -94,6 +110,7 @@ app.post('/united', async (req: Request, res: Response) => {
           
           // Fonts (not essential for API functionality)
           "*.woff2",
+          "*.woff",
           
           // Images (not essential for API functionality)
           "*.png",
