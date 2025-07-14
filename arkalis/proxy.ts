@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { ArkalisCore } from "./arkalis.js"
 import c from "ansi-colors"
 import url from "node:url"

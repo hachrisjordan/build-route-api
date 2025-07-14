@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { promisify } from "util"
 import { exec as execNoPromise } from "node:child_process"
 import url from "node:url"

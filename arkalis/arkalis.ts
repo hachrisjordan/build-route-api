@@ -260,7 +260,7 @@ export async function runArkalis<T>(code: (arkalis: Arkalis) => Promise<T>, debu
     arkalisError.arkalis.warn(`Failed to run scraper (attempt ${error.attemptNumber} of ${error.retriesLeft + error.attemptNumber}): ${error.message.split("\n")[0]!}`)
     allLogLines.push(...arkalisError.logLines)
 
-  } }).catch(e => {
+  } }).catch(_e => {
     return { result: undefined, logLines: allLogLines }
   })
 }
