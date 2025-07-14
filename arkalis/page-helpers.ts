@@ -15,27 +15,11 @@ export const arkalisPageHelpers = (arkalis: ArkalisCore) => {
   const getLastResponseTime = (arkalis as Arkalis).getLastResponseTime
 
   return {
-    /** Navigates to the specified URL and waits for navigation to complete
+    /** Navigates to the specified URL and returns immediately
      * @param gotoUrl - the url to navigate to */
-    goto: async (gotoUrl: string) => {
+    goto: (gotoUrl: string) => {
       arkalis.log(`navigating to ${gotoUrl}`)
-      try {
-        // Log all open pages/tabs before navigation if possible
-        if (arkalis.client.Target && arkalis.client.Target.getTargets) {
-          const targets = await arkalis.client.Target.getTargets();
-          arkalis.log(`Open targets before navigation: ${JSON.stringify(targets.targetInfos)}`);
-        }
-        const result = await arkalis.client.Page.navigate({ url: gotoUrl });
-        arkalis.log(`navigation to ${gotoUrl} complete, result: ${JSON.stringify(result)}`);
-        // Log all open pages/tabs after navigation if possible
-        if (arkalis.client.Target && arkalis.client.Target.getTargets) {
-          const targets = await arkalis.client.Target.getTargets();
-          arkalis.log(`Open targets after navigation: ${JSON.stringify(targets.targetInfos)}`);
-        }
-      } catch (error) {
-        arkalis.log(`Error navigating to ${gotoUrl}: ${error instanceof Error ? error.stack : error}`);
-        throw error;
-      }
+      void arkalis.client.Page.navigate({ url: gotoUrl })
     },
 
     getSelectorContent: async (selector: string) => {

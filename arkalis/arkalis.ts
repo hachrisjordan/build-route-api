@@ -157,7 +157,6 @@ async function runArkalisAttempt<T>(code: (arkalis: Arkalis) => Promise<T>, debu
   for (const pluginName of Object.keys(DEFAULT_PLUGINS)) {
     try {
       const loadedPlugin = await DEFAULT_PLUGINS[pluginName as keyof typeof DEFAULT_PLUGINS](arkalis as ArkalisCore)
-      log(`Loaded plugin: ${pluginName}`)
       loadedPlugins.push(loadedPlugin)
       arkalis = { ...arkalis, ...loadedPlugin }
     } catch (err) {
@@ -167,15 +166,6 @@ async function runArkalisAttempt<T>(code: (arkalis: Arkalis) => Promise<T>, debu
     }
   }
 
-  log('About to call user function in Arkalis...')
-  let userResult
-  try {
-    userResult = await code(arkalis as Arkalis)
-    log('User function in Arkalis completed.')
-  } catch (err) {
-    log('Error in user function:', err)
-    throw err
-  }
   ////////////////////////////////////
 
   async function close() {

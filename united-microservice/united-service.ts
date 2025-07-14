@@ -6,10 +6,6 @@ const app = express();
 app.use(express.json());
 app.use(compression());
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection:', reason)
-})
-
 app.post('/united', async (req: Request, res: Response) => {
   try {
     const { from, to, depart, ADT } = req.body;
@@ -41,12 +37,9 @@ app.post('/united', async (req: Request, res: Response) => {
       process.env.PROXY_ADDRESS_UNITED_MICROSERVICE = proxyUrl;
     }
 
-    console.log('About to call runArkalis...')
     const results = await runArkalis(
       async (arkalis) => {
-        console.log('Navigating to United search URL...');
-        await arkalis.goto(searchUrl);
-        console.log('Navigation complete. Waiting for result...');
+        arkalis.goto(searchUrl);
         
         const waitForResult = await arkalis.waitFor({
           "success": {
@@ -59,7 +52,6 @@ app.post('/united', async (req: Request, res: Response) => {
           "invalid input": { type: "html", html: "We can't process this request. Please restart your search." },
           "anti-botting": { type: "html", html: "united.com was unable to complete" }
         });
-        console.log('waitForResult:', waitForResult)
 
         if (waitForResult.name !== "success") {
           return { error: waitForResult.name };
@@ -135,7 +127,6 @@ app.post('/united', async (req: Request, res: Response) => {
       },
       `united-microservice-${from}-${to}-${depart}`
     );
-    console.log('runArkalis finished:', results)
 
     if (results.result) {
       console.log(`✅ United microservice: Success! Raw FetchFlights response retrieved`);

@@ -59,5 +59,4 @@ RUN touch /app/batch.log /var/log/cron.log
 RUN chmod +x /app/scripts/start-all.sh
 
 # Start cron and all services
-RUN apk add --no-cache openbox xterm bash
 CMD Xvfb :99 -screen 0 1920x1080x24 & export DISPLAY=:99 && sh -c "crond -f & /app/scripts/start-all.sh"
