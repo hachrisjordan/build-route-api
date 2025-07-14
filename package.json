@@ -5,8 +5,10 @@
     "scripts": {
         "dev": "next dev",
         "build": "next build",
+        "build:check": "tsc --noEmit && next build",
         "start": "next start",
         "lint": "eslint .",
+        "type-check": "tsc --noEmit",
         "analyze": "ANALYZE=true npm run build",
         "audit-deps": "npx depcheck",
         "security-audit": "npm audit"

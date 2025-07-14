@@ -6,6 +6,11 @@ const nextConfig = {
     forceSwcTransforms: true,
   },
   
+  // Skip type checking during build (handled separately)
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  
   // Output file tracing for smaller bundles
   outputFileTracingRoot: __dirname,
   
