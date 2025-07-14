@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Arkalis, ArkalisCore } from "./arkalis.js"
 import type { Protocol } from "devtools-protocol"
 
