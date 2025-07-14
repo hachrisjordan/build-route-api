@@ -7,11 +7,17 @@ rm -f /tmp/.X99-lock
 Xvfb :99 -screen 0 1920x1080x24 &
 export DISPLAY=:99
 
+# Start Openbox window manager in the background
+openbox &
+
 # Start x11vnc in the background for VNC access (default password: 'vncpassword')
 x11vnc -display :99 -forever -shared -passwd vncpassword -rfbport 5900 -bg
 
 # Start noVNC (websockify) in the background
 /opt/novnc/utils/novnc_proxy --vnc localhost:5900 --listen 6080 &
+
+# Start xterm for GUI test (optional, can be removed after confirming GUI works)
+xterm &
 
 # Now start all microservices
 node alaska-microservice/alaska-service.js &

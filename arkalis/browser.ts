@@ -103,11 +103,17 @@ export const arkalisBrowser = async (arkalis: ArkalisCore) => {
 
   // connect to cdp client
   arkalis.debugOptions.browserDebug && arkalis.log("connecting to cdp client")
-  arkalis.client = await CDP({ port: instance.port })
-  await arkalis.client.Network.enable()
-  await arkalis.client.Page.enable()
-  await arkalis.client.Runtime.enable()
-  await arkalis.client.DOM.enable()
+  arkalis.log('Attempting to connect to Chrome via CDP...');
+  arkalis.client = await CDP({ port: instance.port });
+  arkalis.log('Connected to Chrome via CDP.');
+  await arkalis.client.Network.enable();
+  arkalis.log('CDP Network enabled.');
+  await arkalis.client.Page.enable();
+  arkalis.log('CDP Page enabled.');
+  await arkalis.client.Runtime.enable();
+  arkalis.log('CDP Runtime enabled.');
+  await arkalis.client.DOM.enable();
+  arkalis.log('CDP DOM enabled.');
 
   // timezone (set either by the caller or the proxy)
   if (arkalis.debugOptions.timezone)
