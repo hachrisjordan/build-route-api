@@ -22,7 +22,7 @@ app.post('/united', async (req: Request, res: Response) => {
     console.log(`URL: ${searchUrl}`);
 
     // Proxy config (runtime only)
-    const USE_PROXY = process.env.USE_PROXY === 'true';
+    const USE_PROXY = process.env.USE_PROXY === 'false';
     const proxy_host = process.env.PROXY_HOST;
     const proxy_port = process.env.PROXY_PORT;
     const proxy_username = process.env.PROXY_USERNAME;

@@ -14,7 +14,14 @@ RUN apk add --no-cache \
     nodejs \
     yarn \
     xvfb \
-    xdpyinfo
+    xdpyinfo \
+    x11vnc
+
+# Install noVNC and websockify
+RUN apk add --no-cache git python3 py3-pip \
+    && git clone https://github.com/novnc/noVNC.git /opt/novnc \
+    && git clone https://github.com/novnc/websockify /opt/novnc/utils/websockify \
+    && ln -s /opt/novnc/vnc.html /opt/novnc/index.html
 
 # Install Node.js dependencies
 COPY package*.json ./
@@ -30,6 +37,8 @@ COPY . .
 RUN npm run build
 ENV NODE_ENV=production
 EXPOSE 3000
+EXPOSE 5900
+EXPOSE 6080
 
 # Install cron
 RUN apk update && apk add --no-cache dcron
