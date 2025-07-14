@@ -26,7 +26,7 @@ async function runBatch(from: string, to: string) {
   const body = { from, to, days: DAYS, start };
   try {
     // Proxy config (runtime only)
-    const USE_PROXY = false;
+    const USE_PROXY = true;
     const proxy_host = process.env.PROXY_HOST;
     const proxy_port = process.env.PROXY_PORT;
     const proxy_username = process.env.PROXY_USERNAME;
