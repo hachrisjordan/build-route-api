@@ -1,0 +1,45 @@
+
+> build-itinerary-api@1.0.0 build
+> next build
+
+Attention: Next.js now collects completely anonymous telemetry regarding usage.
+This information is used to shape Next.js' roadmap and prioritize features.
+You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+https://nextjs.org/telemetry
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/12) ...
+   Generating static pages (3/12) 
+   Generating static pages (6/12) 
+   Generating static pages (9/12) 
+ ✓ Generating static pages (12/12) 
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                Size     First Load JS
+┌ λ /api/availability-v2                   0 B                0 B
+├ λ /api/build-itineraries                 0 B                0 B
+├ λ /api/create-full-route-path            0 B                0 B
+├ λ /api/jetblue-lfs                       0 B                0 B
+├ λ /api/jetblue-lfs-batch                 0 B                0 B
+├ λ /api/live-search-aa                    0 B                0 B
+├ λ /api/live-search-as                    0 B                0 B
+├ λ /api/live-search-ay                    0 B                0 B
+├ λ /api/live-search-b6                    0 B                0 B
+└ λ /api/live-search-ua                    0 B                0 B
++ First Load JS shared by all              0 B
+
+Route (pages)                              Size     First Load JS
+─ ○ /404                                   181 B            80 kB
++ First Load JS shared by all              79.8 kB
+  ├ chunks/framework-c5181c9431ddc45b.js   45.2 kB
+  ├ chunks/main-a7e1224c6818becf.js        32.9 kB
+  ├ chunks/pages/_app-1534f180665c857f.js  205 B
+  └ chunks/webpack-debebc25b70719f8.js     1.48 kB
+
+λ  (Server)  server-side renders at runtime (uses getInitialProps or getServerSideProps)
+○  (Static)  automatically rendered as static HTML (uses no initial props)
+
