@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import Valkey from 'iovalkey';
+import { createHash } from 'crypto';
+import zlib from 'zlib';
 import { addDays, parseISO, format } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
 
@@ -11,6 +13,7 @@ const availabilityV2Schema = z.object({
   endDate: z.string().min(8),
   cabin: z.string().optional(),
   carriers: z.string().optional(),
+  seats: z.coerce.number().int().min(1).default(1).optional(),
 });
 
 const SEATS_SEARCH_URL = "https://seats.aero/partnerapi/search?";
@@ -30,17 +33,17 @@ function getValkeyClient(): any {
   valkey = new Valkey({ host, port, password });
   return valkey;
 }
-
-async function saveSeatsAeroLink(url: string) {
+// Helper to compress and save response to Valkey
+async function saveCompressedResponseToValkey(key: string, response: any) {
   const client = getValkeyClient();
   if (!client) return;
   try {
-    // Use a Redis set to deduplicate, and set TTL 24h (86400s)
-    await client.sadd('seats_aero_links', url);
-    await client.expire('seats_aero_links', 86400);
+    const json = JSON.stringify(response);
+    const compressed = zlib.gzipSync(json);
+    await client.setBuffer(key, compressed);
+    await client.expire(key, 86400); // 24h TTL
   } catch (err) {
-    // Non-blocking, log only
-    console.error('Valkey saveSeatsAeroLink error:', err);
+    console.error('Valkey saveCompressedResponseToValkey error:', err);
   }
 }
 
@@ -112,7 +115,8 @@ export async function POST(req: NextRequest) {
     if (!parseResult.success) {
       return NextResponse.json({ error: 'Invalid input', details: parseResult.error.errors }, { status: 400 });
     }
-    const { routeId, startDate, endDate, cabin, carriers } = parseResult.data;
+    const { routeId, startDate, endDate, cabin, carriers, seats: seatsRaw } = parseResult.data;
+    const seats = typeof seatsRaw === 'number' && seatsRaw > 0 ? seatsRaw : 1;
 
     // Compute seatsAeroEndDate as +3 days after user input endDate
     let seatsAeroEndDate: string;
@@ -160,7 +164,8 @@ export async function POST(req: NextRequest) {
       include_trips: 'true',
       only_direct_flights: 'true',
       include_filtered: 'false',
-      carriers: 'A3%2CEY%2CAC%2CCA%2CAI%2CNZ%2CNH%2COZ%2COS%2CAV%2CSN%2CCM%2COU%2CMS%2CET%2CBR%2CLO%2CLH%2CCL%2CZH%2CSQ%2CSA%2CLX%2CTP%2CTG%2CTK%2CUA%2CAR%2CAM%2CUX%2CAF%2CCI%2CMU%2CDL%2CGA%2CKQ%2CME%2CKL%2CKE%2CSV%2CSK%2CRO%2CMH%2CVN%2CVS%2CMF%2CAS%2CAA%2CBA%2CCX%2CFJ%2CAY%2CIB%2CJL%2CMS%2CQF%2CQR%2CRJ%2CAT%2CUL%2CWY%2CJX%2CEK%2CB6%2CDE%2CGF'
+      carriers: 'A3%2CEY%2CAC%2CCA%2CAI%2CNZ%2CNH%2COZ%2COS%2CAV%2CSN%2CCM%2COU%2CMS%2CET%2CBR%2CLO%2CLH%2CCL%2CZH%2CSQ%2CSA%2CLX%2CTP%2CTG%2CTK%2CUA%2CAR%2CAM%2CUX%2CAF%2CCI%2CMU%2CDL%2CGA%2CKQ%2CME%2CKL%2CKE%2CSV%2CSK%2CRO%2CMH%2CVN%2CVS%2CMF%2CAS%2CAA%2CBA%2CCX%2CFJ%2CAY%2CIB%2CJL%2CMS%2CQF%2CQR%2CRJ%2CAT%2CUL%2CWY%2CJX%2CEK%2CB6%2CDE%2CGF',
+      disable_live_filtering: 'true'
     };
     if (cabin) baseParams.cabin = cabin;
     if (carriers) baseParams.carriers = carriers;
@@ -171,7 +176,6 @@ export async function POST(req: NextRequest) {
     };
     // Fetch first page
     const firstUrl = buildUrl({ ...baseParams });
-    saveSeatsAeroLink(firstUrl); // fire-and-forget
     const firstRes = await fetch(firstUrl, {
       method: 'GET',
       headers: {
@@ -211,31 +215,26 @@ export async function POST(req: NextRequest) {
       for (let i = 1; i <= maxPages; i++) {
         const params = { ...baseParams, skip: i * 1000 };
         const url = buildUrl(params);
-        saveSeatsAeroLink(url); // fire-and-forget
-        fetches.push(
-          fetch(url, {
-            method: 'GET',
-            headers: {
-              accept: 'application/json',
-              'Partner-Authorization': apiKey,
-            },
-          })
-            .then(async (res) => {
-              seatsAeroRequests++;
-              if (res.ok) return res.json();
-              return null;
-            })
-            .catch(() => null)
-        );
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: {
+            accept: 'application/json',
+            'Partner-Authorization': apiKey,
+          },
+        });
+        seatsAeroRequests++;
+        if (!res.ok) break;
+        const data = await res.json();
+        allPages.push(data);
+        hasMore = data.hasMore || false;
+        cursor = data.cursor;
+        lastResponse = res;
       }
-      const morePages = await Promise.all(fetches);
-      allPages = [firstData, ...morePages.filter(Boolean)];
     } else {
       // Fallback: sequential fetch using cursor
       while (hasMore && cursor) {
         const params = { ...baseParams, cursor };
         const url = buildUrl(params);
-        saveSeatsAeroLink(url); // fire-and-forget
         const res = await fetch(url, {
           method: 'GET',
           headers: {
@@ -260,6 +259,29 @@ export async function POST(req: NextRequest) {
           if (item.AvailabilityTrips && Array.isArray(item.AvailabilityTrips) && item.AvailabilityTrips.length > 0) {
             for (const trip of item.AvailabilityTrips) {
               if (trip.Stops !== 0) continue;
+              // Only include trips with enough RemainingSeats for the requested cabin
+              let includeTrip = false;
+              let cabinType = '';
+              if (cabin) {
+                if (
+                  trip.Cabin &&
+                  trip.Cabin.toLowerCase() === cabin.toLowerCase() &&
+                  typeof trip.RemainingSeats === 'number' &&
+                  trip.RemainingSeats >= seats
+                ) {
+                  includeTrip = true;
+                  cabinType = trip.Cabin.toLowerCase();
+                }
+              } else {
+                if (
+                  typeof trip.RemainingSeats === 'number' &&
+                  trip.RemainingSeats >= seats
+                ) {
+                  includeTrip = true;
+                  cabinType = trip.Cabin ? trip.Cabin.toLowerCase() : '';
+                }
+              }
+              if (!includeTrip) continue;
               const flightNumbersArr = (trip.FlightNumbers || '').split(/,\s*/);
               for (const flightNumber of flightNumbersArr) {
                 const normalizedFlightNumber = normalizeFlightNumber(flightNumber);
@@ -273,10 +295,10 @@ export async function POST(req: NextRequest) {
                   Aircraft: Array.isArray(trip.Aircraft) && trip.Aircraft.length > 0 ? trip.Aircraft[0] : '',
                   DepartsAt: trip.DepartsAt || '',
                   ArrivesAt: trip.ArrivesAt || '',
-                  YMile: (trip.Cabin && trip.Cabin.toLowerCase() === 'economy') ? (trip.MileageCost || 0) : 0,
-                  WMile: (trip.Cabin && trip.Cabin.toLowerCase() === 'premium') ? (trip.MileageCost || 0) : 0,
-                  JMile: (trip.Cabin && trip.Cabin.toLowerCase() === 'business') ? (trip.MileageCost || 0) : 0,
-                  FMile: (trip.Cabin && trip.Cabin.toLowerCase() === 'first') ? (trip.MileageCost || 0) : 0,
+                  YMile: (cabinType === 'economy') ? (trip.MileageCost || 0) : 0,
+                  WMile: (cabinType === 'premium') ? (trip.MileageCost || 0) : 0,
+                  JMile: (cabinType === 'business') ? (trip.MileageCost || 0) : 0,
+                  FMile: (cabinType === 'first') ? (trip.MileageCost || 0) : 0,
                   Source: trip.Source || item.Source || '',
                   Cabin: trip.Cabin || '',
                 });
@@ -287,23 +309,25 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-    // Merge duplicates based on originAirport, destinationAirport, date, FlightNumbers
+    // Merge duplicates based on originAirport, destinationAirport, date, FlightNumbers, and Source
+    // When merging, only sum counts for entries that have a positive count (i.e., only those that passed the seat filter)
     const mergedMap = new Map<string, any>();
     for (const entry of results) {
       const key = [
         entry.originAirport,
         entry.destinationAirport,
         entry.date,
-        normalizeFlightNumber(entry.FlightNumbers)
+        normalizeFlightNumber(entry.FlightNumbers),
+        entry.Source
       ].join('|');
       const flightPrefix = (entry.FlightNumbers || '').slice(0, 2).toUpperCase();
       if (!mergedMap.has(key)) {
         mergedMap.set(key, {
           ...entry,
-          YCount: entry.YMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'Y', source: entry.Source, reliabilityTable }) : 0,
-          WCount: entry.WMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'W', source: entry.Source, reliabilityTable }) : 0,
-          JCount: entry.JMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'J', source: entry.Source, reliabilityTable }) : 0,
-          FCount: entry.FMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'F', source: entry.Source, reliabilityTable }) : 0,
+          YCount: (entry.YMile > 0 && entry.Cabin.toLowerCase() === 'economy') ? getCountMultiplier({ code: flightPrefix, cabin: 'Y', source: entry.Source, reliabilityTable }) : 0,
+          WCount: (entry.WMile > 0 && entry.Cabin.toLowerCase() === 'premium') ? getCountMultiplier({ code: flightPrefix, cabin: 'W', source: entry.Source, reliabilityTable }) : 0,
+          JCount: (entry.JMile > 0 && entry.Cabin.toLowerCase() === 'business') ? getCountMultiplier({ code: flightPrefix, cabin: 'J', source: entry.Source, reliabilityTable }) : 0,
+          FCount: (entry.FMile > 0 && entry.Cabin.toLowerCase() === 'first') ? getCountMultiplier({ code: flightPrefix, cabin: 'F', source: entry.Source, reliabilityTable }) : 0,
           YMile: undefined,
           WMile: undefined,
           JMile: undefined,
@@ -311,10 +335,10 @@ export async function POST(req: NextRequest) {
         });
       } else {
         const merged = mergedMap.get(key);
-        merged.YCount += entry.YMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'Y', source: entry.Source, reliabilityTable }) : 0;
-        merged.WCount += entry.WMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'W', source: entry.Source, reliabilityTable }) : 0;
-        merged.JCount += entry.JMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'J', source: entry.Source, reliabilityTable }) : 0;
-        merged.FCount += entry.FMile > 0 ? getCountMultiplier({ code: flightPrefix, cabin: 'F', source: entry.Source, reliabilityTable }) : 0;
+        merged.YCount += (entry.YMile > 0 && entry.Cabin.toLowerCase() === 'economy') ? getCountMultiplier({ code: flightPrefix, cabin: 'Y', source: entry.Source, reliabilityTable }) : 0;
+        merged.WCount += (entry.WMile > 0 && entry.Cabin.toLowerCase() === 'premium') ? getCountMultiplier({ code: flightPrefix, cabin: 'W', source: entry.Source, reliabilityTable }) : 0;
+        merged.JCount += (entry.JMile > 0 && entry.Cabin.toLowerCase() === 'business') ? getCountMultiplier({ code: flightPrefix, cabin: 'J', source: entry.Source, reliabilityTable }) : 0;
+        merged.FCount += (entry.FMile > 0 && entry.Cabin.toLowerCase() === 'first') ? getCountMultiplier({ code: flightPrefix, cabin: 'F', source: entry.Source, reliabilityTable }) : 0;
         // Accept the longer Aircraft string
         if ((entry.Aircraft || '').length > (merged.Aircraft || '').length) {
           merged.Aircraft = entry.Aircraft;
@@ -329,7 +353,44 @@ export async function POST(req: NextRequest) {
       }
     }
     // Prepare final output, removing YMile/WMile/JMile/FMIle
-    const mergedResults = Array.from(mergedMap.values()).map(({ YMile, WMile, JMile, FMile, ...rest }) => {
+    // Now, group by originAirport, destinationAirport, date, FlightNumbers (not Source) for the response
+    const groupedMap = new Map<string, any>();
+    for (const entry of mergedMap.values()) {
+      const groupKey = [
+        entry.originAirport,
+        entry.destinationAirport,
+        entry.date,
+        normalizeFlightNumber(entry.FlightNumbers)
+      ].join('|');
+      if (!groupedMap.has(groupKey)) {
+        groupedMap.set(groupKey, {
+          ...entry,
+          YCount: entry.YCount,
+          WCount: entry.WCount,
+          JCount: entry.JCount,
+          FCount: entry.FCount,
+        });
+      } else {
+        const group = groupedMap.get(groupKey);
+        group.YCount += entry.YCount;
+        group.WCount += entry.WCount;
+        group.JCount += entry.JCount;
+        group.FCount += entry.FCount;
+        // Accept the longer Aircraft string
+        if ((entry.Aircraft || '').length > (group.Aircraft || '').length) {
+          group.Aircraft = entry.Aircraft;
+        }
+        // Accept the earliest DepartsAt and latest ArrivesAt
+        if (entry.DepartsAt && (!group.DepartsAt || entry.DepartsAt < group.DepartsAt)) {
+          group.DepartsAt = entry.DepartsAt;
+        }
+        if (entry.ArrivesAt && (!group.ArrivesAt || entry.ArrivesAt > group.ArrivesAt)) {
+          group.ArrivesAt = entry.ArrivesAt;
+        }
+      }
+    }
+    // Now, continue with alliance logic and grouping as before, but use groupedMap.values() instead of mergedMap.values()
+    const mergedResults = Array.from(groupedMap.values()).map(({ YMile, WMile, JMile, FMile, ...rest }) => {
       // Alliance logic
       const flightPrefix = (rest.FlightNumbers || '').slice(0, 2).toUpperCase();
       const starAlliance = [
@@ -362,7 +423,7 @@ export async function POST(req: NextRequest) {
     }).filter(Boolean);
 
     // Group by originAirport, destinationAirport, date, alliance
-    const groupedMap = new Map<string, any>();
+    const finalGroupedMap = new Map<string, any>();
     for (const entry of mergedResults) {
       const groupKey = [
         entry.originAirport,
@@ -370,8 +431,8 @@ export async function POST(req: NextRequest) {
         entry.date,
         entry.alliance
       ].join('|');
-      if (!groupedMap.has(groupKey)) {
-        groupedMap.set(groupKey, {
+      if (!finalGroupedMap.has(groupKey)) {
+        finalGroupedMap.set(groupKey, {
           originAirport: entry.originAirport,
           destinationAirport: entry.destinationAirport,
           date: entry.date,
@@ -397,7 +458,7 @@ export async function POST(req: NextRequest) {
           ]
         });
       } else {
-        const group = groupedMap.get(groupKey);
+        const group = finalGroupedMap.get(groupKey);
         // Update earliest/latest departure/arrival
         if (entry.DepartsAt && (!group.earliestDeparture || entry.DepartsAt < group.earliestDeparture)) {
           group.earliestDeparture = entry.DepartsAt;
@@ -425,7 +486,7 @@ export async function POST(req: NextRequest) {
         });
       }
     }
-    const groupedResults = Array.from(groupedMap.values());
+    const groupedResults = Array.from(finalGroupedMap.values());
     // Forward rate limit headers from the last fetch response if present
     let rlRemaining: string | null = null;
     let rlReset: string | null = null;
@@ -433,7 +494,12 @@ export async function POST(req: NextRequest) {
       rlRemaining = lastResponse.headers.get('x-ratelimit-remaining');
       rlReset = lastResponse.headers.get('x-ratelimit-reset');
     }
-    const nextRes = NextResponse.json({ groups: groupedResults, seatsAeroRequests });
+    const responsePayload = { groups: groupedResults, seatsAeroRequests };
+    // Save compressed response to Valkey
+    const hash = createHash('sha256').update(JSON.stringify({ routeId, startDate, endDate, cabin, carriers, seats })).digest('hex');
+    const valkeyKey = `availability-v2-response:${hash}`;
+    saveCompressedResponseToValkey(valkeyKey, responsePayload);
+    const nextRes = NextResponse.json(responsePayload);
     if (rlRemaining) nextRes.headers.set('x-ratelimit-remaining', rlRemaining);
     if (rlReset) nextRes.headers.set('x-ratelimit-reset', rlReset);
     return nextRes;

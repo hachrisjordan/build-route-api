@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import type { FullRoutePathResult } from '@/types/route';
 import { createHash } from 'crypto';
+import zlib from 'zlib';
 import Valkey from 'iovalkey';
 import { parseISO, isBefore, isEqual, startOfDay, endOfDay } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
@@ -167,19 +168,22 @@ function getValkeyClient(): any {
   const port = process.env.VALKEY_PORT ? parseInt(process.env.VALKEY_PORT, 10) : 6379;
   const password = process.env.VALKEY_PASSWORD;
   if (!host) return null;
-  valkey = new Valkey({ host, port, password });
+  valkey = new (require('iovalkey'))({ host, port, password });
   return valkey;
 }
-
-async function saveRouteIdToRedis(routeId: string) {
+async function getCachedAvailabilityV2Response(params: any) {
   const client = getValkeyClient();
-  if (!client) return;
+  if (!client) return null;
   try {
-    await client.sadd('availability_v2_routeids', routeId);
-    await client.expire('availability_v2_routeids', 86400);
+    const hash = createHash('sha256').update(JSON.stringify(params)).digest('hex');
+    const key = `availability-v2-response:${hash}`;
+    const compressed = await client.getBuffer(key);
+    if (!compressed) return null;
+    const json = zlib.gunzipSync(compressed).toString();
+    return JSON.parse(json);
   } catch (err) {
-    // Non-blocking, log only
-    console.error('Valkey saveRouteIdToRedis error:', err);
+    console.error('Valkey getCachedAvailabilityV2Response error:', err);
+    return null;
   }
 }
 
@@ -355,15 +359,19 @@ export async function POST(req: NextRequest) {
     let minRateLimitRemaining: number | null = null;
     let minRateLimitReset: number | null = null;
     const availabilityTasks = routeGroups.map((routeId) => async () => {
-      // Save routeId to Redis/Valkey (non-blocking)
-      saveRouteIdToRedis(routeId).catch(() => {});
       const params = {
         routeId,
         startDate,
         endDate,
         ...(cabin ? { cabin } : {}),
         ...(carriers ? { carriers } : {}),
+        ...(body.seats ? { seats: body.seats } : {}),
       };
+      // Try Valkey cache first
+      const cached = await getCachedAvailabilityV2Response(params);
+      if (cached) {
+        return { routeId, error: false, data: cached };
+      }
       try {
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
