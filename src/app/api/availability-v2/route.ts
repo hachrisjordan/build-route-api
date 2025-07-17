@@ -52,7 +52,6 @@ function normalizeFlightNumber(flightNumber: string): string {
   const match = flightNumber.match(/^([A-Z]{2,3})(0*)(\d+)$/i);
   if (!match) return flightNumber;
   const [, prefix, , number] = match;
-  if (!prefix || !number) return flightNumber;
   return `${prefix.toUpperCase()}${parseInt(number, 10)}`;
 }
 
@@ -127,11 +126,8 @@ export async function POST(req: NextRequest) {
 
     // Parse route segments
     const segments = routeId.split('-');
-    if (!segments[0] || !segments[segments.length - 1]) {
-      return NextResponse.json({ error: 'Invalid routeId format' }, { status: 400 });
-    }
-    const originAirports = segments[0]!.split('/');
-    const destinationSegments = segments[segments.length - 1]!.split('/');
+    const originAirports = segments[0].split('/');
+    const destinationSegments = segments[segments.length - 1].split('/');
     const middleSegments = segments.slice(1, -1).map(seg => seg.split('/'));
 
     // Pagination variables
