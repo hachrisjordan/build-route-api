@@ -6,8 +6,10 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat python3 py3-pip
 WORKDIR /app
 
-# Install Python dependencies
+# Install Python dependencies in a virtual environment
 COPY requirements.txt ./
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Install dependencies based on the preferred package manager

@@ -23,8 +23,10 @@ RUN apk add --no-cache git python3 py3-pip \
     && git clone https://github.com/novnc/websockify /opt/novnc/utils/websockify \
     && ln -s /opt/novnc/vnc.html /opt/novnc/index.html
 
-# Install Python dependencies
+# Install Python dependencies in a virtual environment
 COPY requirements.txt ./
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Install Node.js dependencies
@@ -63,4 +65,4 @@ RUN touch /app/batch.log /var/log/cron.log
 RUN chmod +x /app/scripts/start-all.sh
 
 # Start cron and all services
-CMD Xvfb :99 -screen 0 1920x1080x24 & export DISPLAY=:99 && sh -c "crond -f & /app/scripts/start-all.sh"
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1920x1080x24 & export DISPLAY=:99 && crond -f & /app/scripts/start-all.sh"]
