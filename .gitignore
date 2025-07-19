@@ -9,4 +9,4 @@ tmp
 seatmap
 seat-configs
 csv-output
-scripts/flightradar_api.py
+scripts/generate-seat-csvs.js
