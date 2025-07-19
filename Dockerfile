@@ -23,6 +23,10 @@ RUN apk add --no-cache git python3 py3-pip \
     && git clone https://github.com/novnc/websockify /opt/novnc/utils/websockify \
     && ln -s /opt/novnc/vnc.html /opt/novnc/index.html
 
+# Install Python dependencies
+COPY requirements.txt ./
+RUN pip3 install --no-cache-dir -r requirements.txt
+
 # Install Node.js dependencies
 COPY package*.json ./
 RUN npm ci
