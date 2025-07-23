@@ -413,7 +413,7 @@ export async function POST(req: NextRequest) {
         return { routeId, error: true, data: [] };
       }
     });
-    const availabilityResults = await pool(availabilityTasks, 10);
+    const availabilityResults = await pool(availabilityTasks, 50);
     const afterAvailabilityTime = Date.now(); // Time after fetching availability-v2
 
     // Sum up the total number of actual seats.aero HTTP requests (including paginated)
