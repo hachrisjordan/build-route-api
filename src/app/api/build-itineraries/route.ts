@@ -62,8 +62,9 @@ function composeItineraries(
   minConnectionMinutes = 45
 ): Record<string, string[][]> {
   const results: Record<string, string[][]> = {};
-  if (segments.length === 0 || segmentAvail.some(arr => arr.length === 0)) return results;
-
+  if (segments.length === 0 || segmentAvail.some(arr => arr.length === 0)) {
+    return results;
+  }
   // Helper: recursively build combinations
   function dfs(
     segIdx: number,
@@ -73,14 +74,21 @@ function composeItineraries(
     date: string
   ) {
     if (segIdx === segments.length) {
-      // Valid itinerary
       if (!results[date]) results[date] = [];
       results[date].push([...path]);
       return;
     }
-    const [from, to] = segments[segIdx];
+    const seg = segments[segIdx];
+    if (!seg) {
+      return;
+    }
+    const [from, to] = seg;
     const allowedAlliances = alliances[segIdx];
-    for (const group of segmentAvail[segIdx]) {
+    const avail = segmentAvail[segIdx];
+    if (!avail) {
+      return;
+    }
+    for (const group of avail) {
       if (group.originAirport !== from || group.destinationAirport !== to) continue;
       // For the first segment, require group.date === date; for later segments, allow any date
       if (segIdx === 0 && group.date !== date) continue;
@@ -116,9 +124,12 @@ function composeItineraries(
       }
     }
   }
-
   // For each possible date in the first segment, try to build full itineraries
-  const firstSegmentDates = new Set(segmentAvail[0].map(g => g.date));
+  const firstAvail = segmentAvail[0];
+  if (!firstAvail) {
+    return results;
+  }
+  const firstSegmentDates = new Set(firstAvail.map(g => g.date));
   for (const date of firstSegmentDates) {
     dfs(0, [], new Set(), null, date);
     // Deduplicate itineraries for this date
@@ -290,6 +301,7 @@ export async function POST(req: NextRequest) {
   let usedProKeyRowId: string | null = null;
   try {
     // 1. Validate input
+    const tInputStart = Date.now();
     const body = await req.json();
     const parseResult = buildItinerariesSchema.safeParse(body);
     if (!parseResult.success) {
@@ -299,8 +311,11 @@ export async function POST(req: NextRequest) {
     if (typeof minReliabilityPercent !== 'number' || isNaN(minReliabilityPercent)) {
       minReliabilityPercent = 85;
     }
+    const tInputEnd = Date.now();
+    console.log('[build-itineraries] input validation (ms):', tInputEnd - tInputStart);
 
     // If apiKey is null, fetch pro_key with largest remaining from Supabase
+    const tApiKeyStart = Date.now();
     if (apiKey === null) {
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
       const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -322,6 +337,8 @@ export async function POST(req: NextRequest) {
       usedProKey = data.pro_key;
       usedProKeyRowId = data.pro_key; // pro_key is the primary key
     }
+    const tApiKeyEnd = Date.now();
+    console.log('[build-itineraries] apiKey fetch (ms):', tApiKeyEnd - tApiKeyStart);
 
     // Build absolute base URL for internal fetches
     let baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
@@ -332,6 +349,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Call create-full-route-path API
+    const tRoutePathStart = Date.now();
     const routePathRes = await fetch(`${baseUrl}/api/create-full-route-path`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -345,12 +363,17 @@ export async function POST(req: NextRequest) {
     if (!routes || !Array.isArray(routes) || routes.length === 0) {
       return NextResponse.json({ error: 'No eligible routes found' }, { status: 404 });
     }
+    const tRoutePathEnd = Date.now();
+    console.log('[build-itineraries] route path fetch (ms):', tRoutePathEnd - tRoutePathStart);
 
     // 3. Extract query params (route groups)
+    const tRouteGroupsStart = Date.now();
     if (!Array.isArray(routePathData.queryParamsArr) || routePathData.queryParamsArr.length === 0) {
       return NextResponse.json({ error: 'No route groups found in create-full-route-path response' }, { status: 500 });
     }
     const routeGroups: string[] = routePathData.queryParamsArr;
+    const tRouteGroupsEnd = Date.now();
+    console.log('[build-itineraries] route groups extraction (ms):', tRouteGroupsEnd - tRouteGroupsStart);
 
     // Log the number of seats.aero API links to run
     console.log('[build-itineraries] total seats.aero API links to run:', routeGroups.length);
@@ -413,7 +436,10 @@ export async function POST(req: NextRequest) {
         return { routeId, error: true, data: [] };
       }
     });
-    const availabilityResults = await pool(availabilityTasks, 50);
+    const tAvailStart = Date.now();
+    const availabilityResults = await pool(availabilityTasks, 10);
+    const tAvailEnd = Date.now();
+    console.log('[build-itineraries] availability-v2 fetch (ms):', tAvailEnd - tAvailStart);
     const afterAvailabilityTime = Date.now(); // Time after fetching availability-v2
 
     // Sum up the total number of actual seats.aero HTTP requests (including paginated)
@@ -432,6 +458,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 5. Build a pool of all segment availabilities from all responses
+    const tSegmentPoolStart = Date.now();
     const segmentPool: Record<string, AvailabilityGroup[]> = {};
     for (const result of availabilityResults) {
       if (
@@ -448,8 +475,13 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+    const tSegmentPoolEnd = Date.now();
+    console.log('[build-itineraries] segment pool build (ms):', tSegmentPoolEnd - tSegmentPoolStart);
 
     // 6. Compose itineraries for each route path
+    const tComposeAllStart = Date.now();
+    let totalValidItineraries = 0;
+    let routePathCount = 0;
     const output: Record<string, Record<string, string[][]>> = {};
     const flightMap = new Map<string, AvailabilityFlight>();
     for (const route of routes as FullRoutePathResult[]) {
@@ -486,10 +518,17 @@ export async function POST(req: NextRequest) {
       for (const [date, itinerariesForDate] of Object.entries(itineraries)) {
         if (!output[routeKey][date]) output[routeKey][date] = [];
         output[routeKey][date].push(...itinerariesForDate);
+        totalValidItineraries += itinerariesForDate.length;
       }
+      routePathCount++;
     }
+    const tComposeAllEnd = Date.now();
+    console.log('[build-itineraries] route paths processed:', routePathCount);
+    console.log('[build-itineraries] total valid itineraries:', totalValidItineraries);
+    console.log('[build-itineraries] total composeItineraries time (ms):', tComposeAllEnd - tComposeAllStart);
 
     // Deduplicate itineraries for each date
+    const tDedupStart = Date.now();
     for (const routeKey of Object.keys(output)) {
       for (const date of Object.keys(output[routeKey])) {
         const seen = new Set<string>();
@@ -501,6 +540,8 @@ export async function POST(req: NextRequest) {
         });
       }
     }
+    const tDedupEnd = Date.now();
+    console.log('[build-itineraries] deduplication (ms):', tDedupEnd - tDedupStart);
 
     // Remove empty route keys after filtering
     Object.keys(output).forEach((key) => {
@@ -510,6 +551,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Remove flights that are not in any itinerary (after all filtering)
+    const tFlightCleanupStart = Date.now();
     const usedFlightUUIDs = new Set<string>();
     for (const routeKey of Object.keys(output)) {
       for (const date of Object.keys(output[routeKey])) {
@@ -525,22 +567,27 @@ export async function POST(req: NextRequest) {
         flightMap.delete(uuid);
       }
     }
+    const tFlightCleanupEnd = Date.now();
+    console.log('[build-itineraries] flight cleanup (ms):', tFlightCleanupEnd - tFlightCleanupStart);
 
     // Filter itineraries to only include those whose first flight departs between startDate and endDate (inclusive), using raw UTC date math
+    const tDateFilterStart = Date.now();
     const startDateObj = startOfDay(parseISO(startDate));
     const endDateObj = endOfDay(parseISO(endDate));
     for (const routeKey of Object.keys(output)) {
       for (const date of Object.keys(output[routeKey])) {
+        if (!output[routeKey][date]) continue;
         output[routeKey][date] = output[routeKey][date].filter(itin => {
           if (!itin.length) return false;
           const firstFlightUUID = itin[0];
+          if (!firstFlightUUID) return false;
           const firstFlight = flightMap.get(firstFlightUUID);
           if (!firstFlight || !firstFlight.DepartsAt) return false;
           const depDate = new Date(firstFlight.DepartsAt);
           return depDate >= startDateObj && depDate <= endDateObj;
         });
         // Remove empty date keys
-        if (output[routeKey][date].length === 0) {
+        if (!output[routeKey][date] || output[routeKey][date].length === 0) {
           delete output[routeKey][date];
         }
       }
@@ -549,9 +596,11 @@ export async function POST(req: NextRequest) {
         delete output[routeKey];
       }
     }
+    const tDateFilterEnd = Date.now();
+    console.log('[build-itineraries] date filter (ms):', tDateFilterEnd - tDateFilterStart);
 
     // --- SERVER-SIDE RELIABILITY FILTERING ---
-    // Fetch reliability table and filter itineraries
+    const tReliabilityStart = Date.now();
     const reliabilityTable = await getReliabilityTableCached();
     const reliabilityMap = getReliabilityMap(reliabilityTable);
     const filteredOutput = filterReliableItineraries(output, flightMap, reliabilityMap, minReliabilityPercent);
@@ -561,6 +610,8 @@ export async function POST(req: NextRequest) {
         delete filteredOutput[key];
       }
     });
+    const tReliabilityEnd = Date.now();
+    console.log('[build-itineraries] reliability filtering (ms):', tReliabilityEnd - tReliabilityStart);
 
     // After all processing, if we used a pro_key, update its remaining and last_updated
     if (usedProKey && usedProKeyRowId && typeof minRateLimitRemaining === 'number') {
@@ -581,6 +632,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Return itineraries and flights map
+    const tResponseStart = Date.now();
     const itineraryBuildTimeMs = Date.now() - afterAvailabilityTime;
     const totalTimeMs = Date.now() - startTime;
     console.log(`[build-itineraries] itinerary build time (ms):`, itineraryBuildTimeMs);
@@ -615,6 +667,8 @@ export async function POST(req: NextRequest) {
       compressedBuffer = null;
       encoding = null;
     }
+    const tResponseEnd = Date.now();
+    console.log('[build-itineraries] response serialization/compression (ms):', tResponseEnd - tResponseStart);
     if (compressedBuffer && encoding) {
       return new NextResponse(compressedBuffer, {
         status: 200,
