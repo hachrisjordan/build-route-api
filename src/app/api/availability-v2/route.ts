@@ -267,7 +267,7 @@ export async function POST(req: NextRequest) {
                   trip.Cabin &&
                   trip.Cabin.toLowerCase() === cabin.toLowerCase() &&
                   typeof trip.RemainingSeats === 'number' &&
-                  trip.RemainingSeats >= seats
+                  (seats === 1 ? trip.RemainingSeats >= 0 : trip.RemainingSeats >= seats)
                 ) {
                   includeTrip = true;
                   cabinType = trip.Cabin.toLowerCase();
@@ -275,7 +275,7 @@ export async function POST(req: NextRequest) {
               } else {
                 if (
                   typeof trip.RemainingSeats === 'number' &&
-                  trip.RemainingSeats >= seats
+                  (seats === 1 ? trip.RemainingSeats >= 0 : trip.RemainingSeats >= seats)
                 ) {
                   includeTrip = true;
                   cabinType = trip.Cabin ? trip.Cabin.toLowerCase() : '';
