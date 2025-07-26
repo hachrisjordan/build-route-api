@@ -18,20 +18,69 @@ const filterMetadataSchema = z.object({
 });
 
 // --- Redis setup ---
-const redis = new Redis({ host: '127.0.0.1', port: 6379 });
+let redis: Redis | null = null;
+
+function getRedisClient(): Redis | null {
+  if (redis) return redis;
+  
+  const host = process.env.REDIS_HOST || '127.0.0.1';
+  const port = parseInt(process.env.REDIS_PORT || '6379', 10);
+  const password = process.env.REDIS_PASSWORD;
+  
+  try {
+    redis = new Redis({ 
+      host, 
+      port, 
+      password: password || undefined,
+      maxRetriesPerRequest: 3,
+      enableReadyCheck: false,
+      lazyConnect: true
+    });
+    
+    redis.on('error', (err) => {
+      console.warn('Redis connection error:', err.message);
+    });
+    
+    return redis;
+  } catch (error) {
+    console.warn('Failed to create Redis client:', error);
+    return null;
+  }
+}
+
 const CACHE_TTL_SECONDS = 1800; // 30 minutes
 
 function getCacheKey(params: any) {
   const { origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent } = params;
   const hash = createHash('sha256').update(JSON.stringify({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent })).digest('hex');
-  return `build-itins:${origin}:${destination}:${hash}`;
+  return `filter-metadata:${origin}:${destination}:${hash}`;
+}
+
+async function cacheItineraries(key: string, data: any, ttlSeconds = CACHE_TTL_SECONDS) {
+  const redisClient = getRedisClient();
+  if (!redisClient) return;
+  
+  try {
+    const compressed = zlib.gzipSync(JSON.stringify(data));
+    await redisClient.set(key, compressed, 'EX', ttlSeconds);
+  } catch (error) {
+    console.warn('Failed to cache data:', error);
+  }
 }
 
 async function getCachedItineraries(key: string) {
-  const compressed = await redis.getBuffer(key);
-  if (!compressed) return null;
-  const json = zlib.gunzipSync(compressed).toString();
-  return JSON.parse(json);
+  const redisClient = getRedisClient();
+  if (!redisClient) return null;
+  
+  try {
+    const compressed = await redisClient.getBuffer(key);
+    if (!compressed) return null;
+    const json = zlib.gunzipSync(compressed).toString();
+    return JSON.parse(json);
+  } catch (error) {
+    console.warn('Failed to get cached data:', error);
+    return null;
+  }
 }
 
 /**
@@ -83,7 +132,19 @@ export async function POST(req: NextRequest) {
     }
 
     const buildItinerariesData = await buildItinerariesRes.json();
-    const { filterMetadata } = buildItinerariesData;
+    
+    // Check if the response has the expected structure
+    if (!buildItinerariesData || !buildItinerariesData.itineraries || !buildItinerariesData.flights) {
+      return NextResponse.json({ error: 'Invalid response from build-itineraries API' }, { status: 500 });
+    }
+    
+    const { itineraries, flights } = buildItinerariesData;
+    
+    // Extract filter metadata from the response
+    const filterMetadata = extractFilterMetadata(itineraries, flights);
+
+    // 4. Cache the fetched data
+    await cacheItineraries(cacheKey, { itineraries, flights });
 
     return NextResponse.json({
       filterMetadata,
@@ -132,18 +193,28 @@ function extractFilterMetadata(
   // Process all itineraries to extract metadata
   for (const routeKey of Object.keys(itineraries)) {
     const routeSegments = routeKey.split('-');
+    if (routeSegments.length < 2) continue; // Skip invalid routes
+    
     const stopCount = routeSegments.length - 2;
     metadata.stops.add(stopCount);
 
     // Extract airports
-    metadata.airports.origins.add(routeSegments[0]);
-    metadata.airports.destinations.add(routeSegments[routeSegments.length - 1]);
+    const origin = routeSegments[0];
+    const destination = routeSegments[routeSegments.length - 1];
+    
+    if (origin) metadata.airports.origins.add(origin);
+    if (destination) metadata.airports.destinations.add(destination);
+    
     for (let i = 1; i < routeSegments.length - 1; i++) {
-      metadata.airports.connections.add(routeSegments[i]);
+      const connection = routeSegments[i];
+      if (connection) metadata.airports.connections.add(connection);
     }
 
-    for (const date of Object.keys(itineraries[routeKey])) {
-      for (const itinerary of itineraries[routeKey][date]) {
+    for (const date of Object.keys(itineraries[routeKey] || {})) {
+      const routeItineraries = itineraries[routeKey];
+      if (!routeItineraries || !routeItineraries[date]) continue;
+      
+      for (const itinerary of routeItineraries[date]) {
         const flightObjs = itinerary.map(uuid => flights[uuid]).filter(Boolean);
         if (flightObjs.length === 0) continue;
 
