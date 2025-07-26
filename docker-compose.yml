@@ -43,7 +43,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"  # Redis on host port 6380, container port 6379
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-}"]
     volumes:
       - redis_data:/data
@@ -52,7 +52,7 @@ services:
   valkey:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6379:6379"  # Valkey on host port 6379, container port 6379
     command: ["redis-server", "--requirepass", "yourpassword"] # optional
     # For production, use a managed Redis or secure this container!
 
