@@ -1,25 +1,37 @@
+version: '3.8'
+
 services:
   api:
     build: .
+    container_name: my-app-container
+    restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "8080:3000"
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_BASE_URL=http://localhost:3000
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - VALKEY_HOST=${VALKEY_HOST}
       - VALKEY_PORT=${VALKEY_PORT}
       - VALKEY_PASSWORD=${VALKEY_PASSWORD}
+      - PROXY_HOST=${PROXY_HOST}
+      - PROXY_PORT=${PROXY_PORT}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     depends_on:
-      - valkey
       - redis
+    networks:
+      - app-network
 
   united-microservice:
     build: .
+    container_name: united-microservice
+    restart: unless-stopped
     ports:
       - "4004:4004"
     environment:
@@ -38,23 +50,115 @@ services:
     command: npx tsx united-microservice/united-service.ts
     depends_on:
       - redis
+    networks:
+      - app-network
 
-  # Application Redis (separate from valkey)
+  jetblue-microservice:
+    build: .
+    container_name: jetblue-microservice
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - PROXY_HOST=${PROXY_HOST}
+      - PROXY_PORT=${PROXY_PORT}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
+    volumes:
+      - ./jetblue-microservice:/app/jetblue-microservice
+    working_dir: /app
+    command: node jetblue-microservice/jetblue-service.js
+    networks:
+      - app-network
+
+  alaska-microservice:
+    build: .
+    container_name: alaska-microservice
+    restart: unless-stopped
+    ports:
+      - "4001:4001"
+    environment:
+      - NODE_ENV=production
+      - PROXY_HOST=${PROXY_HOST}
+      - PROXY_PORT=${PROXY_PORT}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
+    volumes:
+      - ./alaska-microservice:/app/alaska-microservice
+    working_dir: /app
+    command: node alaska-microservice/alaska-service.js
+    networks:
+      - app-network
+
+  american-microservice:
+    build: .
+    container_name: american-microservice
+    restart: unless-stopped
+    ports:
+      - "4002:4002"
+    environment:
+      - NODE_ENV=production
+      - PROXY_HOST=${PROXY_HOST}
+      - PROXY_PORT=${PROXY_PORT}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
+    volumes:
+      - ./american-microservice:/app/american-microservice
+    working_dir: /app
+    command: node american-microservice/american-service.js
+    networks:
+      - app-network
+
+  finnair-microservice:
+    build: .
+    container_name: finnair-microservice
+    restart: unless-stopped
+    ports:
+      - "4003:4003"
+    environment:
+      - NODE_ENV=production
+      - PROXY_HOST=${PROXY_HOST}
+      - PROXY_PORT=${PROXY_PORT}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
+    volumes:
+      - ./finnair-microservice:/app/finnair-microservice
+    working_dir: /app
+    command: node finnair-microservice/finnair-service.js
+    networks:
+      - app-network
+
+  # Production Redis - Hardcoded for self-hosted VPS
   redis:
     image: redis:7-alpine
+    container_name: app-redis
+    restart: unless-stopped
     ports:
-      - "6380:6379"  # Redis on host port 6380, container port 6379
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-}"]
+      - "6380:6379"
+    command: ["redis-server", "--requirepass", "your_redis_password_here"]
     volumes:
       - redis_data:/data
-    restart: unless-stopped
+    networks:
+      - app-network
 
+  # Valkey (separate service - DO NOT CHANGE)
   valkey:
     image: redis:7-alpine
+    container_name: valkey
+    restart: unless-stopped
     ports:
-      - "6379:6379"  # Valkey on host port 6379, container port 6379
-    command: ["redis-server", "--requirepass", "yourpassword"] # optional
-    # For production, use a managed Redis or secure this container!
+      - "6379:6379"
+    command: ["redis-server", "--requirepass", "${VALKEY_PASSWORD}"]
+    volumes:
+      - valkey_data:/data
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
 
 volumes:
   redis_data:
+  valkey_data: 
