@@ -388,8 +388,9 @@ let redis: Redis | null = null;
 function getRedisClient(): Redis | null {
   if (redis) return redis;
   
-  const host = process.env.REDIS_HOST || '127.0.0.1';
-  const port = parseInt(process.env.REDIS_PORT || '6379', 10);
+  // Hardcoded Redis connection for Docker
+  const host = 'redis'; // Docker service name
+  const port = 6379;    // Container port
   const password = process.env.REDIS_PASSWORD;
   
   try {
