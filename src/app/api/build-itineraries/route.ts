@@ -942,7 +942,7 @@ async function getCachedOptimizedItineraries(key: string) {
  * Orchestrates route finding and availability composition.
  */
 export async function POST(req: NextRequest) {
-  const startTime = Date.now(); // Track start time
+  const t0 = Date.now();
   let usedProKey: string | null = null;
   let usedProKeyRowId: string | null = null;
   
@@ -1199,7 +1199,7 @@ export async function POST(req: NextRequest) {
     const availabilityResults = await pool(availabilityTasks, 10);
     const afterAvailabilityTime = Date.now(); // Time after fetching availability-v2
 
-    console.log('[build-itineraries] Availability fetch completed in', afterAvailabilityTime - startTime, 'ms');
+    console.log('[build-itineraries] Availability fetch completed in', afterAvailabilityTime - t0, 'ms');
 
     // Sum up the total number of actual seats.aero HTTP requests (including paginated)
     let totalSeatsAeroHttpRequests = 0;
@@ -1373,7 +1373,7 @@ export async function POST(req: NextRequest) {
 
     // Return itineraries and flights map
     const itineraryBuildTimeMs = Date.now() - afterAvailabilityTime;
-    const totalTimeMs = Date.now() - startTime;
+    const totalTimeMs = Date.now() - t0;
     console.log(`[build-itineraries] Itinerary build time (ms):`, itineraryBuildTimeMs);
     console.log(`[build-itineraries] Total running time (ms):`, totalTimeMs);
     console.log(`[build-itineraries] Total itineraries found:`, Object.keys(filteredOutput).reduce((sum, key) => {
