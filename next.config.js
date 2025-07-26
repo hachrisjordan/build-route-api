@@ -19,8 +19,8 @@ const nextConfig = {
   
   // Compiler optimizations
   compiler: {
-    // Remove console.log in production
-    removeConsole: process.env.NODE_ENV === 'production',
+    // Keep console.log for debugging in production
+    removeConsole: false,
   },
   
   // Bundle optimization

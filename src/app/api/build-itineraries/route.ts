@@ -168,9 +168,13 @@ function composeItineraries(
       results[date].push([...path]);
       return;
     }
-    const [from, to] = segments[segIdx];
+    const segment = segments[segIdx];
+    if (!segment) return;
+    const [from, to] = segment;
     const allowedAlliances = alliances[segIdx];
-    for (const group of segmentAvail[segIdx]) {
+    const segmentGroups = segmentAvail[segIdx];
+    if (!segmentGroups) return;
+    for (const group of segmentGroups) {
       if (group.originAirport !== from || group.destinationAirport !== to) continue;
       // For the first segment, require group.date === date; for later segments, allow any date
       if (segIdx === 0 && group.date !== date) continue;
@@ -208,7 +212,9 @@ function composeItineraries(
   }
 
   // For each possible date in the first segment, try to build full itineraries
-  const firstSegmentDates = new Set(segmentAvail[0].map(g => g.date));
+  const firstSegmentGroups = segmentAvail[0];
+  if (!firstSegmentGroups) return results;
+  const firstSegmentDates = new Set(firstSegmentGroups.map(g => g.date));
   for (const date of firstSegmentDates) {
     dfs(0, [], new Set(), null, date);
     // Deduplicate itineraries for this date
@@ -236,7 +242,9 @@ async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]>
   }
   while (i < tasks.length) {
     while (executing.length < limit && i < tasks.length) {
-      const p = run(tasks[i++]).finally(() => {
+      const task = tasks[i++];
+      if (!task) continue;
+      const p = run(task).finally(() => {
         const idx = executing.indexOf(p);
         if (idx > -1) executing.splice(idx, 1);
       });
@@ -336,9 +344,13 @@ function filterReliableItineraries(
   const filtered: Record<string, Record<string, string[][]>> = {};
   const usedFlightUUIDs = new Set<string>();
   for (const routeKey of Object.keys(itineraries)) {
-    for (const date of Object.keys(itineraries[routeKey])) {
+    const routeItineraries = itineraries[routeKey];
+    if (!routeItineraries) continue;
+    for (const date of Object.keys(routeItineraries)) {
+      const dateItineraries = routeItineraries[date];
+      if (!dateItineraries) continue;
       const keptItins: string[][] = [];
-      for (const itin of itineraries[routeKey][date]) {
+      for (const itin of dateItineraries) {
         const flightsArr = itin.map(uuid => flights.get(uuid)).filter(Boolean) as AvailabilityFlight[];
         if (!flightsArr.length) continue;
         const totalDuration = flightsArr.reduce((sum, f) => sum + f.TotalDuration, 0);
@@ -584,8 +596,8 @@ function filterSortSearchPaginate(
   if ((query.includeOrigin && query.includeOrigin.length) || (query.includeDestination && query.includeDestination.length) || (query.includeConnection && query.includeConnection.length)) {
     result = result.filter(card => {
       const segs = card.route.split('-');
-      const origin = segs[0];
-      const destination = segs[segs.length-1];
+      const origin = segs[0] || '';
+      const destination = segs[segs.length-1] || '';
       const connections = segs.slice(1, -1);
       let match = true;
       if (query.includeOrigin && query.includeOrigin.length) match = match && query.includeOrigin.includes(origin);
@@ -598,8 +610,8 @@ function filterSortSearchPaginate(
   if ((query.excludeOrigin && query.excludeOrigin.length) || (query.excludeDestination && query.excludeDestination.length) || (query.excludeConnection && query.excludeConnection.length)) {
     result = result.filter(card => {
       const segs = card.route.split('-');
-      const origin = segs[0];
-      const destination = segs[segs.length-1];
+      const origin = segs[0] || '';
+      const destination = segs[segs.length-1] || '';
       const connections = segs.slice(1, -1);
       let match = true;
       if (query.excludeOrigin && query.excludeOrigin.length) match = match && !query.excludeOrigin.includes(origin);
@@ -657,6 +669,274 @@ function filterSortSearchPaginate(
   return { total, page, pageSize, data: pageData };
 }
 
+// --- Optimized caching with filter parameters ---
+function getOptimizedCacheKey(params: any, filterParams: any) {
+  const { origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent } = params;
+  const baseHash = createHash('sha256').update(JSON.stringify({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent })).digest('hex');
+  
+  // Include filter parameters in cache key for smart caching
+  const filterHash = createHash('sha256').update(JSON.stringify(filterParams)).digest('hex');
+  return `build-itins:${origin}:${destination}:${baseHash}:${filterHash}`;
+}
+
+// --- Optimized data structure and processing ---
+interface OptimizedItinerary {
+  route: string;
+  date: string;
+  itinerary: string[];
+  // Pre-computed values for faster filtering/sorting
+  totalDuration: number;
+  departureTime: number;
+  arrivalTime: number;
+  stopCount: number;
+  airlineCodes: string[];
+  origin: string;
+  destination: string;
+  connections: string[];
+  classPercentages: { y: number; w: number; j: number; f: number };
+}
+
+// --- Pre-compute itinerary metadata for faster processing ---
+function precomputeItineraryMetadata(
+  itineraries: Record<string, Record<string, string[][]>>,
+  flights: Record<string, AvailabilityFlight>,
+  reliability: Record<string, { min_count: number; exemption?: string }>,
+  minReliabilityPercent: number
+): OptimizedItinerary[] {
+  const optimized: OptimizedItinerary[] = [];
+  
+  for (const routeKey of Object.keys(itineraries)) {
+    const routeSegments = routeKey.split('-');
+    const stopCount = routeSegments.length - 2;
+    const origin = routeSegments[0] || '';
+    const destination = routeSegments[routeSegments.length - 1] || '';
+    const connections = routeSegments.slice(1, -1).filter(Boolean);
+    
+    for (const date of Object.keys(itineraries[routeKey] || {})) {
+      for (const itinerary of itineraries[routeKey]![date] || []) {
+        const flightObjs = itinerary.map(uuid => flights[uuid]).filter(Boolean);
+        if (flightObjs.length === 0) continue;
+        
+        // Pre-compute expensive values
+        let totalDuration = 0;
+        for (let i = 0; i < flightObjs.length; i++) {
+          totalDuration += flightObjs[i]!.TotalDuration;
+          if (i > 0 && flightObjs[i - 1]) {
+            const prevArrive = new Date(flightObjs[i - 1]!.ArrivesAt).getTime();
+            const currDepart = new Date(flightObjs[i]!.DepartsAt).getTime();
+            const layover = Math.max(0, Math.round((currDepart - prevArrive) / (1000 * 60)));
+            totalDuration += layover;
+          }
+        }
+        
+        const departureTime = new Date(flightObjs[0]!.DepartsAt).getTime();
+        const arrivalTime = new Date(flightObjs[flightObjs.length - 1]!.ArrivesAt).getTime();
+        const airlineCodes = flightObjs.map(f => f!.FlightNumbers.slice(0, 2).toUpperCase());
+        const classPercentages = getClassPercentages(flightObjs, reliability, minReliabilityPercent);
+        
+        optimized.push({
+          route: routeKey,
+          date,
+          itinerary,
+          totalDuration,
+          departureTime,
+          arrivalTime,
+          stopCount,
+          airlineCodes,
+          origin,
+          destination,
+          connections,
+          classPercentages,
+        });
+      }
+    }
+  }
+  
+  return optimized;
+}
+
+// --- Optimized filtering and sorting (single-pass processing) ---
+function optimizedFilterSortSearchPaginate(
+  optimizedItineraries: OptimizedItinerary[],
+  query: {
+    stops?: number[];
+    includeAirlines?: string[];
+    excludeAirlines?: string[];
+    maxDuration?: number;
+    minYPercent?: number;
+    minWPercent?: number;
+    minJPercent?: number;
+    minFPercent?: number;
+    depTimeMin?: number;
+    depTimeMax?: number;
+    arrTimeMin?: number;
+    arrTimeMax?: number;
+    includeOrigin?: string[];
+    includeDestination?: string[];
+    includeConnection?: string[];
+    excludeOrigin?: string[];
+    excludeDestination?: string[];
+    excludeConnection?: string[];
+    search?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+    page?: number;
+    pageSize?: number;
+  }
+) {
+  let result = optimizedItineraries;
+  
+  // Single-pass filtering with early termination
+  if (query.stops?.length || query.includeAirlines?.length || query.excludeAirlines?.length || 
+      query.maxDuration !== undefined || query.minYPercent !== undefined || query.minWPercent !== undefined || 
+      query.minJPercent !== undefined || query.minFPercent !== undefined || query.depTimeMin !== undefined || 
+      query.depTimeMax !== undefined || query.arrTimeMin !== undefined || query.arrTimeMax !== undefined ||
+      query.includeOrigin?.length || query.includeDestination?.length || query.includeConnection?.length ||
+      query.excludeOrigin?.length || query.excludeDestination?.length || query.excludeConnection?.length) {
+    
+    result = result.filter(item => {
+      // Stops filter
+      if (query.stops?.length && !query.stops.includes(item.stopCount)) return false;
+      
+      // Airlines filter
+      if (query.includeAirlines?.length && !item.airlineCodes.some(code => query.includeAirlines!.includes(code))) return false;
+      if (query.excludeAirlines?.length && item.airlineCodes.some(code => query.excludeAirlines!.includes(code))) return false;
+      
+      // Duration filter
+      if (query.maxDuration !== undefined && item.totalDuration > query.maxDuration) return false;
+      
+      // Cabin class filters
+      if (query.minYPercent !== undefined && item.classPercentages.y < query.minYPercent) return false;
+      if (query.minWPercent !== undefined && item.classPercentages.w < query.minWPercent) return false;
+      if (query.minJPercent !== undefined && item.classPercentages.j < query.minJPercent) return false;
+      if (query.minFPercent !== undefined && item.classPercentages.f < query.minFPercent) return false;
+      
+      // Time filters
+      if (query.depTimeMin !== undefined && item.departureTime < query.depTimeMin) return false;
+      if (query.depTimeMax !== undefined && item.departureTime > query.depTimeMax) return false;
+      if (query.arrTimeMin !== undefined && item.arrivalTime < query.arrTimeMin) return false;
+      if (query.arrTimeMax !== undefined && item.arrivalTime > query.arrTimeMax) return false;
+      
+      // Airport filters
+      if (query.includeOrigin?.length && !query.includeOrigin.includes(item.origin)) return false;
+      if (query.includeDestination?.length && !query.includeDestination.includes(item.destination)) return false;
+      if (query.includeConnection?.length && !item.connections.some(c => query.includeConnection!.includes(c))) return false;
+      if (query.excludeOrigin?.length && query.excludeOrigin.includes(item.origin)) return false;
+      if (query.excludeDestination?.length && query.excludeDestination.includes(item.destination)) return false;
+      if (query.excludeConnection?.length && item.connections.some(c => query.excludeConnection!.includes(c))) return false;
+      
+      return true;
+    });
+  }
+  
+  // Search filter
+  if (query.search?.trim()) {
+    const terms = query.search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    result = result.filter(item => {
+      return terms.every(term => {
+        if (item.route.toLowerCase().includes(term)) return true;
+        if (item.date.toLowerCase().includes(term)) return true;
+        return item.airlineCodes.some(code => code.toLowerCase().includes(term));
+      });
+    });
+  }
+  
+  // Sorting with optimized comparison
+  if (query.sortBy) {
+    result = result.sort((a, b) => {
+      let aVal: number, bVal: number;
+      
+      switch (query.sortBy) {
+        case 'duration':
+          aVal = a.totalDuration;
+          bVal = b.totalDuration;
+          break;
+        case 'departure':
+          aVal = a.departureTime;
+          bVal = b.departureTime;
+          break;
+        case 'arrival':
+          aVal = a.arrivalTime;
+          bVal = b.arrivalTime;
+          break;
+        case 'y':
+          aVal = a.classPercentages.y;
+          bVal = b.classPercentages.y;
+          break;
+        case 'w':
+          aVal = a.classPercentages.w;
+          bVal = b.classPercentages.w;
+          break;
+        case 'j':
+          aVal = a.classPercentages.j;
+          bVal = b.classPercentages.j;
+          break;
+        case 'f':
+          aVal = a.classPercentages.f;
+          bVal = b.classPercentages.f;
+          break;
+        default:
+          aVal = 0;
+          bVal = 0;
+      }
+      
+      if (aVal !== bVal) {
+        // For arrival, y, w, j, f: always descending (higher is better)
+        if (["arrival", "y", "w", "j", "f"].includes(query.sortBy!)) {
+          return query.sortOrder === 'asc' ? bVal - aVal : bVal - aVal;
+        }
+        // For duration and departure: ascending (lower is better)
+        if (["duration", "departure"].includes(query.sortBy!)) {
+          return query.sortOrder === 'desc' ? bVal - aVal : aVal - bVal;
+        }
+        // For all others, default
+        return query.sortOrder === 'desc' ? bVal - aVal : aVal - bVal;
+      }
+      
+      // Tiebreaker: total duration ascending
+      return a.totalDuration - b.totalDuration;
+    });
+  }
+  
+  // Pagination
+  const total = result.length;
+  const page = query.page || 1;
+  const pageSize = query.pageSize || 10;
+  const start = (page - 1) * pageSize;
+  const end = start + pageSize;
+  const pageData = result.slice(start, end);
+  
+  return { total, page, pageSize, data: pageData };
+}
+
+// --- Optimized cache functions ---
+async function cacheOptimizedItineraries(key: string, data: any, ttlSeconds = CACHE_TTL_SECONDS) {
+  const redisClient = getRedisClient();
+  if (!redisClient) return;
+  
+  try {
+    const compressed = zlib.gzipSync(JSON.stringify(data));
+    await redisClient.set(key, compressed, 'EX', ttlSeconds);
+  } catch (error) {
+    console.warn('Failed to cache optimized data:', error);
+  }
+}
+
+async function getCachedOptimizedItineraries(key: string) {
+  const redisClient = getRedisClient();
+  if (!redisClient) return null;
+  
+  try {
+    const compressed = await redisClient.getBuffer(key);
+    if (!compressed) return null;
+    const json = zlib.gunzipSync(compressed).toString();
+    return JSON.parse(json);
+  } catch (error) {
+    console.warn('Failed to get cached optimized data:', error);
+    return null;
+  }
+}
+
 /**
  * POST /api/build-itineraries
  * Orchestrates route finding and availability composition.
@@ -665,6 +945,9 @@ export async function POST(req: NextRequest) {
   const startTime = Date.now(); // Track start time
   let usedProKey: string | null = null;
   let usedProKeyRowId: string | null = null;
+  
+  console.log('[build-itineraries] Starting request processing...');
+  
   try {
     // 1. Validate input
     const body = await req.json();
@@ -718,101 +1001,56 @@ export async function POST(req: NextRequest) {
     page = isNaN(page) || page < 1 ? 1 : page;
     const pageSize = parseInt(searchParams.get('pageSize') || '10', 10);
 
-    // --- Generate cache key ---
+    // --- Build filter parameters object for optimized caching ---
+    const filterParams = {
+      stops,
+      includeAirlines,
+      excludeAirlines,
+      maxDuration,
+      minYPercent,
+      minWPercent,
+      minJPercent,
+      minFPercent,
+      depTimeMin,
+      depTimeMax,
+      arrTimeMin,
+      arrTimeMax,
+      includeOrigin,
+      includeDestination,
+      includeConnection,
+      excludeOrigin,
+      excludeDestination,
+      excludeConnection,
+      search,
+      sortBy,
+      sortOrder,
+      page,
+      pageSize,
+    };
+
+    // --- Try optimized cache first (includes filter parameters) ---
+    const optimizedCacheKey = getOptimizedCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent }, filterParams);
+    let cachedOptimized = await getCachedOptimizedItineraries(optimizedCacheKey);
+    if (cachedOptimized) {
+      console.log('[build-itineraries] Cache HIT - optimized result found');
+      return NextResponse.json(cachedOptimized);
+    }
+    console.log('[build-itineraries] Cache MISS - optimized result not found, checking raw cache...');
+
+    // --- Fallback to original cache for raw data ---
     const cacheKey = getCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent });
     let cached = await getCachedItineraries(cacheKey);
     if (cached) {
+      console.log('[build-itineraries] Cache HIT - raw data found, processing with optimized logic...');
       const { itineraries, flights, minRateLimitRemaining, minRateLimitReset, totalSeatsAeroHttpRequests } = cached;
       // Fetch reliability table for cached path too
       const reliabilityTable = await getReliabilityTableCached();
       const reliabilityMap = getReliabilityMap(reliabilityTable);
-      // --- Flatten all itineraries into a single array for global sorting ---
-      let allItins = [];
-      for (const routeKey of Object.keys(itineraries)) {
-        for (const date of Object.keys(itineraries[routeKey])) {
-          allItins.push(...itineraries[routeKey][date].map((itinerary: string[]) => ({ route: routeKey, date, itinerary })));
-        }
-      }
-      // --- Now sort allItins globally by the selected sort field ---
-      const { total, data } = filterSortSearchPaginate(
-        allItins,
-        flights,
-        reliabilityMap, // Pass the actual reliability data
-        minReliabilityPercent,
-        {
-          stops,
-          includeAirlines,
-          excludeAirlines,
-          maxDuration,
-          minYPercent,
-          minWPercent,
-          minJPercent,
-          minFPercent,
-          depTimeMin,
-          depTimeMax,
-          arrTimeMin,
-          arrTimeMax,
-          includeOrigin,
-          includeDestination,
-          includeConnection,
-          excludeOrigin,
-          excludeDestination,
-          excludeConnection,
-          search,
-          sortBy,
-          sortOrder,
-          page,
-          pageSize,
-        },
-        (card, flights, sortBy, reliability, minReliabilityPercent) => {
-          const flightsArr = card.itinerary.map((fid: string) => flights[fid]);
-          if (sortBy === 'duration') {
-            let total = 0;
-            for (let i = 0; i < flightsArr.length; i++) {
-              const flight = flightsArr[i];
-              if (!flight) continue;
-              total += flight.TotalDuration;
-              if (i > 0 && flightsArr[i - 1]) {
-                const prevArrive = new Date(flightsArr[i - 1].ArrivesAt).getTime();
-                const currDepart = new Date(flight.DepartsAt).getTime();
-                const layover = Math.max(0, Math.round((currDepart - prevArrive) / (1000 * 60)));
-                total += layover;
-              }
-            }
-            return total;
-          }
-          if (sortBy === 'arrival') {
-            return flightsArr.length ? new Date(flightsArr[flightsArr.length - 1].ArrivesAt).getTime() : 0;
-          }
-          if (sortBy === 'departure') {
-            return flightsArr.length ? new Date(flightsArr[0].DepartsAt).getTime() : 0;
-          }
-          if (["y", "w", "j", "f"].includes(sortBy)) {
-            const { y, w, j, f } = getClassPercentages(flightsArr, reliability, minReliabilityPercent);
-            if (sortBy === 'y') return y;
-            if (sortBy === 'w') return w;
-            if (sortBy === 'j') return j;
-            if (sortBy === 'f') return f;
-          }
-          return 0;
-        },
-        (flightsArr: any[]) => {
-          let total = 0;
-          for (let i = 0; i < flightsArr.length; i++) {
-            const flight = flightsArr[i];
-            if (!flight) continue;
-            total += flight.TotalDuration;
-            if (i > 0 && flightsArr[i - 1]) {
-              const prevArrive = new Date(flightsArr[i - 1].ArrivesAt).getTime();
-              const currDepart = new Date(flight.DepartsAt).getTime();
-              const layover = Math.max(0, Math.round((currDepart - prevArrive) / (1000 * 60)));
-              total += layover;
-            }
-          }
-          return total;
-        },
-        getClassPercentages
-      );
+      
+      // --- Use optimized processing for cached data ---
+      const optimizedItineraries = precomputeItineraryMetadata(itineraries, flights, reliabilityMap, minReliabilityPercent);
+      const { total, data } = optimizedFilterSortSearchPaginate(optimizedItineraries, filterParams);
+      
       // Collect all unique flight UUIDs from current page
       const flightUUIDs = new Set<string>();
       data.forEach((card: { itinerary: string[] }) => {
@@ -822,10 +1060,11 @@ export async function POST(req: NextRequest) {
       flightUUIDs.forEach(uuid => {
         if (flights[uuid]) flightsPage[uuid] = flights[uuid];
       });
+      
       // Extract filter metadata from cached data
       const filterMetadata = extractFilterMetadata(itineraries, flights);
       
-      return NextResponse.json({
+      const response = {
         itineraries: data,
         flights: flightsPage,
         total,
@@ -835,7 +1074,12 @@ export async function POST(req: NextRequest) {
         minRateLimitReset,
         totalSeatsAeroHttpRequests,
         filterMetadata,
-      });
+      };
+      
+      // Cache the optimized result
+      await cacheOptimizedItineraries(optimizedCacheKey, response);
+      
+      return NextResponse.json(response);
     }
 
     // If apiKey is null, fetch pro_key with largest remaining from Supabase
@@ -891,7 +1135,8 @@ export async function POST(req: NextRequest) {
     const routeGroups: string[] = routePathData.queryParamsArr;
 
     // Log the number of seats.aero API links to run
-    console.log('[build-itineraries] total seats.aero API links to run:', routeGroups.length);
+    console.log('[build-itineraries] Total seats.aero API links to run:', routeGroups.length);
+    console.log('[build-itineraries] Route groups:', routeGroups.slice(0, 5), routeGroups.length > 5 ? `... and ${routeGroups.length - 5} more` : '');
 
     // 4. For each group, call availability-v2 in parallel (limit 10 at a time)
     let minRateLimitRemaining: number | null = null;
@@ -954,6 +1199,8 @@ export async function POST(req: NextRequest) {
     const availabilityResults = await pool(availabilityTasks, 10);
     const afterAvailabilityTime = Date.now(); // Time after fetching availability-v2
 
+    console.log('[build-itineraries] Availability fetch completed in', afterAvailabilityTime - startTime, 'ms');
+
     // Sum up the total number of actual seats.aero HTTP requests (including paginated)
     let totalSeatsAeroHttpRequests = 0;
     for (const result of availabilityResults) {
@@ -968,6 +1215,8 @@ export async function POST(req: NextRequest) {
         totalSeatsAeroHttpRequests += result.data.seatsAeroRequests;
       }
     }
+    
+    console.log('[build-itineraries] Total seats.aero HTTP requests:', totalSeatsAeroHttpRequests);
 
     // 5. Build a pool of all segment availabilities from all responses
     const segmentPool: Record<string, AvailabilityGroup[]> = {};
@@ -996,7 +1245,11 @@ export async function POST(req: NextRequest) {
       if (codes.length < 2) continue;
       const segments: [string, string][] = [];
       for (let i = 0; i < codes.length - 1; i++) {
-        segments.push([codes[i], codes[i + 1]]);
+        const code1 = codes[i];
+        const code2 = codes[i + 1];
+        if (code1 && code2) {
+          segments.push([code1, code2]);
+        }
       }
       // For each segment, get the corresponding availability from the pool
       const segmentAvail: AvailabilityGroup[][] = segments.map(([from, to]) => {
@@ -1121,8 +1374,17 @@ export async function POST(req: NextRequest) {
     // Return itineraries and flights map
     const itineraryBuildTimeMs = Date.now() - afterAvailabilityTime;
     const totalTimeMs = Date.now() - startTime;
-    console.log(`[build-itineraries] itinerary build time (ms):`, itineraryBuildTimeMs);
-    console.log(`[build-itineraries] total running time (ms):`, totalTimeMs);
+    console.log(`[build-itineraries] Itinerary build time (ms):`, itineraryBuildTimeMs);
+    console.log(`[build-itineraries] Total running time (ms):`, totalTimeMs);
+    console.log(`[build-itineraries] Total itineraries found:`, Object.keys(filteredOutput).reduce((sum, key) => {
+      const routeItineraries = filteredOutput[key];
+      if (!routeItineraries) return sum;
+      return sum + Object.keys(routeItineraries).reduce((routeSum, date) => {
+        const dateItineraries = routeItineraries[date];
+        return routeSum + (dateItineraries ? dateItineraries.length : 0);
+      }, 0);
+    }, 0));
+    console.log(`[build-itineraries] Total unique flights:`, flightMap.size);
 
     // --- RESPONSE COMPRESSION LOGIC ---
     const responseObj = {
@@ -1138,95 +1400,11 @@ export async function POST(req: NextRequest) {
     
     // Cache the full result in Redis (compressed)
     await cacheItineraries(cacheKey, responseObj);
-    // After building and caching, do the same filtering/sorting/searching/pagination
-    let allItins: Array<{ route: string; date: string; itinerary: string[] }> = [];
-    for (const routeKey of Object.keys(filteredOutput)) {
-      for (const date of Object.keys(filteredOutput[routeKey])) {
-        allItins.push(...(filteredOutput[routeKey][date] as string[][]).map((itinerary: string[]) => ({ route: routeKey, date, itinerary })));
-      }
-    }
-    const { total, data } = filterSortSearchPaginate(
-      allItins,
-      Object.fromEntries(flightMap),
-      reliabilityMap, // Pass the actual reliability data
-      minReliabilityPercent,
-      {
-        stops,
-        includeAirlines,
-        excludeAirlines,
-        maxDuration,
-        minYPercent,
-        minWPercent,
-        minJPercent,
-        minFPercent,
-        depTimeMin,
-        depTimeMax,
-        arrTimeMin,
-        arrTimeMax,
-        includeOrigin,
-        includeDestination,
-        includeConnection,
-        excludeOrigin,
-        excludeDestination,
-        excludeConnection,
-        search,
-        sortBy,
-        sortOrder,
-        page,
-        pageSize,
-      },
-      // Only override for 'duration' and 'arrival', let default handle y/w/j/f
-      (card, flights, sortBy, reliability, minReliabilityPercent) => {
-        const flightsArr = card.itinerary.map((fid: string) => flights[fid]).filter(Boolean);
-        if (sortBy === 'duration') {
-          let total = 0;
-          for (let i = 0; i < flightsArr.length; i++) {
-            const flight = flightsArr[i];
-            if (!flight) continue;
-            total += flight.TotalDuration;
-            if (i > 0 && flightsArr[i - 1]) {
-              const prevArrive = new Date(flightsArr[i - 1].ArrivesAt).getTime();
-              const currDepart = new Date(flight.DepartsAt).getTime();
-              const layover = Math.max(0, Math.round((currDepart - prevArrive) / (1000 * 60)));
-              total += layover;
-            }
-          }
-          return total;
-        }
-        if (sortBy === 'arrival') {
-          return flightsArr.length ? new Date(flightsArr[flightsArr.length - 1].ArrivesAt).getTime() : 0;
-        }
-        if (sortBy === 'departure') {
-          return flightsArr.length ? new Date(flightsArr[0].DepartsAt).getTime() : 0;
-        }
-        if (["y", "w", "j", "f"].includes(sortBy)) {
-          const { y, w, j, f } = getClassPercentages(flightsArr, reliability, minReliabilityPercent);
-          if (sortBy === 'y') return y;
-          if (sortBy === 'w') return w;
-          if (sortBy === 'j') return j;
-          if (sortBy === 'f') return f;
-        }
-        return 0;
-      },
-      (flightsArr: any[]) => {
-        let total = 0;
-        for (let i = 0; i < flightsArr.length; i++) {
-          const flight = flightsArr[i];
-          if (!flight) continue;
-          total += flight.TotalDuration;
-          if (i > 0 && flightsArr[i - 1]) {
-            const prevArrive = new Date(flightsArr[i - 1].ArrivesAt).getTime();
-            const currDepart = new Date(flight.DepartsAt).getTime();
-            const layover = Math.max(0, Math.round((currDepart - prevArrive) / (1000 * 60)));
-            total += layover;
-          }
-        }
-        return total;
-      },
-      (flightsArr: any[], reliability: any, minReliabilityPercent: number) => {
-        return { y: 100, w: 100, j: 100, f: 100 };
-      }
-    );
+    
+    // --- Use optimized processing for new data ---
+    const optimizedItineraries = precomputeItineraryMetadata(filteredOutput, Object.fromEntries(flightMap), reliabilityMap, minReliabilityPercent);
+    const { total, data } = optimizedFilterSortSearchPaginate(optimizedItineraries, filterParams);
+    
     // Collect all unique flight UUIDs from current page
     const flightUUIDs = new Set<string>();
     data.forEach((card: { itinerary: string[] }) => {
@@ -1237,7 +1415,8 @@ export async function POST(req: NextRequest) {
     flightUUIDs.forEach(uuid => {
       if (allFlights[uuid]) flightsPage[uuid] = allFlights[uuid];
     });
-    return NextResponse.json({
+    
+    const response = {
       itineraries: data,
       flights: flightsPage,
       total,
@@ -1247,9 +1426,15 @@ export async function POST(req: NextRequest) {
       minRateLimitReset,
       totalSeatsAeroHttpRequests,
       filterMetadata,
-    });
+    };
+    
+    // Cache the optimized result
+    await cacheOptimizedItineraries(optimizedCacheKey, response);
+    
+    return NextResponse.json(response);
   } catch (err) {
-    console.error('Error in /api/build-itineraries:', err);
+    console.error('[build-itineraries] Error in /api/build-itineraries:', err);
+    console.error('[build-itineraries] Error stack:', (err as Error).stack);
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });
   }
 }

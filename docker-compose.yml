@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   api:
     build: .
@@ -9,7 +8,6 @@ services:
       - NEXT_PUBLIC_BASE_URL=http://localhost:3000
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-      - SUPABASE_URL=${SUPABASE_URL}
       - VALKEY_HOST=${VALKEY_HOST}
       - VALKEY_PORT=${VALKEY_PORT}
       - VALKEY_PASSWORD=${VALKEY_PASSWORD}
@@ -57,25 +55,6 @@ services:
       - "6379:6379"
     command: ["redis-server", "--requirepass", "yourpassword"] # optional
     # For production, use a managed Redis or secure this container!
-
-  app:
-    image: ${DOCKERHUB_USERNAME}/my-image-name:latest
-    container_name: my-app-container
-    restart: unless-stopped
-    ports:
-      - "80:3000" # Adjust as needed
-    environment:
-      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - VALKEY_HOST=${VALKEY_HOST}
-      - VALKEY_PORT=${VALKEY_PORT}
-      - VALKEY_PASSWORD=${VALKEY_PASSWORD}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-    depends_on:
-      - redis
 
 volumes:
   redis_data:
