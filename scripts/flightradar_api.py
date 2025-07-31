@@ -49,9 +49,10 @@ class FlightRadar24API:
             
         try:
             # Get Redis configuration from environment variables with defaults
-            redis_host = os.getenv('REDIS_HOST', 'localhost')
+            # For Docker, use 'redis' as host (Docker service name)
+            redis_host = os.getenv('REDIS_HOST', 'redis')
             redis_port = int(os.getenv('REDIS_PORT', 6379))
-            redis_password = os.getenv('REDIS_PASSWORD')
+            redis_password = os.getenv('REDIS_PASSWORD', 'your_redis_password_here')
             
             # Create Redis client
             client = redis.Redis(
