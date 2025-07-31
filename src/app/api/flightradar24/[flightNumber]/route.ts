@@ -71,12 +71,18 @@ export async function GET(
  */
 function executePythonScript(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const pythonProcess = spawn('python3', [
+    const pythonProcess = spawn('python', [
       'scripts/flightradar_api.py',
       ...args
     ], {
       cwd: process.cwd(),
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        REDIS_HOST: process.env.REDIS_HOST || 'localhost',
+        REDIS_PORT: process.env.REDIS_PORT || '6380',
+        REDIS_PASSWORD: process.env.REDIS_PASSWORD || undefined
+      }
     });
     
     let stdout = '';
@@ -150,12 +156,12 @@ function parseFlightData(csvOutput: string): FlightRadarResponse[] {
     const parts = line.split(',');
     if (parts.length === 6 && parts.every(part => part !== undefined)) {
       flights.push({
-        flightNumber: parts[0]!,
-        date: parts[1]!,
-        registration: parts[2]!,
-        originIata: parts[3]!,
-        destinationIata: parts[4]!,
-        ontime: parts[5]!,
+        flightNumber: parts[0]!.trim(),
+        date: parts[1]!.trim(),
+        registration: parts[2]!.trim(),
+        originIata: parts[3]!.trim(),
+        destinationIata: parts[4]!.trim(),
+        ontime: parts[5]!.trim(),
       });
     }
   }

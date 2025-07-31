@@ -49,10 +49,11 @@ class FlightRadar24API:
             
         try:
             # Get Redis configuration from environment variables with defaults
-            # For Docker, use 'redis' as host (Docker service name)
-            redis_host = os.getenv('REDIS_HOST', 'redis')
-            redis_port = int(os.getenv('REDIS_PORT', 6379))
-            redis_password = os.getenv('REDIS_PASSWORD', 'your_redis_password_here')
+            # For local development, use localhost:6380 (host port)
+            # For Docker containers, use redis:6379 (container port)
+            redis_host = os.getenv('REDIS_HOST', 'localhost')
+            redis_port = int(os.getenv('REDIS_PORT', 6380))
+            redis_password = os.getenv('REDIS_PASSWORD')  # No default password
             
             # Create Redis client
             client = redis.Redis(
@@ -68,26 +69,25 @@ class FlightRadar24API:
             
             # Test connection
             client.ping()
-            print(f"✅ Redis connected successfully to {redis_host}:{redis_port}")
+            print(f"[OK] Redis connected successfully to {redis_host}:{redis_port}")
             return client
             
         except Exception as e:
-            print(f"⚠️  Redis connection failed: {e}")
+            print(f"[WARNING] Redis connection failed: {e}")
+            print(f"[DEBUG] Redis config - Host: {redis_host}, Port: {redis_port}, Password: {'*' * len(redis_password) if redis_password else 'None'}")
             print("Continuing without Redis caching...")
             return None
     
     def _generate_cache_key(self, query: str, origin_iata: Optional[str] = None, destination_iata: Optional[str] = None) -> str:
         """Generate a unique cache key for the query parameters."""
-        # Create a string representation of the query parameters
-        params_str = f"{query.upper()}"
+        # Create a readable cache key
+        key_parts = [query.upper()]
         if origin_iata:
-            params_str += f":{origin_iata.upper()}"
+            key_parts.append(origin_iata.upper())
         if destination_iata:
-            params_str += f":{destination_iata.upper()}"
+            key_parts.append(destination_iata.upper())
         
-        # Create a hash of the parameters for a shorter, consistent key
-        hash_object = hashlib.md5(params_str.encode())
-        return f"flightradar:{hash_object.hexdigest()}"
+        return f"flightradar:{':'.join(key_parts)}"
     
     def _get_cached_results(self, cache_key: str) -> Optional[list]:
         """Retrieve cached results from Redis."""
@@ -97,11 +97,11 @@ class FlightRadar24API:
         try:
             cached_data = self.redis_client.get(cache_key)
             if cached_data:
-                print(f"✅ Found cached results for {cache_key}")
+                print(f"[OK] Found cached results for {cache_key}")
                 return json.loads(cached_data)
             return None
         except Exception as e:
-            print(f"⚠️  Redis get error: {e}")
+            print(f"[WARNING] Redis get error: {e}")
             return None
     
     def _cache_results(self, cache_key: str, results: list) -> bool:
@@ -113,10 +113,10 @@ class FlightRadar24API:
             # Cache for 24 hours (86400 seconds)
             ttl_seconds = 86400
             self.redis_client.setex(cache_key, ttl_seconds, json.dumps(results))
-            print(f"✅ Cached results for {cache_key} (TTL: 24h)")
+            print(f"[OK] Cached results for {cache_key} (TTL: 24h)")
             return True
         except Exception as e:
-            print(f"⚠️  Redis set error: {e}")
+            print(f"[WARNING] Redis set error: {e}")
             return False
 
     def _get_current_timestamp(self):
@@ -149,14 +149,18 @@ class FlightRadar24API:
         """
         # Generate cache key
         cache_key = self._generate_cache_key(query, origin_iata, destination_iata)
+        print(f"[DEBUG] Generated cache key: {cache_key}")
         
         # Try to get cached results first
         cached_results = self._get_cached_results(cache_key)
         if cached_results:
-            print(f"📊 Returning {len(cached_results)} cached flights")
+            print(f"[INFO] Returning {len(cached_results)} cached flights")
             return cached_results
         
-        print("🔄 No cache found, fetching fresh data...")
+        if not self.redis_client:
+            print("[INFO] Redis not available, fetching fresh data...")
+        else:
+            print("[INFO] No cache found, fetching fresh data...")
         
         all_results = []
         
@@ -361,7 +365,13 @@ class FlightRadar24API:
         
         # Cache the results
         if unique_results:
-            self._cache_results(cache_key, unique_results)
+            cache_success = self._cache_results(cache_key, unique_results)
+            if cache_success:
+                print(f"[DEBUG] Successfully cached {len(unique_results)} flights")
+            else:
+                print(f"[DEBUG] Failed to cache {len(unique_results)} flights")
+        else:
+            print("[DEBUG] No results to cache")
         
         return unique_results
 
