@@ -52,7 +52,16 @@ class FlightRadar24API:
             # For local development, use localhost:6380 (host port)
             # For Docker containers, use redis:6379 (container port)
             redis_host = os.getenv('REDIS_HOST', 'localhost')
-            redis_port = int(os.getenv('REDIS_PORT', 6380))
+            
+            # Handle Docker link format (tcp://ip:port) or direct port number
+            redis_port_str = os.getenv('REDIS_PORT', '6380')
+            if redis_port_str.startswith('tcp://'):
+                # Extract port from Docker link format: tcp://172.17.0.2:6379
+                redis_port = int(redis_port_str.split(':')[-1])
+                redis_host = redis_port_str.split('://')[1].split(':')[0]
+            else:
+                redis_port = int(redis_port_str)
+                
             redis_password = os.getenv('REDIS_PASSWORD')  # No default password
             
             # Create Redis client
