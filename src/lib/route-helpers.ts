@@ -39,6 +39,33 @@ export async function fetchAirportByIata(
   return data as unknown as Airport;
 }
 
+// Batch fetch airports by IATA codes
+export async function batchFetchAirportsByIata(
+  supabase: SupabaseClient,
+  iataCodes: string[]
+): Promise<Record<string, Airport | null>> {
+  if (iataCodes.length === 0) return {};
+  
+  const uniqueCodes = [...new Set(iataCodes)];
+  const { data, error } = await supabase
+    .from('airports')
+    .select('*')
+    .in('iata', uniqueCodes);
+  
+  if (error || !data) return {};
+  
+  const result: Record<string, Airport | null> = {};
+  uniqueCodes.forEach(code => {
+    result[code] = null;
+  });
+  
+  data.forEach(airport => {
+    result[airport.iata] = airport as unknown as Airport;
+  });
+  
+  return result;
+}
+
 // Fetch paths by region and distance
 export async function fetchPaths(
   supabase: SupabaseClient,
@@ -52,6 +79,7 @@ export async function fetchPaths(
     .eq('originRegion', originRegion)
     .eq('destinationRegion', destinationRegion)
     .lte('totalDistance', maxDistance)
+    .limit(10000);
   if (error || !data) return [];
   return data as unknown as Path[];
 }
@@ -68,4 +96,24 @@ export async function fetchIntraRoutes(
   const { data, error } = await query;
   if (error || !data) return [];
   return data as unknown as IntraRoute[];
+}
+
+// Batch fetch intra routes for multiple origin-destination pairs
+export async function batchFetchIntraRoutes(
+  supabase: SupabaseClient,
+  pairs: { origin: string; destination: string }[]
+): Promise<Record<string, IntraRoute[]>> {
+  if (pairs.length === 0) return {};
+  
+  const uniquePairs = [...new Set(pairs.map(p => `${p.origin}-${p.destination}`))];
+  const result: Record<string, IntraRoute[]> = {};
+  
+  // Fetch all unique pairs in parallel
+  await Promise.all(uniquePairs.map(async (pair) => {
+    const [origin, destination] = pair.split('-');
+    const routes = await fetchIntraRoutes(supabase, origin, destination);
+    result[pair] = routes;
+  }));
+  
+  return result;
 } 
