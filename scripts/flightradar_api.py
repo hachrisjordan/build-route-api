@@ -4,7 +4,18 @@ import json
 from datetime import datetime, timezone, timedelta
 import time
 import sys
+import hashlib
+import os
 from typing import Optional
+
+# Redis imports with graceful fallback
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    print("Warning: redis package not available. Install with: pip install redis")
+    print("Continuing without Redis caching...")
 
 class FlightRadar24API:
     BASE_URL = "https://api.flightradar24.com/common/v1/flight/list.json"
@@ -27,6 +38,85 @@ class FlightRadar24API:
         
         # Save today's date for reference
         self.today = datetime.now().date()
+        
+        # Initialize Redis client
+        self.redis_client = self._init_redis_client()
+        
+    def _init_redis_client(self):
+        """Initialize Redis client with graceful error handling."""
+        if not REDIS_AVAILABLE:
+            return None
+            
+        try:
+            # Get Redis configuration from environment variables with defaults
+            redis_host = os.getenv('REDIS_HOST', 'localhost')
+            redis_port = int(os.getenv('REDIS_PORT', 6379))
+            redis_password = os.getenv('REDIS_PASSWORD')
+            
+            # Create Redis client
+            client = redis.Redis(
+                host=redis_host,
+                port=redis_port,
+                password=redis_password,
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+                retry_on_timeout=True,
+                health_check_interval=30
+            )
+            
+            # Test connection
+            client.ping()
+            print(f"✅ Redis connected successfully to {redis_host}:{redis_port}")
+            return client
+            
+        except Exception as e:
+            print(f"⚠️  Redis connection failed: {e}")
+            print("Continuing without Redis caching...")
+            return None
+    
+    def _generate_cache_key(self, query: str, origin_iata: Optional[str] = None, destination_iata: Optional[str] = None) -> str:
+        """Generate a unique cache key for the query parameters."""
+        # Create a string representation of the query parameters
+        params_str = f"{query.upper()}"
+        if origin_iata:
+            params_str += f":{origin_iata.upper()}"
+        if destination_iata:
+            params_str += f":{destination_iata.upper()}"
+        
+        # Create a hash of the parameters for a shorter, consistent key
+        hash_object = hashlib.md5(params_str.encode())
+        return f"flightradar:{hash_object.hexdigest()}"
+    
+    def _get_cached_results(self, cache_key: str) -> Optional[list]:
+        """Retrieve cached results from Redis."""
+        if not self.redis_client:
+            return None
+            
+        try:
+            cached_data = self.redis_client.get(cache_key)
+            if cached_data:
+                print(f"✅ Found cached results for {cache_key}")
+                return json.loads(cached_data)
+            return None
+        except Exception as e:
+            print(f"⚠️  Redis get error: {e}")
+            return None
+    
+    def _cache_results(self, cache_key: str, results: list) -> bool:
+        """Cache results in Redis with 24-hour TTL."""
+        if not self.redis_client:
+            return False
+            
+        try:
+            # Cache for 24 hours (86400 seconds)
+            ttl_seconds = 86400
+            self.redis_client.setex(cache_key, ttl_seconds, json.dumps(results))
+            print(f"✅ Cached results for {cache_key} (TTL: 24h)")
+            return True
+        except Exception as e:
+            print(f"⚠️  Redis set error: {e}")
+            return False
 
     def _get_current_timestamp(self):
         """Get current timestamp in seconds."""
@@ -56,6 +146,17 @@ class FlightRadar24API:
         Returns:
             List[str]: List of unique flights in CSV format (flight_number,date,registration,origin_iata,destination_iata,ontime).
         """
+        # Generate cache key
+        cache_key = self._generate_cache_key(query, origin_iata, destination_iata)
+        
+        # Try to get cached results first
+        cached_results = self._get_cached_results(cache_key)
+        if cached_results:
+            print(f"📊 Returning {len(cached_results)} cached flights")
+            return cached_results
+        
+        print("🔄 No cache found, fetching fresh data...")
+        
         all_results = []
         
         # Track the earliest date found
@@ -256,6 +357,10 @@ class FlightRadar24API:
         print(f"Unique flights: {len(unique_results)}")
         if earliest_date:
             print(f"Date range: {earliest_date.strftime('%Y-%m-%d')} to {self.today.strftime('%Y-%m-%d')} ({(self.today - earliest_date).days} days)")
+        
+        # Cache the results
+        if unique_results:
+            self._cache_results(cache_key, unique_results)
         
         return unique_results
 
