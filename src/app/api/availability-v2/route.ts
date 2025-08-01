@@ -5,6 +5,7 @@ import { createHash } from 'crypto';
 import zlib from 'zlib';
 import { addDays, parseISO, format } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
+import { CONCURRENCY_CONFIG } from '@/lib/concurrency-config';
 
 // Zod schema for request validation
 const availabilityV2Schema = z.object({
@@ -206,14 +207,14 @@ export async function POST(req: NextRequest) {
     let cursors: string[] = [];
     hasMore = firstData.hasMore || false;
     cursor = firstData.cursor;
-    // If skip is supported, fire off parallel fetches
+    // Sequential pagination (no parallel fetches)
     if (hasMore && typeof skip === 'number') {
-      // Try to estimate number of pages (if possible)
-      // If total count is not available, fetch up to 5 more pages in parallel as a safe default
-      const maxPages = 5;
-      const fetches = [];
-      for (let i = 1; i <= maxPages; i++) {
-        const params = { ...baseParams, skip: i * 1000 };
+      // Sequential fetch using skip parameter
+      let pageCount = 0;
+      const maxPages = CONCURRENCY_CONFIG.PAGINATION_MAX_PAGES; // Use configuration
+      while (hasMore && pageCount < maxPages) {
+        pageCount++;
+        const params = { ...baseParams, skip: pageCount * 1000 };
         const url = buildUrl(params);
         const res = await fetch(url, {
           method: 'GET',
@@ -231,7 +232,7 @@ export async function POST(req: NextRequest) {
         lastResponse = res;
       }
     } else {
-      // Fallback: sequential fetch using cursor
+      // Sequential fetch using cursor
       while (hasMore && cursor) {
         const params = { ...baseParams, cursor };
         const url = buildUrl(params);

@@ -8,6 +8,7 @@ import { parseISO, isBefore, isEqual, startOfDay, endOfDay } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
 import Redis from 'ioredis';
 import { parse } from 'url';
+import { CONCURRENCY_CONFIG, PERFORMANCE_MONITORING } from '@/lib/concurrency-config';
 
 function getClassPercentages(
   flights: any[],
@@ -1197,7 +1198,13 @@ export async function POST(req: NextRequest) {
         return { routeId, error: true, data: [] };
       }
     });
-    const availabilityResults = await pool(availabilityTasks, 10);
+    // Start performance monitoring
+    PERFORMANCE_MONITORING.start();
+    
+    const availabilityResults = await pool(availabilityTasks, CONCURRENCY_CONFIG.AVAILABILITY_CONCURRENT_REQUESTS);
+    
+    // Log performance metrics
+    PERFORMANCE_MONITORING.logMetrics();
     const afterAvailabilityTime = Date.now(); // Time after fetching availability-v2
 
     console.log('[build-itineraries] Availability fetch completed in', afterAvailabilityTime - t0, 'ms');

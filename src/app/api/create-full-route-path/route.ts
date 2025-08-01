@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createFullRoutePathSchema } from './schema';
 import { createClient } from '@supabase/supabase-js';
-import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchIntraRoutes, SupabaseClient, batchFetchAirportsByIata, batchFetchIntraRoutes } from '@/lib/route-helpers';
+import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchPathsOptimized, fetchIntraRoutes, SupabaseClient, batchFetchAirportsByIata, batchFetchIntraRoutes } from '@/lib/route-helpers';
 import { FullRoutePathResult, Path, IntraRoute } from '@/types/route';
 
 // Use environment variables for Supabase
@@ -36,7 +36,15 @@ async function fetchIntraRoutesCached(supabase: SupabaseClient, origin: string, 
 async function fetchPathsCached(supabase: SupabaseClient, originRegion: string, destinationRegion: string, maxDistance: number, cache: RoutePathCache) {
   const key = `${originRegion}-${destinationRegion}-${maxDistance}`;
   if (cache.path.has(key)) return cache.path.get(key)!;
-  const paths = await fetchPaths(supabase, originRegion, destinationRegion, maxDistance);
+  
+  // Use optimized fetching for better performance with large datasets
+  const paths = await fetchPathsOptimized(supabase, originRegion, destinationRegion, maxDistance, {
+    maxMemoryUsage: 512, // 512MB memory limit
+    enableStreaming: true, // Enable streaming for large datasets
+    customBatchSize: 10000, // Custom batch size
+    customConcurrency: 5 // Custom concurrency
+  });
+  
   cache.path.set(key, paths);
   return paths;
 }

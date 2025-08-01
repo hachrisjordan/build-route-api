@@ -1,5 +1,6 @@
 import { Airport, Path, IntraRoute } from '../types/route';
 import { createClient, SupabaseClient as SupabaseClientType } from '@supabase/supabase-js';
+import { CONCURRENCY_CONFIG } from './concurrency-config';
 
 // Use 'any' for generics to avoid linter errors
 export type SupabaseClient = SupabaseClientType<any, any, any>;
@@ -66,12 +67,14 @@ export async function batchFetchAirportsByIata(
   return result;
 }
 
-// Fetch paths by region and distance
-export async function fetchPaths(
+// Helper function to fetch paths in batches
+async function fetchPathsBatch(
   supabase: SupabaseClient,
   originRegion: string,
   destinationRegion: string,
-  maxDistance: number
+  maxDistance: number,
+  offset: number,
+  limit: number
 ): Promise<Path[]> {
   const { data, error } = await supabase
     .from('path')
@@ -79,9 +82,68 @@ export async function fetchPaths(
     .eq('originRegion', originRegion)
     .eq('destinationRegion', destinationRegion)
     .lte('totalDistance', maxDistance)
-    .limit(10000);
+    .range(offset, offset + limit - 1);
+  
   if (error || !data) return [];
   return data as unknown as Path[];
+}
+
+// Fetch paths by region and distance with batching and parallel processing
+export async function fetchPaths(
+  supabase: SupabaseClient,
+  originRegion: string,
+  destinationRegion: string,
+  maxDistance: number,
+  batchSize: number = CONCURRENCY_CONFIG.DATABASE_BATCH_SIZE,
+  maxConcurrentBatches: number = CONCURRENCY_CONFIG.DATABASE_CONCURRENT_BATCHES
+): Promise<Path[]> {
+  // First, get the total count to determine how many batches we need
+  const { count, error: countError } = await supabase
+    .from('path')
+    .select('*', { count: 'exact', head: true })
+    .eq('originRegion', originRegion)
+    .eq('destinationRegion', destinationRegion)
+    .lte('totalDistance', maxDistance);
+  
+  if (countError || count === null) {
+    console.warn('Failed to get count, falling back to single batch');
+    return fetchPathsBatch(supabase, originRegion, destinationRegion, maxDistance, 0, batchSize);
+  }
+  
+  if (count === 0) return [];
+  
+  // Calculate number of batches needed
+  const totalBatches = Math.ceil(count / batchSize);
+  const allPaths: Path[] = [];
+  
+  // Process batches in parallel with concurrency limit
+  for (let i = 0; i < totalBatches; i += maxConcurrentBatches) {
+    const batchPromises = [];
+    
+    // Create batch promises for current chunk
+    for (let j = 0; j < maxConcurrentBatches && i + j < totalBatches; j++) {
+      const batchIndex = i + j;
+      const offset = batchIndex * batchSize;
+      batchPromises.push(
+        fetchPathsBatch(supabase, originRegion, destinationRegion, maxDistance, offset, batchSize)
+      );
+    }
+    
+    // Wait for current chunk of batches to complete
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Add results to allPaths
+    batchResults.forEach(paths => {
+      allPaths.push(...paths);
+    });
+    
+    // Optional: Add a small delay between chunks to prevent overwhelming the database
+    if (i + maxConcurrentBatches < totalBatches) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  
+  return allPaths;
 }
 
 // Fetch intra_routes by origin or destination
@@ -116,4 +178,107 @@ export async function batchFetchIntraRoutes(
   }));
   
   return result;
+}
+
+// Utility function to calculate optimal batch size based on dataset size
+function calculateOptimalBatchSize(totalCount: number): number {
+  if (totalCount <= 10000) return 10000;
+  if (totalCount <= 50000) return 5000;
+  if (totalCount <= 100000) return 2500;
+  if (totalCount <= 500000) return 1000;
+  return 500; // For very large datasets
+}
+
+// Utility function to calculate optimal concurrency based on dataset size
+function calculateOptimalConcurrency(totalCount: number): number {
+  if (totalCount <= 50000) return 5;
+  if (totalCount <= 200000) return 3;
+  return 2; // For very large datasets, reduce concurrency
+}
+
+// Advanced fetch paths with automatic optimization for large datasets
+export async function fetchPathsOptimized(
+  supabase: SupabaseClient,
+  originRegion: string,
+  destinationRegion: string,
+  maxDistance: number,
+  options: {
+    maxMemoryUsage?: number; // in MB
+    enableStreaming?: boolean;
+    customBatchSize?: number;
+    customConcurrency?: number;
+  } = {}
+): Promise<Path[]> {
+  const {
+    maxMemoryUsage = CONCURRENCY_CONFIG.MAX_MEMORY_USAGE_MB, // Use configured memory limit
+    enableStreaming = false,
+    customBatchSize,
+    customConcurrency
+  } = options;
+
+  // First, get the total count
+  const { count, error: countError } = await supabase
+    .from('path')
+    .select('*', { count: 'exact', head: true })
+    .eq('originRegion', originRegion)
+    .eq('destinationRegion', destinationRegion)
+    .lte('totalDistance', maxDistance);
+  
+  if (countError || count === null) {
+    console.warn('Failed to get count, falling back to single batch');
+    return fetchPathsBatch(supabase, originRegion, destinationRegion, maxDistance, 0, 10000);
+  }
+  
+  if (count === 0) return [];
+  
+  // Calculate optimal batch size and concurrency
+  const batchSize = customBatchSize || calculateOptimalBatchSize(count);
+  const maxConcurrentBatches = customConcurrency || calculateOptimalConcurrency(count);
+  
+  console.log(`Fetching ${count} paths in batches of ${batchSize} with ${maxConcurrentBatches} concurrent batches`);
+  
+  // For very large datasets, use streaming approach
+  if (enableStreaming && count > 100000) {
+    return fetchPathsStreaming(supabase, originRegion, destinationRegion, maxDistance, batchSize, maxMemoryUsage);
+  }
+  
+  // Use the regular batching approach
+  return fetchPaths(supabase, originRegion, destinationRegion, maxDistance, batchSize, maxConcurrentBatches);
+}
+
+// Streaming approach for very large datasets
+async function fetchPathsStreaming(
+  supabase: SupabaseClient,
+  originRegion: string,
+  destinationRegion: string,
+  maxDistance: number,
+  batchSize: number,
+  maxMemoryUsage: number
+): Promise<Path[]> {
+  const allPaths: Path[] = [];
+  let currentBatch = 0;
+  let estimatedMemoryUsage = 0;
+  const estimatedPathSize = 1024; // Rough estimate: 1KB per path object
+  
+  while (true) {
+    const offset = currentBatch * batchSize;
+    const paths = await fetchPathsBatch(supabase, originRegion, destinationRegion, maxDistance, offset, batchSize);
+    
+    if (paths.length === 0) break; // No more data
+    
+    // Check memory usage
+    estimatedMemoryUsage += paths.length * estimatedPathSize;
+    if (estimatedMemoryUsage > maxMemoryUsage * 1024 * 1024) {
+      console.warn(`Memory usage limit reached (${maxMemoryUsage}MB). Processing ${allPaths.length} paths.`);
+      break;
+    }
+    
+    allPaths.push(...paths);
+    currentBatch++;
+    
+    // Add a small delay to prevent overwhelming the database
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  
+  return allPaths;
 } 
