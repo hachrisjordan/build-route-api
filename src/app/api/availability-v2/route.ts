@@ -23,6 +23,90 @@ if (!SEATS_SEARCH_URL) {
   throw new Error('SEATS_SEARCH_URL environment variable is not set');
 }
 
+// Distance-based mileage cost thresholds for DE and JX flights
+const DISTANCE_THRESHOLDS = {
+  ECONOMY: [
+    { maxDistance: 1500, maxMileage: 7500 },
+    { maxDistance: 3000, maxMileage: 25000 },
+    { maxDistance: 5000, maxMileage: 30000 },
+    { maxDistance: 7000, maxMileage: 37500 },
+    { maxDistance: 10000, maxMileage: 42500 },
+    { maxDistance: Infinity, maxMileage: 65000 }
+  ],
+  PREMIUM: [
+    { maxDistance: 1500, maxMileage: 10000 },
+    { maxDistance: 3000, maxMileage: 32500 },
+    { maxDistance: 5000, maxMileage: 40000 },
+    { maxDistance: 7000, maxMileage: 50000 },
+    { maxDistance: 10000, maxMileage: 55000 },
+    { maxDistance: Infinity, maxMileage: 85000 }
+  ],
+  BUSINESS: [
+    { maxDistance: 1500, maxMileage: 15000 },
+    { maxDistance: 3000, maxMileage: 50000 },
+    { maxDistance: 5000, maxMileage: 60000 },
+    { maxDistance: 7000, maxMileage: 75000 },
+    { maxDistance: 10000, maxMileage: 85000 },
+    { maxDistance: Infinity, maxMileage: 130000 }
+  ],
+  FIRST: [
+    { maxDistance: 1500, maxMileage: 22500 },
+    { maxDistance: 3000, maxMileage: 75000 },
+    { maxDistance: 5000, maxMileage: 90000 },
+    { maxDistance: 7000, maxMileage: 110000 },
+    { maxDistance: 10000, maxMileage: 130000 },
+    { maxDistance: Infinity, maxMileage: 195000 }
+  ]
+};
+
+/**
+ * Checks if a DE or JX flight meets the distance-based mileage cost requirements
+ */
+function meetsDistanceThresholds(flightPrefix: string, distance: number, mileageCost: number, cabin: string): boolean {
+  // Only apply filtering to DE and JX flights
+  if (flightPrefix !== 'DE' && flightPrefix !== 'JX') {
+    return true;
+  }
+
+  // Determine which cabin thresholds to use
+  let thresholds;
+  switch (cabin.toLowerCase()) {
+    case 'economy':
+    case 'y':
+      thresholds = DISTANCE_THRESHOLDS.ECONOMY;
+      break;
+    case 'premium':
+    case 'w':
+      thresholds = DISTANCE_THRESHOLDS.PREMIUM;
+      break;
+    case 'business':
+    case 'j':
+      thresholds = DISTANCE_THRESHOLDS.BUSINESS;
+      break;
+    case 'first':
+    case 'f':
+      thresholds = DISTANCE_THRESHOLDS.FIRST;
+      break;
+    default:
+      // Default to economy if cabin is not specified
+      thresholds = DISTANCE_THRESHOLDS.ECONOMY;
+  }
+
+  // Find the appropriate threshold based on distance
+  const threshold = thresholds.find(t => distance <= t.maxDistance);
+  if (!threshold) {
+    console.log(`[DE/JX Filter] ${flightPrefix} flight: No threshold found for distance ${distance} miles`);
+    return false;
+  }
+
+  // Check if mileage cost is within the threshold
+  const isValid = mileageCost <= threshold.maxMileage;
+  if (!isValid) {
+    console.log(`[DE/JX Filter] ${flightPrefix} flight: Mileage cost ${mileageCost} exceeds threshold ${threshold.maxMileage} for distance ${distance} miles in ${cabin} cabin`);
+  }
+  return isValid;
+}
+
 // --- Valkey (iovalkey) setup ---
 let valkey: any = null;
 function getValkeyClient(): any {
@@ -286,6 +370,15 @@ export async function POST(req: NextRequest) {
               const flightNumbersArr = (trip.FlightNumbers || '').split(/,\s*/);
               for (const flightNumber of flightNumbersArr) {
                 const normalizedFlightNumber = normalizeFlightNumber(flightNumber);
+                const flightPrefix = normalizedFlightNumber.slice(0, 2).toUpperCase();
+                const distance = item.Route.Distance || 0;
+                const mileageCost = trip.MileageCost || 0;
+                
+                // Apply distance-based filtering for DE and JX flights
+                if (!meetsDistanceThresholds(flightPrefix, distance, mileageCost, cabinType)) {
+                  continue;
+                }
+                
                 results.push({
                   originAirport: item.Route.OriginAirport,
                   destinationAirport: item.Route.DestinationAirport,
@@ -391,9 +484,42 @@ export async function POST(req: NextRequest) {
       }
     }
     // Now, continue with alliance logic and grouping as before, but use groupedMap.values() instead of mergedMap.values()
-    const mergedResults = Array.from(groupedMap.values()).map(({ YMile, WMile, JMile, FMile, ...rest }) => {
+    const mergedResults = Array.from(groupedMap.values()).map((entry) => {
+      const { YMile, WMile, JMile, FMile, ...rest } = entry;
       // Alliance logic
       const flightPrefix = (rest.FlightNumbers || '').slice(0, 2).toUpperCase();
+      const distance = rest.distance || 0;
+      
+      // Apply distance-based filtering for DE and JX flights in the merged results
+      // Check each cabin type that has availability
+      let hasValidCabin = false;
+      if (rest.YCount > 0 && meetsDistanceThresholds(flightPrefix, distance, YMile || 0, 'economy')) {
+        hasValidCabin = true;
+      }
+      if (rest.WCount > 0 && meetsDistanceThresholds(flightPrefix, distance, WMile || 0, 'premium')) {
+        hasValidCabin = true;
+      }
+      if (rest.JCount > 0 && meetsDistanceThresholds(flightPrefix, distance, JMile || 0, 'business')) {
+        hasValidCabin = true;
+      }
+      if (rest.FCount > 0 && meetsDistanceThresholds(flightPrefix, distance, FMile || 0, 'first')) {
+        hasValidCabin = true;
+      }
+      
+      // If no valid cabins for DE/JX flights, skip this result
+      if ((flightPrefix === 'DE' || flightPrefix === 'JX') && !hasValidCabin) {
+        return null;
+      }
+      
+      // Preserve mileage values for later filtering
+      const resultWithMileage = {
+        ...rest,
+        YMile,
+        WMile,
+        JMile,
+        FMile
+      };
+      
       const starAlliance = [
         'A3','AC','CA','AI','NZ','NH','OZ','OS','AV','SN','CM','OU','MS','ET','BR','LO','LH','CL','ZH','SQ','SA','LX','TP','TG','TK','UA'
       ];
@@ -420,12 +546,37 @@ export async function POST(req: NextRequest) {
       else if (gf.includes(flightPrefix)) alliance = 'GF';
       else if (de.includes(flightPrefix)) alliance = 'DE';
       else alliance = undefined;
-      return alliance ? { ...rest, alliance } : null;
+      return alliance ? { ...resultWithMileage, alliance } : null;
     }).filter(Boolean);
 
     // Group by originAirport, destinationAirport, date, alliance
     const finalGroupedMap = new Map<string, any>();
     for (const entry of mergedResults) {
+      // Additional filtering for DE and JX flights in final grouping
+      const flightPrefix = (entry.FlightNumbers || '').slice(0, 2).toUpperCase();
+      const distance = entry.distance || 0;
+      
+      // For DE and JX flights, ensure at least one cabin meets the distance thresholds
+      if (flightPrefix === 'DE' || flightPrefix === 'JX') {
+        let hasValidCabin = false;
+        if (entry.YCount > 0 && meetsDistanceThresholds(flightPrefix, distance, entry.YMile || 0, 'economy')) {
+          hasValidCabin = true;
+        }
+        if (entry.WCount > 0 && meetsDistanceThresholds(flightPrefix, distance, entry.WMile || 0, 'premium')) {
+          hasValidCabin = true;
+        }
+        if (entry.JCount > 0 && meetsDistanceThresholds(flightPrefix, distance, entry.JMile || 0, 'business')) {
+          hasValidCabin = true;
+        }
+        if (entry.FCount > 0 && meetsDistanceThresholds(flightPrefix, distance, entry.FMile || 0, 'first')) {
+          hasValidCabin = true;
+        }
+        
+        if (!hasValidCabin) {
+          continue; // Skip this entry if no valid cabins
+        }
+      }
+      
       const groupKey = [
         entry.originAirport,
         entry.destinationAirport,
