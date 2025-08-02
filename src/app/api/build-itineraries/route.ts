@@ -1112,11 +1112,28 @@ export async function POST(req: NextRequest) {
     if (!baseUrl) {
       const proto = req.headers.get('x-forwarded-proto') || 'http';
       const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || 'localhost:3000';
-      baseUrl = `${proto}://${host}`;
+      // Sanitize the URL components to remove any invisible Unicode characters
+      const sanitizedProto = proto.replace(/[^\x00-\x7F]/g, ''); // Remove non-ASCII characters
+      const sanitizedHost = host.replace(/[^\x00-\x7F]/g, ''); // Remove non-ASCII characters
+      baseUrl = `${sanitizedProto}://${sanitizedHost}`;
+    }
+    
+    // Additional validation to ensure the URL is valid
+    try {
+      new URL(baseUrl);
+    } catch (error) {
+      console.error('[build-itineraries] Invalid baseUrl constructed:', baseUrl);
+      // Fallback to a safe default
+      baseUrl = 'http://localhost:3000';
     }
 
     // 2. Call create-full-route-path API
-    const routePathRes = await fetch(`${baseUrl}/api/create-full-route-path`, {
+    const fullRoutePathUrl = `${baseUrl}/api/create-full-route-path`;
+    console.log('[build-itineraries] Calling create-full-route-path with URL:', fullRoutePathUrl);
+    console.log('[build-itineraries] URL length:', fullRoutePathUrl.length);
+    console.log('[build-itineraries] URL bytes:', Buffer.from(fullRoutePathUrl, 'utf8').length);
+    
+    const routePathRes = await fetch(fullRoutePathUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ origin, destination, maxStop }),
