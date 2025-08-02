@@ -95,15 +95,13 @@ function meetsDistanceThresholds(flightPrefix: string, distance: number, mileage
   // Find the appropriate threshold based on distance
   const threshold = thresholds.find(t => distance <= t.maxDistance);
   if (!threshold) {
-    console.log(`[DE/JX Filter] ${flightPrefix} flight: No threshold found for distance ${distance} miles`);
+    // Removed logging to reduce noise
     return false;
   }
 
   // Check if mileage cost is within the threshold
   const isValid = mileageCost <= threshold.maxMileage;
-  if (!isValid) {
-    console.log(`[DE/JX Filter] ${flightPrefix} flight: Mileage cost ${mileageCost} exceeds threshold ${threshold.maxMileage} for distance ${distance} miles in ${cabin} cabin`);
-  }
+  // Removed logging to reduce noise
   return isValid;
 }
 

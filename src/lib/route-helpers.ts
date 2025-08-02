@@ -281,4 +281,167 @@ async function fetchPathsStreaming(
   }
   
   return allPaths;
+}
+
+/**
+ * Fetch paths with maxStop filtering applied at the database level
+ * @param supabase - Supabase client
+ * @param originRegion - Origin region
+ * @param destinationRegion - Destination region
+ * @param maxDistance - Maximum distance
+ * @param maxStop - Maximum number of stops
+ * @param userOrigin - User input origin
+ * @param userDestination - User input destination
+ * @param options - Additional options
+ * @returns Filtered paths
+ */
+export async function fetchPathsWithMaxStopFilter(
+  supabase: SupabaseClient,
+  originRegion: string,
+  destinationRegion: string,
+  maxDistance: number,
+  maxStop: number,
+  userOrigin: string,
+  userDestination: string,
+  options: {
+    maxMemoryUsage?: number;
+    enableStreaming?: boolean;
+    customBatchSize?: number;
+    customConcurrency?: number;
+  } = {}
+): Promise<Path[]> {
+  // Build the base query
+  let query = supabase
+    .from('path')
+    .select('*')
+    .eq('originRegion', originRegion)
+    .eq('destinationRegion', destinationRegion)
+    .lte('totalDistance', maxDistance);
+
+  // Apply maxStop-specific filtering at the database level
+  switch (maxStop) {
+    case 0:
+      // Only A-B and A-A with origin = user input origin and destination = user input destination
+      query = query
+        .or(`and(origin.eq.${userOrigin},destination.eq.${userDestination})`)
+        .is('h1', null)
+        .is('h2', null);
+      break;
+      
+    case 1:
+      // Don't include A-H-H-B, and specific conditions for other types
+      // This is complex to do at DB level, so we'll fetch and filter in memory
+      // but with a more targeted query
+      query = query
+        .or(`and(origin.eq.${userOrigin},destination.eq.${userDestination}),and(origin.eq.${userOrigin},destination.neq.${userDestination}),and(origin.neq.${userOrigin},destination.eq.${userDestination})`)
+        .or(`and(is.h1.null,is.h2.null),and(not.is.h1.null,is.h2.null)`);
+      break;
+      
+    case 2:
+      // For A-H-H-B: origin = user input origin and destination = user input destination
+      // For A-H-B: origin = user input origin OR destination = user input destination
+      // For A-B and A-A: include all
+      query = query
+        .or(`and(origin.eq.${userOrigin},destination.eq.${userDestination}),and(origin.eq.${userOrigin},destination.neq.${userDestination}),and(origin.neq.${userOrigin},destination.eq.${userDestination})`);
+      break;
+      
+    default:
+      // For maxStop >= 3, include all path types (no additional filtering)
+      break;
+  }
+
+  const { data, error } = await query;
+  
+  if (error) {
+    console.error('Error fetching paths with maxStop filter:', error);
+    return [];
+  }
+  
+  if (!data) return [];
+  
+  // Apply additional filtering in memory for complex cases
+  const paths = data as unknown as Path[];
+  return filterPathsByMaxStopInMemory(paths, maxStop, userOrigin, userDestination);
+}
+
+/**
+ * Filter paths in memory for complex maxStop conditions
+ * @param paths - Array of paths to filter
+ * @param maxStop - Maximum number of stops
+ * @param userOrigin - User input origin
+ * @param userDestination - User input destination
+ * @returns Filtered paths
+ */
+function filterPathsByMaxStopInMemory(
+  paths: Path[],
+  maxStop: number,
+  userOrigin: string,
+  userDestination: string
+): Path[] {
+  return paths.filter(path => {
+    // Determine path type based on h1 and h2 values
+    const hasH1 = path.h1 && path.h1.trim() !== '';
+    const hasH2 = path.h2 && path.h2.trim() !== '';
+    
+    let pathType: 'A-B' | 'A-H-B' | 'A-H-H-B' | 'A-A';
+    if (!hasH1 && !hasH2) {
+      pathType = 'A-B';
+    } else if (hasH1 && !hasH2) {
+      pathType = 'A-H-B';
+    } else if (hasH1 && hasH2) {
+      pathType = 'A-H-H-B';
+    } else {
+      pathType = 'A-B';
+    }
+    
+    // Apply filtering based on maxStop
+    switch (maxStop) {
+      case 0:
+        // Only A-B and A-A with origin = user input origin and destination = user input destination
+        if (pathType === 'A-H-B' || pathType === 'A-H-H-B') {
+          return false;
+        }
+        return path.origin === userOrigin && path.destination === userDestination;
+        
+      case 1:
+        // Don't include A-H-H-B
+        if (pathType === 'A-H-H-B') {
+          return false;
+        }
+        
+        // For A-H-B: origin = user input origin and destination = user input destination
+        if (pathType === 'A-H-B') {
+          return path.origin === userOrigin && path.destination === userDestination;
+        }
+        
+        // For A-B and A-A: origin = user input origin OR destination = user input destination
+        if (pathType === 'A-B' || pathType === 'A-A') {
+          return path.origin === userOrigin || path.destination === userDestination;
+        }
+        
+        return false;
+        
+      case 2:
+        // For A-H-H-B: origin = user input origin and destination = user input destination
+        if (pathType === 'A-H-H-B') {
+          return path.origin === userOrigin && path.destination === userDestination;
+        }
+        
+        // For A-H-B: origin = user input origin OR destination = user input destination
+        if (pathType === 'A-H-B') {
+          return path.origin === userOrigin || path.destination === userDestination;
+        }
+        
+        // For A-B and A-A: include all
+        if (pathType === 'A-B' || pathType === 'A-A') {
+          return true;
+        }
+        
+        return false;
+        
+      default:
+        // For maxStop >= 3, include all path types
+        return true;
+    }
+  });
 } 

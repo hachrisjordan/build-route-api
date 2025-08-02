@@ -46,11 +46,12 @@ function getClassPercentages(
     return { y, w, j, f };
   }
 
-  // Apply the reliability rule: if segment > 15% of total flight time AND class shows triangle, count = 0
-  const threshold = 0.15 * totalFlightDuration; // 15% of total flight duration
+  // Apply the reliability rule: if segment > (100 - minReliabilityPercent)% of total flight time AND class shows triangle, count = 0
+  const reliabilityThreshold = (100 - minReliabilityPercent) / 100; // Convert percentage to decimal
+  const threshold = reliabilityThreshold * totalFlightDuration;
   
   // For each segment, adjust counts for each class as per the rule
-  const adjusted = flights.map(f => {
+  const adjusted = flights.map((f, index) => {
     const code = f.FlightNumbers.slice(0, 2);
     const rel = reliability[code];
     const min = rel?.min_count ?? 1;
@@ -62,14 +63,22 @@ function getClassPercentages(
     const minJ = exemption.includes('J') ? 1 : min;
     const minF = exemption.includes('F') ? 1 : min;
     
-    // Check if this segment is > 15% of total flight duration
+    // Check if this segment is > (100 - minReliabilityPercent)% of total flight duration
     const overThreshold = f.TotalDuration > threshold;
     
+    // NEW RULE: Only allow unreliable segments for the first or last segment
+    const isFirstSegment = index === 0;
+    const isLastSegment = index === flights.length - 1;
+    const allowUnreliable = isFirstSegment || isLastSegment;
+    
+    // Apply reliability penalty only if segment is over threshold AND not allowed to be unreliable
+    const applyPenalty = overThreshold && !allowUnreliable;
+    
     return {
-      YCount: overThreshold && f.YCount < minY ? 0 : f.YCount,
-      WCount: overThreshold && f.WCount < minW ? 0 : f.WCount,
-      JCount: overThreshold && f.JCount < minJ ? 0 : f.JCount,
-      FCount: overThreshold && f.FCount < minF ? 0 : f.FCount,
+      YCount: applyPenalty && f.YCount < minY ? 0 : f.YCount,
+      WCount: applyPenalty && f.WCount < minW ? 0 : f.WCount,
+      JCount: applyPenalty && f.JCount < minJ ? 0 : f.JCount,
+      FCount: applyPenalty && f.FCount < minF ? 0 : f.FCount,
       TotalDuration: f.TotalDuration,
     };
   });
