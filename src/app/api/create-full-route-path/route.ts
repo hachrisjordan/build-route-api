@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createFullRoutePathSchema } from './schema';
 import { createClient } from '@supabase/supabase-js';
-import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchPathsOptimized, fetchIntraRoutes, SupabaseClient, batchFetchAirportsByIata, batchFetchIntraRoutes, fetchPathsWithMaxStopFilter } from '@/lib/route-helpers';
+import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchPathsOptimized, fetchPathsByMaxStop, fetchIntraRoutes, SupabaseClient, batchFetchAirportsByIata, batchFetchIntraRoutes } from '@/lib/route-helpers';
 import { FullRoutePathResult, Path, IntraRoute } from '@/types/route';
 
 // Use environment variables for Supabase
@@ -14,8 +14,6 @@ interface RoutePathCache {
   intraRoute: Map<string, IntraRoute[]>;
   path: Map<string, Path[]>;
 }
-
-
 
 // Helper function to fetch airport with cache
 async function fetchAirportCached(supabase: SupabaseClient, iata: string, cache: RoutePathCache) {
@@ -35,26 +33,12 @@ async function fetchIntraRoutesCached(supabase: SupabaseClient, origin: string, 
 }
 
 // Helper function to fetch paths with cache
-async function fetchPathsCached(
-  supabase: SupabaseClient, 
-  originRegion: string, 
-  destinationRegion: string, 
-  maxDistance: number, 
-  maxStop: number,
-  userOrigin: string,
-  userDestination: string,
-  cache: RoutePathCache
-) {
-  const key = `${originRegion}-${destinationRegion}-${maxDistance}-${maxStop}-${userOrigin}-${userDestination}`;
+async function fetchPathsCached(supabase: SupabaseClient, originRegion: string, destinationRegion: string, maxDistance: number, cache: RoutePathCache, origin: string, destination: string, maxStop: number) {
+  const key = `${originRegion}-${destinationRegion}-${maxDistance}-${origin}-${destination}-${maxStop}`;
   if (cache.path.has(key)) return cache.path.get(key)!;
   
-  // Use the new filtered fetching function
-  const paths = await fetchPathsWithMaxStopFilter(supabase, originRegion, destinationRegion, maxDistance, maxStop, userOrigin, userDestination, {
-    maxMemoryUsage: 512, // 512MB memory limit
-    enableStreaming: true, // Enable streaming for large datasets
-    customBatchSize: 10000, // Custom batch size
-    customConcurrency: 5 // Custom concurrency
-  });
+  // Use maxStop filtering for better performance with large datasets
+  const paths = await fetchPathsByMaxStop(supabase, origin, destination, maxStop, originRegion, destinationRegion, maxDistance);
   
   cache.path.set(key, paths);
   return paths;
@@ -202,19 +186,9 @@ async function getFullRoutePath({
   const dataFetchStart = performance.now();
   const [directIntraRoutes, paths] = await Promise.all([
     fetchIntraRoutesCached(supabase, origin, destination, cache),
-    fetchPathsCached(supabase, originAirport.region, destinationAirport.region, maxDistance, maxStop, origin, destination, cache)
+    fetchPathsCached(supabase, originAirport.region, destinationAirport.region, maxDistance, cache, origin, destination, maxStop)
   ]);
-  
-  // Log path type distribution for debugging
-  const pathTypeCounts = {
-    'A-B': paths.filter(p => !p.h1 && !p.h2).length,
-    'A-H-B': paths.filter(p => p.h1 && !p.h2).length,
-    'A-H-H-B': paths.filter(p => p.h1 && p.h2).length,
-    'A-A': paths.filter(p => p.origin === p.destination).length
-  };
-  
-  console.log(`[${origin}-${destination}] Data fetch: ${(performance.now() - dataFetchStart).toFixed(2)}ms (${paths.length} filtered paths, ${directIntraRoutes.length} direct routes)`);
-  console.log(`[${origin}-${destination}] Path type distribution:`, pathTypeCounts);
+  console.log(`[${origin}-${destination}] Data fetch: ${(performance.now() - dataFetchStart).toFixed(2)}ms (${paths.length} paths, ${directIntraRoutes.length} direct routes)`);
 
   // Case 4: Direct intra_route (origin to destination)
   const case4Start = performance.now();
@@ -372,8 +346,7 @@ async function getFullRoutePath({
       .filter(x => x !== null && typeof x === 'string' && x.trim() !== '');
     const stops = codes.length;
     const uniqueCodes = new Set(codes);
-    // Since we've already filtered paths by maxStop, we only need to ensure unique airports
-    return uniqueCodes.size === codes.length;
+    return stops <= (maxStop + 2) && uniqueCodes.size === codes.length;
   });
   console.log(`[${origin}-${destination}] Filtering: ${(performance.now() - filterStart).toFixed(2)}ms (${results.length} → ${filteredResults.length} routes)`);
 
@@ -519,26 +492,6 @@ export async function POST(req: NextRequest) {
     let { origin, destination, maxStop: inputMaxStop } = parseResult.data;
     const maxStop = Math.max(0, Math.min(4, inputMaxStop ?? 4));
     console.log(`Input validation took: ${(performance.now() - validationStart).toFixed(2)}ms`);
-    
-    // Log the filtering rules being applied
-    console.log(`Applying path filtering rules for maxStop=${maxStop}:`);
-    switch (maxStop) {
-      case 0:
-        console.log('- Only A-B and A-A paths with origin=userOrigin AND destination=userDestination');
-        break;
-      case 1:
-        console.log('- Exclude A-H-H-B paths');
-        console.log('- A-H-B: origin=userOrigin AND destination=userDestination');
-        console.log('- A-B/A-A: origin=userOrigin OR destination=userDestination');
-        break;
-      case 2:
-        console.log('- A-H-H-B: origin=userOrigin AND destination=userDestination');
-        console.log('- A-H-B: origin=userOrigin OR destination=userDestination');
-        console.log('- A-B/A-A: include all');
-        break;
-      default:
-        console.log('- Include all path types');
-    }
 
     // Support multi-origin/destination (slash-separated)
     const originList = origin.split('/').map((s: string) => s.trim()).filter(Boolean);

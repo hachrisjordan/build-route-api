@@ -180,6 +180,127 @@ export async function batchFetchIntraRoutes(
   return result;
 }
 
+// Fetch paths by maxStop with specific filtering logic
+// Optimized batch fetch function for paths with maxStop filtering
+async function fetchPathsByMaxStopBatch(
+  supabase: SupabaseClient,
+  origin: string,
+  destination: string,
+  maxStop: number,
+  originRegion: string,
+  destinationRegion: string,
+  maxDistance: number,
+  offset: number,
+  limit: number
+): Promise<Path[]> {
+  let query = supabase
+    .from('path')
+    .select('*')
+    .lte('totalDistance', maxDistance)
+    .eq('originRegion', originRegion)
+    .eq('destinationRegion', destinationRegion)
+    .range(offset, offset + limit - 1);
+
+  if (maxStop === 0) {
+    // Only A-B and A-A with origin = user input origin and destination = user input destination
+    query = query
+      .eq('origin', origin)
+      .eq('destination', destination);
+  } else if (maxStop === 1) {
+    // Don't need A-H-H-B, and for A-H-B: origin = user input origin and destination = user input destination
+    // For A-B and A-A: origin = user input origin OR destination = user input destination
+    query = query.or(`origin.eq.${origin},destination.eq.${destination}`)
+      .not('type', 'eq', 'A-H-H-B'); // Exclude A-H-H-B type
+  } else if (maxStop === 2) {
+    // For A-H-H-B: origin = user input origin and destination = user input destination
+    // For A-H-B: origin = user input origin OR destination = user input destination
+    // For A-B and A-A: no filtering (include all)
+    query = query.or(`and(type.eq.A-H-H-B,origin.eq.${origin},destination.eq.${destination}),and(type.eq.A-H-B,or(origin.eq.${origin},destination.eq.${destination})),type.eq.A-B,type.eq.A-A`);
+  }
+
+  const { data, error } = await query;
+  if (error || !data) return [];
+  return data as unknown as Path[];
+}
+
+export async function fetchPathsByMaxStop(
+  supabase: SupabaseClient,
+  origin: string,
+  destination: string,
+  maxStop: number,
+  originRegion: string,
+  destinationRegion: string,
+  maxDistance: number
+): Promise<Path[]> {
+  // First, get the total count with the same filtering logic
+  let countQuery = supabase
+    .from('path')
+    .select('*', { count: 'exact', head: true })
+    .lte('totalDistance', maxDistance)
+    .eq('originRegion', originRegion)
+    .eq('destinationRegion', destinationRegion);
+
+  if (maxStop === 0) {
+    countQuery = countQuery
+      .eq('origin', origin)
+      .eq('destination', destination);
+  } else if (maxStop === 1) {
+    countQuery = countQuery.or(`origin.eq.${origin},destination.eq.${destination}`)
+      .not('type', 'eq', 'A-H-H-B');
+  } else if (maxStop === 2) {
+    // For A-H-H-B: origin = user input origin and destination = user input destination
+    // For A-H-B: origin = user input origin OR destination = user input destination
+    // For A-B and A-A: no filtering (include all)
+    countQuery = countQuery.or(`and(type.eq.A-H-H-B,origin.eq.${origin},destination.eq.${destination}),and(type.eq.A-H-B,or(origin.eq.${origin},destination.eq.${destination})),type.eq.A-B,type.eq.A-A`);
+  }
+
+  const { count, error: countError } = await countQuery;
+  
+  if (countError || count === null) {
+    console.warn('Failed to get count, falling back to single batch');
+    return fetchPathsByMaxStopBatch(supabase, origin, destination, maxStop, originRegion, destinationRegion, maxDistance, 0, 10000);
+  }
+  
+  if (count === 0) return [];
+  
+  console.log(`Fetching ${count} paths with maxStop=${maxStop} filtering in batches of 10000 with 5 concurrent batches`);
+  
+  // Calculate number of batches needed
+  const batchSize = 10000;
+  const maxConcurrentBatches = 5;
+  const totalBatches = Math.ceil(count / batchSize);
+  const allPaths: Path[] = [];
+  
+  // Process batches in parallel with concurrency limit
+  for (let i = 0; i < totalBatches; i += maxConcurrentBatches) {
+    const batchPromises = [];
+    
+    // Create batch promises for current chunk
+    for (let j = 0; j < maxConcurrentBatches && i + j < totalBatches; j++) {
+      const batchIndex = i + j;
+      const offset = batchIndex * batchSize;
+      batchPromises.push(
+        fetchPathsByMaxStopBatch(supabase, origin, destination, maxStop, originRegion, destinationRegion, maxDistance, offset, batchSize)
+      );
+    }
+    
+    // Wait for current chunk of batches to complete
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Add results to allPaths
+    batchResults.forEach(paths => {
+      allPaths.push(...paths);
+    });
+    
+    // Optional: Add a small delay between chunks to prevent overwhelming the database
+    if (i + maxConcurrentBatches < totalBatches) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  
+  return allPaths;
+}
+
 // Utility function to calculate optimal batch size based on dataset size
 function calculateOptimalBatchSize(totalCount: number): number {
   if (totalCount <= 10000) return 10000;
@@ -281,167 +402,4 @@ async function fetchPathsStreaming(
   }
   
   return allPaths;
-}
-
-/**
- * Fetch paths with maxStop filtering applied at the database level
- * @param supabase - Supabase client
- * @param originRegion - Origin region
- * @param destinationRegion - Destination region
- * @param maxDistance - Maximum distance
- * @param maxStop - Maximum number of stops
- * @param userOrigin - User input origin
- * @param userDestination - User input destination
- * @param options - Additional options
- * @returns Filtered paths
- */
-export async function fetchPathsWithMaxStopFilter(
-  supabase: SupabaseClient,
-  originRegion: string,
-  destinationRegion: string,
-  maxDistance: number,
-  maxStop: number,
-  userOrigin: string,
-  userDestination: string,
-  options: {
-    maxMemoryUsage?: number;
-    enableStreaming?: boolean;
-    customBatchSize?: number;
-    customConcurrency?: number;
-  } = {}
-): Promise<Path[]> {
-  // Build the base query
-  let query = supabase
-    .from('path')
-    .select('*')
-    .eq('originRegion', originRegion)
-    .eq('destinationRegion', destinationRegion)
-    .lte('totalDistance', maxDistance);
-
-  // Apply maxStop-specific filtering at the database level
-  switch (maxStop) {
-    case 0:
-      // Only A-B and A-A with origin = user input origin and destination = user input destination
-      query = query
-        .or(`and(origin.eq.${userOrigin},destination.eq.${userDestination})`)
-        .is('h1', null)
-        .is('h2', null);
-      break;
-      
-    case 1:
-      // Don't include A-H-H-B, and specific conditions for other types
-      // This is complex to do at DB level, so we'll fetch and filter in memory
-      // but with a more targeted query
-      query = query
-        .or(`and(origin.eq.${userOrigin},destination.eq.${userDestination}),and(origin.eq.${userOrigin},destination.neq.${userDestination}),and(origin.neq.${userOrigin},destination.eq.${userDestination})`)
-        .or(`and(is.h1.null,is.h2.null),and(not.is.h1.null,is.h2.null)`);
-      break;
-      
-    case 2:
-      // For A-H-H-B: origin = user input origin and destination = user input destination
-      // For A-H-B: origin = user input origin OR destination = user input destination
-      // For A-B and A-A: include all
-      query = query
-        .or(`and(origin.eq.${userOrigin},destination.eq.${userDestination}),and(origin.eq.${userOrigin},destination.neq.${userDestination}),and(origin.neq.${userOrigin},destination.eq.${userDestination})`);
-      break;
-      
-    default:
-      // For maxStop >= 3, include all path types (no additional filtering)
-      break;
-  }
-
-  const { data, error } = await query;
-  
-  if (error) {
-    console.error('Error fetching paths with maxStop filter:', error);
-    return [];
-  }
-  
-  if (!data) return [];
-  
-  // Apply additional filtering in memory for complex cases
-  const paths = data as unknown as Path[];
-  return filterPathsByMaxStopInMemory(paths, maxStop, userOrigin, userDestination);
-}
-
-/**
- * Filter paths in memory for complex maxStop conditions
- * @param paths - Array of paths to filter
- * @param maxStop - Maximum number of stops
- * @param userOrigin - User input origin
- * @param userDestination - User input destination
- * @returns Filtered paths
- */
-function filterPathsByMaxStopInMemory(
-  paths: Path[],
-  maxStop: number,
-  userOrigin: string,
-  userDestination: string
-): Path[] {
-  return paths.filter(path => {
-    // Determine path type based on h1 and h2 values
-    const hasH1 = path.h1 && path.h1.trim() !== '';
-    const hasH2 = path.h2 && path.h2.trim() !== '';
-    
-    let pathType: 'A-B' | 'A-H-B' | 'A-H-H-B' | 'A-A';
-    if (!hasH1 && !hasH2) {
-      pathType = 'A-B';
-    } else if (hasH1 && !hasH2) {
-      pathType = 'A-H-B';
-    } else if (hasH1 && hasH2) {
-      pathType = 'A-H-H-B';
-    } else {
-      pathType = 'A-B';
-    }
-    
-    // Apply filtering based on maxStop
-    switch (maxStop) {
-      case 0:
-        // Only A-B and A-A with origin = user input origin and destination = user input destination
-        if (pathType === 'A-H-B' || pathType === 'A-H-H-B') {
-          return false;
-        }
-        return path.origin === userOrigin && path.destination === userDestination;
-        
-      case 1:
-        // Don't include A-H-H-B
-        if (pathType === 'A-H-H-B') {
-          return false;
-        }
-        
-        // For A-H-B: origin = user input origin and destination = user input destination
-        if (pathType === 'A-H-B') {
-          return path.origin === userOrigin && path.destination === userDestination;
-        }
-        
-        // For A-B and A-A: origin = user input origin OR destination = user input destination
-        if (pathType === 'A-B' || pathType === 'A-A') {
-          return path.origin === userOrigin || path.destination === userDestination;
-        }
-        
-        return false;
-        
-      case 2:
-        // For A-H-H-B: origin = user input origin and destination = user input destination
-        if (pathType === 'A-H-H-B') {
-          return path.origin === userOrigin && path.destination === userDestination;
-        }
-        
-        // For A-H-B: origin = user input origin OR destination = user input destination
-        if (pathType === 'A-H-B') {
-          return path.origin === userOrigin || path.destination === userDestination;
-        }
-        
-        // For A-B and A-A: include all
-        if (pathType === 'A-B' || pathType === 'A-A') {
-          return true;
-        }
-        
-        return false;
-        
-      default:
-        // For maxStop >= 3, include all path types
-        return true;
-    }
-  });
 } 
