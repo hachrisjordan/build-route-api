@@ -142,7 +142,7 @@ function mergeGroups(groups: { keys: string[], dests: string[] }[]): { keys: str
 
 // Helper function to check if a group exceeds the size limit
 function exceedsSizeLimit(keys: string[], dests: string[]): boolean {
-  return keys.length * dests.length > 60;
+  return false; // No size limit - allow unlimited destinations
 }
 
 // Optimized route finding logic
@@ -557,9 +557,11 @@ export async function POST(req: NextRequest) {
     
     for (const route of allRoutes) {
       const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
+      
       for (let i = 0; i < codes.length - 1; i++) {
         const from = codes[i];
         const to = codes[i + 1];
+        
         if (destinationList.includes(to)) {
           if (!destMap[to]) destMap[to] = new Set();
           destMap[to].add(from);
@@ -570,9 +572,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    console.log(`Segment map size: ${Object.keys(segmentMap).length}`);
-    console.log(`Destination map size: ${Object.keys(destMap).length}`);
-
     // Build the initial groups
     const groups: { keys: string[], dests: string[] }[] = [];
     Object.entries(segmentMap).forEach(([from, tos]) => {
@@ -582,13 +581,9 @@ export async function POST(req: NextRequest) {
       groups.push({ keys: Array.from(froms).sort(), dests: [to] });
     });
 
-    console.log(`Initial groups count: ${groups.length}`);
-
     // Merge groups
     const mergeStart = performance.now();
     let mergedGroups = mergeGroups(groups);
-    console.log(`Basic merge took: ${(performance.now() - mergeStart).toFixed(2)}ms`);
-    console.log(`After basic merge: ${mergedGroups.length} groups`);
 
     // Split mergedGroups into those with all dests in destinationList and the rest
     const [inputDestGroups, otherGroups] = mergedGroups.reduce<[
@@ -605,8 +600,6 @@ export async function POST(req: NextRequest) {
       },
       [[], []]
     );
-
-    console.log(`Input destination groups: ${inputDestGroups.length}, Other groups: ${otherGroups.length}`);
 
     // Advanced merging: only for input destination groups
     const advancedMergeStart = performance.now();
@@ -646,15 +639,11 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-    console.log(`Advanced merge took: ${(performance.now() - advancedMergeStart).toFixed(2)}ms (${mergeIterations} iterations)`);
-    console.log(`After advanced merge: ${mergedInputDestGroups.length} groups`);
 
     // Filter out groups that exceed the size limit
     const filterStart = performance.now();
     mergedInputDestGroups = mergedInputDestGroups.filter(group => !exceedsSizeLimit(group.keys, group.dests));
     let filteredOtherGroups = otherGroups.filter(group => !exceedsSizeLimit(group.keys, group.dests));
-    console.log(`Filtering took: ${(performance.now() - filterStart).toFixed(2)}ms`);
-    console.log(`After filtering: ${mergedInputDestGroups.length} input dest groups, ${filteredOtherGroups.length} other groups`);
 
     // Combine merged input destination groups and other groups
     const finalGroups = [...mergedInputDestGroups, ...filteredOtherGroups];
@@ -664,7 +653,6 @@ export async function POST(req: NextRequest) {
     const queryParamsArr = finalGroups
       .sort((a, b) => b.dests.length - a.dests.length || a.keys.join('/').localeCompare(b.keys.join('/')))
       .map(g => `${g.keys.join('/')}-${g.dests.join('/')}`);
-    console.log(`Query params generation took: ${(performance.now() - queryParamsStart).toFixed(2)}ms`);
 
     console.log(`Grouping total took: ${(performance.now() - groupingStart).toFixed(2)}ms`);
     console.log(`Final query params count: ${queryParamsArr.length}`);

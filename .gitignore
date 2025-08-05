@@ -13,3 +13,7 @@ scripts/generate-seat-csvs.js
 scripts/jetblue-batch-cron.ts
 scripts/jetblue-batch-cron.ts
 *.md
+docker/jetblue-crontab
+scripts/jetblue-batch-cron.ts
+scripts/jetblue-batch-cron.ts
+docker/jetblue-crontab
