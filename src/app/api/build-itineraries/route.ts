@@ -46,7 +46,7 @@ function getClassPercentages(
     return { y, w, j, f };
   }
 
-  // Apply the reliability rule: if segment > (100 - minReliabilityPercent)% of total flight time AND class shows triangle, count = 0
+  // Apply the reliability rule: if segment > (100 - minReliabilityPercent)% of total flight time, mark as unreliable for percentage calculation
   const reliabilityThreshold = (100 - minReliabilityPercent) / 100; // Convert percentage to decimal
   const threshold = reliabilityThreshold * totalFlightDuration;
   
@@ -66,19 +66,20 @@ function getClassPercentages(
     // Check if this segment is > (100 - minReliabilityPercent)% of total flight duration
     const overThreshold = f.TotalDuration > threshold;
     
-    // NEW RULE: Only allow unreliable segments for the first or last segment
+    // RULE: For percentage calculation, ANY segment over threshold is marked as unreliable
+    // For itinerary filtering, middle segments that are unreliable disqualify the itinerary
     const isFirstSegment = index === 0;
     const isLastSegment = index === flights.length - 1;
-    const allowUnreliable = isFirstSegment || isLastSegment;
+    const isMiddleSegment = !isFirstSegment && !isLastSegment;
     
-    // Apply reliability penalty only if segment is over threshold AND not allowed to be unreliable
-    const applyPenalty = overThreshold && !allowUnreliable;
+    // For percentage calculation: mark as unreliable if over threshold
+    const markAsUnreliable = overThreshold;
     
     return {
-      YCount: applyPenalty && f.YCount < minY ? 0 : f.YCount,
-      WCount: applyPenalty && f.WCount < minW ? 0 : f.WCount,
-      JCount: applyPenalty && f.JCount < minJ ? 0 : f.JCount,
-      FCount: applyPenalty && f.FCount < minF ? 0 : f.FCount,
+      YCount: markAsUnreliable && f.YCount < minY ? 0 : f.YCount,
+      WCount: markAsUnreliable && f.WCount < minW ? 0 : f.WCount,
+      JCount: markAsUnreliable && f.JCount < minJ ? 0 : f.JCount,
+      FCount: markAsUnreliable && f.FCount < minF ? 0 : f.FCount,
       TotalDuration: f.TotalDuration,
     };
   });
