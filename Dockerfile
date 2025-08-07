@@ -50,13 +50,13 @@ EXPOSE 6080
 RUN apk update && apk add --no-cache dcron
 
 # Copy your crontab file
-COPY docker/jetblue-crontab /etc/cron.d/jetblue-crontab
+COPY docker/combined-crontab /etc/cron.d/combined-crontab
 
 # Give execution rights on the cron job file
-RUN chmod 0644 /etc/cron.d/jetblue-crontab
+RUN chmod 0644 /etc/cron.d/combined-crontab
 
 # Apply cron job
-RUN crontab /etc/cron.d/jetblue-crontab
+RUN crontab /etc/cron.d/combined-crontab
 
 # Create log file for cron output
 RUN touch /app/batch.log /var/log/cron.log

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import Valkey from 'iovalkey';
 import { createHash } from 'crypto';
 import zlib from 'zlib';
-import { addDays, parseISO, format } from 'date-fns';
+import { addDays, parseISO, format, subDays } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
 import { CONCURRENCY_CONFIG } from '@/lib/concurrency-config';
 
@@ -211,6 +211,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid endDate format' }, { status: 400 });
     }
 
+    // Calculate 7 days ago for filtering
+    const sevenDaysAgo = subDays(new Date(), 7);
+
     // Parse route segments
     const segments = routeId.split('-');
     const originAirports = segments[0].split('/');
@@ -342,6 +345,12 @@ export async function POST(req: NextRequest) {
           if (item.AvailabilityTrips && Array.isArray(item.AvailabilityTrips) && item.AvailabilityTrips.length > 0) {
             for (const trip of item.AvailabilityTrips) {
               if (trip.Stops !== 0) continue;
+              
+              // Filter out trips older than 7 days
+              if (trip.UpdatedAt) {
+                const tripUpdatedAt = new Date(trip.UpdatedAt);
+                if (tripUpdatedAt < sevenDaysAgo) continue;
+              }
               // Only include trips with enough RemainingSeats for the requested cabin
               let includeTrip = false;
               let cabinType = '';
