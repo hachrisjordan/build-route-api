@@ -29,6 +29,8 @@ interface AvailabilityFlight {
   JCount: number;
   FCount: number;
   distance: number;
+  originAirport: string;
+  destinationAirport: string;
 }
 
 interface AvailabilityGroup {
@@ -446,34 +448,62 @@ async function buildOutboundItineraries(
         // Now look for connecting flights through the other hub
         const hub = originAirport === 'FRA' ? 'MUC' : 'FRA';
         
-        // Find connecting flights from the hub to the same destination
-        for (const hubGroup of availabilityData.groups || []) {
-          if (hubGroup.originAirport === hub && hubGroup.destinationAirport === destinationAirport) {
-            for (const hubFlight of hubGroup.flights) {
-              const hubDepartureTime = parseISO(hubFlight.DepartsAt);
+        // First, find flights from originAirport to hub (first leg)
+        for (const firstLegGroup of availabilityData.groups || []) {
+          if (firstLegGroup.originAirport === originAirport && firstLegGroup.destinationAirport === hub) {
+            for (const firstLegFlight of firstLegGroup.flights) {
+              const firstLegDepartureTime = parseISO(firstLegFlight.DepartsAt);
               
-              // Check if hub flight departs within connection window
-              const minHubDepartureTime = addMinutes(departureTime, minConnectionMinutes);
-              const maxHubDepartureTime = addMinutes(departureTime, maxConnectionMinutes);
-              
-              if (isBefore(hubDepartureTime, minHubDepartureTime) || isAfter(hubDepartureTime, maxHubDepartureTime)) {
+              // Check if first leg departs within the allowed window (after inbound arrival)
+              if (isBefore(firstLegDepartureTime, inboundArrival) || isAfter(firstLegDepartureTime, addMinutes(inboundArrival, maxConnectionMinutes))) {
+                continue;
+              }
+
+              // Now find connecting flights from hub to destinationAirport (second leg)
+              for (const secondLegGroup of availabilityData.groups || []) {
+                if (secondLegGroup.originAirport === hub && secondLegGroup.destinationAirport === destinationAirport) {
+                  for (const secondLegFlight of secondLegGroup.flights) {
+                    const secondLegDepartureTime = parseISO(secondLegFlight.DepartsAt);
+                    const firstLegArrivalTime = parseISO(firstLegFlight.ArrivesAt);
+                    
+                    // Check if second leg departs within connection window after first leg arrival
+                    const minSecondLegDepartureTime = addMinutes(firstLegArrivalTime, minConnectionMinutes);
+                    const maxSecondLegDepartureTime = addMinutes(firstLegArrivalTime, maxConnectionMinutes);
+                    
+                    if (isBefore(secondLegDepartureTime, minSecondLegDepartureTime) || isAfter(secondLegDepartureTime, maxSecondLegDepartureTime)) {
                 continue;
               }
 
               // Create connecting flight itinerary
-              const hubFlightUUID = getFlightUUID(hubFlight);
-              flightMap.set(hubFlightUUID, hubFlight);
+                    const firstLegUUID = getFlightUUID(firstLegFlight);
+                    const secondLegUUID = getFlightUUID(secondLegFlight);
+                    flightMap.set(firstLegUUID, firstLegFlight);
+                    flightMap.set(secondLegUUID, secondLegFlight);
 
               const connectingRoute = `${originAirport}-${hub}-${destinationAirport}`;
-              const connectingItinerary = [flightUUID, hubFlightUUID];
+                    const connectingItinerary = [firstLegUUID, secondLegUUID];
               const connectingConnections = [hub];
 
-              // Calculate total duration and class percentages for connecting itinerary
-              const connectingTotalDuration = flight.TotalDuration + hubFlight.TotalDuration;
-              const connectingY = (flight.YCount > 0 && hubFlight.YCount > 0) ? 100 : 0;
-              const connectingW = (flight.WCount > 0 && hubFlight.WCount > 0) ? 100 : 0;
-              const connectingJ = (flight.JCount > 0 && hubFlight.JCount > 0) ? 100 : 0;
-              const connectingF = (flight.FCount > 0 && hubFlight.FCount > 0) ? 100 : 0;
+                                  // Calculate total duration and class percentages for connecting itinerary
+                    const connectingTotalDuration = firstLegFlight.TotalDuration + secondLegFlight.TotalDuration;
+                    
+                    // Calculate percentage of total flight duration where that cabin class has availability
+                    let connectingY = 0;
+                    let connectingW = 0;
+                    let connectingJ = 0;
+                    let connectingF = 0;
+                    
+                    if (firstLegFlight.YCount > 0) connectingY += Math.round((firstLegFlight.TotalDuration / connectingTotalDuration) * 100);
+                    if (secondLegFlight.YCount > 0) connectingY += Math.round((secondLegFlight.TotalDuration / connectingTotalDuration) * 100);
+                    
+                    if (firstLegFlight.WCount > 0) connectingW += Math.round((firstLegFlight.TotalDuration / connectingTotalDuration) * 100);
+                    if (secondLegFlight.WCount > 0) connectingW += Math.round((secondLegFlight.TotalDuration / connectingTotalDuration) * 100);
+                    
+                    if (firstLegFlight.JCount > 0) connectingJ += Math.round((firstLegFlight.TotalDuration / connectingTotalDuration) * 100);
+                    if (secondLegFlight.JCount > 0) connectingJ += Math.round((secondLegFlight.TotalDuration / connectingTotalDuration) * 100);
+                    
+                    if (firstLegFlight.FCount > 0) connectingF += Math.round((firstLegFlight.TotalDuration / connectingTotalDuration) * 100);
+                    if (secondLegFlight.FCount > 0) connectingF += Math.round((secondLegFlight.TotalDuration / connectingTotalDuration) * 100);
 
               // Get cached pricing for connecting route
               const connectingRouteKey = `${origin}-${originAirport}-${hub}-${destinationAirport}`;
@@ -485,12 +515,12 @@ async function buildOutboundItineraries(
               // Apply seat availability filtering for connecting flights
               const filteredConnectingPricing = {
                 f1: connectingPricing.f1, // Always keep f1
-                y2: (flight.YCount > 0 && hubFlight.YCount > 0) ? connectingPricing.y2 : null,
-                j2: (flight.JCount > 0 && hubFlight.JCount > 0) ? connectingPricing.j2 : null,
-                f2: (flight.FCount > 0 && hubFlight.FCount > 0) ? connectingPricing.f2 : null,
-                y3: connectingPricing.y3,
-                j3: connectingPricing.j3,
-                f3: connectingPricing.f3,
+                      y2: firstLegFlight.YCount > 0 ? connectingPricing.y2 : null,
+                      j2: firstLegFlight.JCount > 0 ? connectingPricing.j2 : null,
+                      f2: firstLegFlight.FCount > 0 ? connectingPricing.f2 : null,
+                      y3: secondLegFlight.YCount > 0 ? connectingPricing.y3 : null,
+                      j3: secondLegFlight.JCount > 0 ? connectingPricing.j3 : null,
+                      f3: secondLegFlight.FCount > 0 ? connectingPricing.f3 : null,
                 totalRouteDistance: connectingPricing.totalRouteDistance,
                 segmentDistances: connectingPricing.segmentDistances
               };
@@ -500,8 +530,8 @@ async function buildOutboundItineraries(
                 date,
                 itinerary: connectingItinerary,
                 totalDuration: connectingTotalDuration,
-                departureTime: flight.DepartsAt,
-                arrivalTime: hubFlight.ArrivesAt,
+                      departureTime: firstLegFlight.DepartsAt,
+                      arrivalTime: secondLegFlight.ArrivesAt,
                 connections: connectingConnections,
                 classPercentages: { 
                   y: connectingY, 
@@ -511,6 +541,9 @@ async function buildOutboundItineraries(
                 },
                 ...filteredConnectingPricing
               });
+                  }
+                }
+              }
             }
           }
         }
@@ -743,6 +776,8 @@ export async function POST(req: NextRequest) {
 
     // Group by originAirport, destinationAirport, date, alliance
     const finalGroupedMap = new Map<string, any>();
+    const aggregatedFlightMap = new Map<string, any>(); // Track individual flights by flight number + time
+    
     for (const entry of results) {
       const groupKey = [
         entry.originAirport,
@@ -750,6 +785,9 @@ export async function POST(req: NextRequest) {
         entry.date,
         'SA' // LH is Star Alliance
       ].join('|');
+      
+      // Create unique flight key for cabin aggregation
+      const flightKey = `${entry.FlightNumbers}-${entry.DepartsAt}-${entry.ArrivesAt}`;
       
       if (!finalGroupedMap.has(groupKey)) {
         finalGroupedMap.set(groupKey, {
@@ -762,37 +800,29 @@ export async function POST(req: NextRequest) {
           latestDeparture: entry.DepartsAt,
           earliestArrival: entry.ArrivesAt,
           latestArrival: entry.ArrivesAt,
-          flights: [
-            {
-              FlightNumbers: entry.FlightNumbers,
-              TotalDuration: entry.TotalDuration,
-              Aircraft: entry.Aircraft,
-              DepartsAt: entry.DepartsAt,
-              ArrivesAt: entry.ArrivesAt,
-              YCount: entry.YCount,
-              WCount: entry.WCount,
-              JCount: entry.JCount,
-              FCount: entry.FCount,
-              distance: entry.distance,
-            }
-          ]
+          flights: []
         });
-      } else {
-        const group = finalGroupedMap.get(groupKey);
-        // Update earliest/latest departure/arrival
-        if (entry.DepartsAt && (!group.earliestDeparture || entry.DepartsAt < group.earliestDeparture)) {
-          group.earliestDeparture = entry.DepartsAt;
-        }
-        if (entry.DepartsAt && (!group.latestDeparture || entry.DepartsAt > group.latestDeparture)) {
-          group.latestDeparture = entry.DepartsAt;
-        }
-        if (entry.ArrivesAt && (!group.earliestArrival || entry.ArrivesAt < group.earliestArrival)) {
-          group.earliestArrival = entry.ArrivesAt;
-        }
-        if (entry.ArrivesAt && (!group.latestArrival || entry.ArrivesAt > group.latestArrival)) {
-          group.latestArrival = entry.ArrivesAt;
-        }
-        group.flights.push({
+      }
+      
+      const group = finalGroupedMap.get(groupKey);
+      
+      // Update earliest/latest departure/arrival
+      if (entry.DepartsAt && (!group.earliestDeparture || entry.DepartsAt < group.earliestDeparture)) {
+        group.earliestDeparture = entry.DepartsAt;
+      }
+      if (entry.DepartsAt && (!group.latestDeparture || entry.DepartsAt > group.latestDeparture)) {
+        group.latestDeparture = entry.DepartsAt;
+      }
+      if (entry.ArrivesAt && (!group.earliestArrival || entry.ArrivesAt < group.earliestArrival)) {
+        group.earliestArrival = entry.ArrivesAt;
+      }
+      if (entry.ArrivesAt && (!group.latestArrival || entry.ArrivesAt > group.latestArrival)) {
+        group.latestArrival = entry.ArrivesAt;
+      }
+      
+      // Aggregate cabin availability for the same flight
+      if (!aggregatedFlightMap.has(flightKey)) {
+        aggregatedFlightMap.set(flightKey, {
           FlightNumbers: entry.FlightNumbers,
           TotalDuration: entry.TotalDuration,
           Aircraft: entry.Aircraft,
@@ -803,7 +833,34 @@ export async function POST(req: NextRequest) {
           JCount: entry.JCount,
           FCount: entry.FCount,
           distance: entry.distance,
+          originAirport: entry.originAirport,
+          destinationAirport: entry.destinationAirport,
         });
+      } else {
+        // Merge cabin availability
+        const existingFlight = aggregatedFlightMap.get(flightKey);
+        if (existingFlight) {
+          existingFlight.YCount = Math.max(existingFlight.YCount, entry.YCount);
+          existingFlight.WCount = Math.max(existingFlight.WCount, entry.WCount);
+          existingFlight.JCount = Math.max(existingFlight.JCount, entry.JCount);
+          existingFlight.FCount = Math.max(existingFlight.FCount, entry.FCount);
+        }
+      }
+    }
+    
+    // Add aggregated flights to groups
+    for (const [groupKey, group] of finalGroupedMap) {
+      for (const [flightKey, flight] of aggregatedFlightMap) {
+        const flightGroupKey = [
+          flight.originAirport,
+          flight.destinationAirport,
+          flight.date || group.date,
+          'SA'
+        ].join('|');
+        
+        if (flightGroupKey === groupKey) {
+          group.flights.push(flight);
+        }
       }
     }
 
