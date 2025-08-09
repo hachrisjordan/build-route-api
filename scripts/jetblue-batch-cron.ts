@@ -5,7 +5,7 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const FROM_AIRPORTS = ['ORD','JFK','BOS','YYZ','ATL','IAD'];
 const TO_AIRPORTS = [
-  'BKK','BAH','PEK','CAI','AMD','BLR','MAA','DEL','HYD','JAI','COK','CCU','CCJ','TRV','BOM','DPS','CGK','AMM','KWI','BEY','KUL','MLE','CMH','MCT','ISB','KHI','LHE','MNL','DOH','JED','DMM','SEZ','CMB','HKT','IST','RUH'
+  'BKK','CAI','BLR','DEL','JAI','COK','BOM','DPS','MCT','MNL','IST'
 ];
 const API_URL = process.env.BATCH_API_URL || 'http://localhost:3000/api/jetblue-lfs-batch';
 const DAYS = 16;
@@ -26,7 +26,7 @@ async function runBatch(from: string, to: string) {
   const body = { from, to, days: DAYS, start };
   try {
     // Proxy config (runtime only)
-    const USE_PROXY = true;
+    const USE_PROXY = false;
     const proxy_host = process.env.PROXY_HOST;
     const proxy_port = process.env.PROXY_PORT;
     const proxy_username = process.env.PROXY_USERNAME;
