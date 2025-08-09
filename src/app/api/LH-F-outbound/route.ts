@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { parseISO, addMinutes, isAfter, isBefore } from 'date-fns';
+import { parseISO, addMinutes, isAfter, isBefore, addDays, format, subDays } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
+import { CONCURRENCY_CONFIG } from '@/lib/concurrency-config';
 
 // Use environment variables for Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -52,6 +53,39 @@ interface FlightMapEntry {
   cabin: string;
   carrier: string;
   flightNumber: string;
+}
+
+// LH destinations by region
+const LH_DESTINATIONS = {
+  WEST: ['YUL', 'YYZ', 'YVR', 'SJO', 'MEX', 'ATL', 'AUS', 'BOS', 'CLT', 'ORD', 'DFW', 'DEN', 'DTW', 'IAH', 'LAX', 'MIA', 'EWR', 'JFK', 'RDU', 'STL', 'SAN', 'SFO', 'SEA', 'IAD', 'EZE', 'GIG', 'GRU', 'BOG'],
+  EAST: ['EVN', 'GYD', 'PEK', 'PVG', 'TBS', 'HKG', 'BLR', 'MAA', 'DEL', 'HYD', 'BOM', 'IKA', 'KIX', 'HND', 'AMM', 'ALA', 'NQZ', 'BEY', 'DMM', 'RUH', 'SIN', 'ICN', 'BKK', 'DXB'],
+  CENTRAL: ['TIA', 'GRZ', 'SZG', 'VIE', 'BRU', 'SJJ', 'SOF', 'DBV', 'ZAG', 'LCA', 'PRG', 'BLL', 'CPH', 'TLL', 'HEL', 'IVL', 'RVN', 'BSL', 'BOD', 'LYS', 'MRS', 'NTE', 'NCE', 'CDG', 'SXB', 'TLS', 'BER', 'BRE', 'CGN', 'DRS', 'DUS', 'FRA', 'HAM', 'HAJ', 'LEJ', 'FMO', 'MUC', 'NUE', 'STR', 'ATH', 'HER', 'JMK', 'RHO', 'SKG', 'JTR', 'BUD', 'KEF', 'DUB', 'BLQ', 'CTA', 'LIN', 'MXP', 'NAP', 'PMO', 'FCO', 'VCE', 'RIX', 'VNO', 'LUX', 'MLA', 'RMO', 'AMS', 'SKP', 'BGO', 'OSL', 'SVG', 'TOS', 'GDN', 'KTW', 'KRK', 'POZ', 'RZE', 'WAW', 'WRO', 'FAO', 'LIS', 'PDL', 'OPO', 'OTP', 'SBZ', 'TSR', 'BEG', 'LJU', 'ALC', 'BCN', 'BIO', 'MAD', 'AGP', 'PMI', 'SVQ', 'VLC', 'GOT', 'ARN', 'GVA', 'ZRH', 'IST', 'ADB', 'BHX', 'EDI', 'GLA', 'LHR', 'STN', 'MAN', 'NCL', 'ALG', 'LAD', 'CAI', 'SSG', 'NBO', 'CMN', 'ABV', 'LOS', 'PHC', 'CPT', 'JNB', 'TUN']
+};
+
+// Function to determine destination airports based on origin region
+function getDestinationAirports(origin: string): string[] {
+  const originUpper = origin.toUpperCase();
+  
+  // Determine origin region
+  let originRegion: 'WEST' | 'EAST' | 'CENTRAL' = 'CENTRAL';
+  if (LH_DESTINATIONS.WEST.includes(originUpper)) {
+    originRegion = 'WEST';
+  } else if (LH_DESTINATIONS.EAST.includes(originUpper)) {
+    originRegion = 'EAST';
+  }
+  
+  // Return destinations based on origin region
+  switch (originRegion) {
+    case 'WEST':
+      // If origin is West, use East + Central
+      return [...LH_DESTINATIONS.EAST, ...LH_DESTINATIONS.CENTRAL];
+    case 'EAST':
+      // If origin is East, use West + Central
+      return [...LH_DESTINATIONS.WEST, ...LH_DESTINATIONS.CENTRAL];
+    default:
+      // If origin is Central, use West + East
+      return [...LH_DESTINATIONS.WEST, ...LH_DESTINATIONS.EAST];
+  }
 }
 
 /**
@@ -497,27 +531,283 @@ export async function POST(req: NextRequest) {
     }
     const { O: origin, D: destination, T: timestamp, cabin, carriers, seats } = parseResult.data;
 
-    // Call the LH-F API to get availability data
-    const lhFResponse = await fetch(`${req.nextUrl.origin}/api/LH-F`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        O: origin,
-        D: destination,
-        T: timestamp,
-        cabin,
-        carriers,
-        seats
-      })
-    });
+    // Get API key from Supabase
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    const { data, error } = await supabase
+      .from('pro_key')
+      .select('pro_key, remaining, last_updated')
+      .order('remaining', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    if (!lhFResponse.ok) {
-      return NextResponse.json({ error: 'Failed to fetch LH-F availability data' }, { status: 500 });
+    if (error || !data || !data.pro_key) {
+      return NextResponse.json({ 
+        error: 'No available pro_key found', 
+        details: error?.message 
+      }, { status: 500 });
     }
 
-    const availabilityData = await lhFResponse.json();
+    const apiKey = data.pro_key;
+
+    // Parse timestamp and extract date
+    let startDate: string;
+    let endDate: string;
+    try {
+      const parsedTimestamp = parseISO(timestamp);
+      startDate = format(parsedTimestamp, 'yyyy-MM-dd');
+      endDate = format(addDays(parsedTimestamp, 1), 'yyyy-MM-dd');
+    } catch (e) {
+      return NextResponse.json({ error: 'Invalid timestamp format' }, { status: 400 });
+    }
+
+    // Calculate 7 days ago for filtering
+    const sevenDaysAgo = subDays(new Date(), 7);
+
+    // Get destination airports based on origin
+    const destinationAirports = getDestinationAirports(origin);
+    const originAirports = ['FRA', 'MUC']; // LH hubs
+
+    // Build seats.aero API parameters
+    const baseParams: Record<string, string> = {
+      origin_airport: originAirports.join(','),
+      destination_airport: destinationAirports.join(','),
+      start_date: startDate,
+      end_date: endDate,
+      take: '1000',
+      include_trips: 'true',
+      only_direct_flights: 'true',
+      include_filtered: 'false',
+      carriers: 'LH',
+      sources: 'aeroplan,united',
+      disable_live_filtering: 'true'
+    };
+    if (cabin) baseParams.cabin = cabin;
+    if (carriers) baseParams.carriers = carriers;
+
+    // Helper to build URL
+    const buildUrl = (params: Record<string, string | number>) => {
+      const sp = new URLSearchParams(params as any);
+      return `https://seats.aero/partnerapi/search?${sp.toString()}`;
+    };
+
+    // Fetch first page
+    const firstUrl = buildUrl({ ...baseParams });
+    
+    // Log the seats.aero curl command
+    console.log('Seats.aero API URL:', firstUrl);
+    console.log('Seats.aero curl command:');
+    console.log(`curl -X GET "${firstUrl}" \\`);
+    console.log(`  -H "accept: application/json" \\`);
+    console.log(`  -H "Partner-Authorization: ${apiKey}"`);
+
+    const firstRes = await fetch(firstUrl, {
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+        'Partner-Authorization': apiKey,
+      },
+    });
+
+    if (firstRes.status === 429) {
+      const retryAfter = firstRes.headers.get('Retry-After');
+      return NextResponse.json(
+        {
+          error: 'Rate limit exceeded. Please try again later.',
+          retryAfter: retryAfter ? Number(retryAfter) : undefined,
+        },
+        { status: 429 }
+      );
+    }
+
+    if (!firstRes.ok) {
+      return NextResponse.json(
+        { error: `Seats.aero API Error: ${firstRes.statusText}` },
+        { status: firstRes.status }
+      );
+    }
+
+    const firstData = await firstRes.json();
+    let allPages = [firstData];
+    let hasMore = firstData.hasMore || false;
+    let cursor = firstData.cursor;
+
+    // Sequential pagination
+    if (hasMore && typeof cursor === 'string') {
+      while (hasMore && cursor) {
+        const params = { ...baseParams, cursor };
+        const url = buildUrl(params);
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: {
+            accept: 'application/json',
+            'Partner-Authorization': apiKey,
+          },
+        });
+        if (!res.ok) break;
+        const data = await res.json();
+        allPages.push(data);
+        hasMore = data.hasMore || false;
+        cursor = data.cursor;
+      }
+    }
+
+    // Process all pages and build availability data
+    const uniqueItems = new Map<string, boolean>();
+    const results: any[] = [];
+
+    for (const page of allPages) {
+      if (page && page.data && Array.isArray(page.data) && page.data.length > 0) {
+        for (const item of page.data) {
+          if (uniqueItems.has(item.ID)) continue;
+          if (item.AvailabilityTrips && Array.isArray(item.AvailabilityTrips) && item.AvailabilityTrips.length > 0) {
+            for (const trip of item.AvailabilityTrips) {
+              if (trip.Stops !== 0) continue;
+              
+              // Filter out trips older than 7 days
+              if (trip.UpdatedAt) {
+                const tripUpdatedAt = new Date(trip.UpdatedAt);
+                if (tripUpdatedAt < sevenDaysAgo) continue;
+              }
+
+              // Only include trips with enough RemainingSeats for the requested cabin
+              let includeTrip = false;
+              let cabinType = '';
+              const seatsCount = seats || 1;
+              if (cabin) {
+                if (
+                  trip.Cabin &&
+                  trip.Cabin.toLowerCase() === cabin.toLowerCase() &&
+                  typeof trip.RemainingSeats === 'number' &&
+                  (seatsCount === 1 ? trip.RemainingSeats >= 0 : trip.RemainingSeats >= seatsCount)
+                ) {
+                  includeTrip = true;
+                  cabinType = trip.Cabin.toLowerCase();
+                }
+              } else {
+                if (
+                  typeof trip.RemainingSeats === 'number' &&
+                  (seatsCount === 1 ? trip.RemainingSeats >= 0 : trip.RemainingSeats >= seatsCount)
+                ) {
+                  includeTrip = true;
+                  cabinType = trip.Cabin ? trip.Cabin.toLowerCase() : '';
+                }
+              }
+              if (!includeTrip) continue;
+              
+              // Filter out flights that depart too early (before T + 60 minutes)
+              if (trip.DepartsAt) {
+                const departureTime = new Date(trip.DepartsAt);
+                const minDepartureTime = addDays(parseISO(timestamp), 0); // Same day as timestamp
+                const minDepartureTimeWithBuffer = addDays(minDepartureTime, 0); // Add 60 minutes buffer
+                minDepartureTimeWithBuffer.setMinutes(minDepartureTimeWithBuffer.getMinutes() + 60);
+                
+                if (departureTime < minDepartureTimeWithBuffer) {
+                  continue; // Skip flights that depart too early
+                }
+              }
+              
+              const flightNumbersArr = (trip.FlightNumbers || '').split(/,\s*/);
+              for (const flightNumber of flightNumbersArr) {
+                const normalizedFlightNumber = flightNumber.replace(/^([A-Z]{2,3})(0*)(\d+)$/i, (_: string, prefix: string, zeros: string, number: string) => `${prefix.toUpperCase()}${parseInt(number, 10)}`);
+                const flightPrefix = normalizedFlightNumber.slice(0, 2).toUpperCase();
+                
+                // Only include LH flights
+                if (flightPrefix !== 'LH') {
+                  continue;
+                }
+                
+                results.push({
+                  originAirport: item.Route.OriginAirport,
+                  destinationAirport: item.Route.DestinationAirport,
+                  date: item.Date,
+                  distance: item.Route.Distance,
+                  FlightNumbers: normalizedFlightNumber,
+                  TotalDuration: trip.TotalDuration || 0,
+                  Aircraft: Array.isArray(trip.Aircraft) && trip.Aircraft.length > 0 ? trip.Aircraft[0] : '',
+                  DepartsAt: trip.DepartsAt || '',
+                  ArrivesAt: trip.ArrivesAt || '',
+                  YCount: (cabinType === 'economy') ? 1 : 0,
+                  WCount: (cabinType === 'premium') ? 1 : 0,
+                  JCount: (cabinType === 'business') ? 1 : 0,
+                  FCount: (cabinType === 'first') ? 1 : 0,
+                  Source: trip.Source || item.Source || '',
+                  Cabin: trip.Cabin || '',
+                });
+              }
+            }
+          }
+          uniqueItems.set(item.ID, true);
+        }
+      }
+    }
+
+    // Group by originAirport, destinationAirport, date, alliance
+    const finalGroupedMap = new Map<string, any>();
+    for (const entry of results) {
+      const groupKey = [
+        entry.originAirport,
+        entry.destinationAirport,
+        entry.date,
+        'SA' // LH is Star Alliance
+      ].join('|');
+      
+      if (!finalGroupedMap.has(groupKey)) {
+        finalGroupedMap.set(groupKey, {
+          originAirport: entry.originAirport,
+          destinationAirport: entry.destinationAirport,
+          date: entry.date,
+          distance: entry.distance,
+          alliance: 'SA',
+          earliestDeparture: entry.DepartsAt,
+          latestDeparture: entry.DepartsAt,
+          earliestArrival: entry.ArrivesAt,
+          latestArrival: entry.ArrivesAt,
+          flights: [
+            {
+              FlightNumbers: entry.FlightNumbers,
+              TotalDuration: entry.TotalDuration,
+              Aircraft: entry.Aircraft,
+              DepartsAt: entry.DepartsAt,
+              ArrivesAt: entry.ArrivesAt,
+              YCount: entry.YCount,
+              WCount: entry.WCount,
+              JCount: entry.JCount,
+              FCount: entry.FCount,
+              distance: entry.distance,
+            }
+          ]
+        });
+      } else {
+        const group = finalGroupedMap.get(groupKey);
+        // Update earliest/latest departure/arrival
+        if (entry.DepartsAt && (!group.earliestDeparture || entry.DepartsAt < group.earliestDeparture)) {
+          group.earliestDeparture = entry.DepartsAt;
+        }
+        if (entry.DepartsAt && (!group.latestDeparture || entry.DepartsAt > group.latestDeparture)) {
+          group.latestDeparture = entry.DepartsAt;
+        }
+        if (entry.ArrivesAt && (!group.earliestArrival || entry.ArrivesAt < group.earliestArrival)) {
+          group.earliestArrival = entry.ArrivesAt;
+        }
+        if (entry.ArrivesAt && (!group.latestArrival || entry.ArrivesAt > group.latestArrival)) {
+          group.latestArrival = entry.ArrivesAt;
+        }
+        group.flights.push({
+          FlightNumbers: entry.FlightNumbers,
+          TotalDuration: entry.TotalDuration,
+          Aircraft: entry.Aircraft,
+          DepartsAt: entry.DepartsAt,
+          ArrivesAt: entry.ArrivesAt,
+          YCount: entry.YCount,
+          WCount: entry.WCount,
+          JCount: entry.JCount,
+          FCount: entry.FCount,
+          distance: entry.distance,
+        });
+      }
+    }
+
+    const availabilityData = { groups: Array.from(finalGroupedMap.values()) };
 
     // Build outbound itineraries
     const flightMap = new Map<string, AvailabilityFlight>();
