@@ -7,6 +7,69 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 /**
+ * Calculate mileage cost based on origin and destination airports
+ */
+async function calculateMileageCost(supabase: any, originAirport: string, destinationAirport: string): Promise<number | null> {
+  try {
+    // Get ISO codes for both airports
+    const { data: airports, error: airportError } = await supabase
+      .from('airports')
+      .select('iata, iso')
+      .in('iata', [originAirport, destinationAirport]);
+
+    if (airportError || !airports || airports.length !== 2) {
+      console.error('Error fetching airport data:', airportError);
+      return null;
+    }
+
+    const originAirportData = airports.find((a: any) => a.iata === originAirport);
+    const destinationAirportData = airports.find((a: any) => a.iata === destinationAirport);
+
+    if (!originAirportData?.iso || !destinationAirportData?.iso) {
+      console.error('Missing ISO codes for airports:', { originAirport, destinationAirport });
+      return null;
+    }
+
+    // Get zones for both ISO codes
+    const { data: zones, error: zoneError } = await supabase
+      .from('av')
+      .select('code, zone')
+      .in('code', [originAirportData.iso, destinationAirportData.iso]);
+
+    if (zoneError || !zones || zones.length !== 2) {
+      console.error('Error fetching zone data:', zoneError);
+      return null;
+    }
+
+    const originZone = zones.find((z: any) => z.code === originAirportData.iso)?.zone;
+    const destinationZone = zones.find((z: any) => z.code === destinationAirportData.iso)?.zone;
+
+    if (!originZone || !destinationZone) {
+      console.error('Missing zones for airports:', { originZone, destinationZone });
+      return null;
+    }
+
+    // Get pricing for the route
+    const { data: pricing, error: pricingError } = await supabase
+      .from('av_pricing')
+      .select('first')
+      .eq('from_region', originZone)
+      .eq('to_region', destinationZone)
+      .single();
+
+    if (pricingError || !pricing) {
+      console.error('Error fetching pricing data:', pricingError);
+      return null;
+    }
+
+    return pricing.first;
+  } catch (error) {
+    console.error('Error calculating mileage cost:', error);
+    return null;
+  }
+}
+
+/**
  * GET /api/seats-aero-virginatlantic
  * Custom seats.aero API call with Virgin Atlantic business class Delta flights
  */
@@ -219,6 +282,9 @@ export async function GET(req: NextRequest) {
     for (const trip of tripMap.values()) {
       allTrips.push(trip);
       
+      // Calculate mileage cost for this trip
+      const mileageCost = await calculateMileageCost(supabase, trip.OriginAirport, trip.DestinationAirport);
+      
       // Prepare trip data for database
       tripsToSave.push({
         total_duration: trip.TotalDuration,
@@ -232,7 +298,8 @@ export async function GET(req: NextRequest) {
         cabin: trip.Cabin,
         arrives_at: trip.ArrivesAt ? new Date(trip.ArrivesAt) : null,
         updated_at: trip.UpdatedAt ? new Date(trip.UpdatedAt) : null,
-        search_date: today
+        search_date: today,
+        mileage_cost: mileageCost
       });
     }
 
