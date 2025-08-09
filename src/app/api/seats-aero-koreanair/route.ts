@@ -28,7 +28,8 @@ export async function GET(req: NextRequest) {
       }, { status: 500 });
     }
 
-    const apiKey = data.pro_key;
+    // Clean the API key by removing any whitespace, newline, or carriage return characters
+    const apiKey = data.pro_key.replace(/[\r\n]/g, '').trim();
 
     // Get date parameter from query string
     const { searchParams } = new URL(req.url);
