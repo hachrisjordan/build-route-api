@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { addDays, format } from 'date-fns';
+import { addDays, format, subDays } from 'date-fns';
 
 // Use environment variables for Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -50,6 +50,10 @@ export async function GET(req: NextRequest) {
 
     // Calculate end date: today + 365 days
     const endDate = addDays(new Date(), 365);
+    
+    // Calculate 7 days ago for filtering
+    const today = new Date();
+    const sevenDaysAgo = subDays(today, 7);
 
     // Format dates
     const formattedStartDate = format(startDate, 'yyyy-MM-dd');
@@ -121,6 +125,12 @@ export async function GET(req: NextRequest) {
       for (const item of rawData.data) {
         if (item.AvailabilityTrips && Array.isArray(item.AvailabilityTrips)) {
           for (const trip of item.AvailabilityTrips) {
+            // Filter out trips older than 7 days
+            if (trip.UpdatedAt) {
+              const tripUpdatedAt = new Date(trip.UpdatedAt);
+              if (tripUpdatedAt < sevenDaysAgo) continue;
+            }
+            
             // Filter to only include SV flights
             if (trip.FlightNumbers && !trip.FlightNumbers.startsWith('SV')) {
               console.log('Skipping non-SV flight:', trip.FlightNumbers);
@@ -218,7 +228,8 @@ export async function GET(req: NextRequest) {
         endDate: formattedEndDate,
         carriers: 'SV',
         totalTrips: filteredTrips.length,
-        filterDescription: 'Results filtered to only include flights with both economy and business class',
+        filterDate: format(sevenDaysAgo, 'yyyy-MM-dd'),
+        filterDescription: 'Results filtered to exclude data older than 7 days and only include flights with both economy and business class',
         route: route,
         url: url
       }
