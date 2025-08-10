@@ -293,10 +293,10 @@ export async function GET(req: NextRequest) {
         destination_airport: trip.DestinationAirport,
         aircraft: trip.Aircraft,
         flight_numbers: trip.FlightNumbers,
-        departs_at: trip.DepartsAt ? new Date(trip.DepartsAt) : null,
+        departs_at: trip.DepartsAt || null,
         cabin: trip.Cabin,
-        arrives_at: trip.ArrivesAt ? new Date(trip.ArrivesAt) : null,
-        updated_at: trip.UpdatedAt ? new Date(trip.UpdatedAt) : null,
+        arrives_at: trip.ArrivesAt || null,
+        updated_at: trip.UpdatedAt || null,
         search_date: today,
         mileage_cost: mileageCost
       });
