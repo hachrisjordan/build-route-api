@@ -41,9 +41,9 @@ export async function GET(req: NextRequest) {
     // Define routes: US to Europe and Europe to US
     const routes = [
       // US to Europe
-      'ATL/BOS/CVG/DTW/JFK/LAX/MCO/MSP/SEA/SLC/TPA-AMS/ARN/ATH/BCN/BER/BRU/CDG/CPH/CTA/DUB/EDI/FCO/FRA/GVA/KEF/LGW/LHR/LIS/MAD/MUC/MXP/NAP/NCE/PRG/VCE/ZRH',
+      'ATL/BOS/ORD/IAH/LAX/MIA/MSP/JFK/SFO/IAD/DFW/DEN/DTW/EWR/MCO/PHX/RDU/SEA/AUS/LAS/PDX/SLC/SAN-AMS/ARN/ATH/BCN/BER/BRU/CDG/CPH/CTA/DUB/EDI/FCO/FRA/GVA/KEF/LGW/LHR/LIS/MAD/MUC/MXP/NAP/NCE/PRG/VCE/ZRH',
       // Europe to US
-      'AMS/ARN/ATH/BCN/BER/BRU/CDG/CPH/CTA/DUB/EDI/FCO/FRA/GVA/KEF/LGW/LHR/LIS/MAD/MUC/MXP/NAP/NCE/PRG/VCE/ZRH-ATL/BOS/CVG/DTW/JFK/LAX/MCO/MSP/SEA/SLC/TPA'
+      'AMS/ARN/ATH/BCN/BER/BRU/CDG/CPH/CTA/DUB/EDI/FCO/FRA/GVA/KEF/LGW/LHR/LIS/MAD/MUC/MXP/NAP/NCE/PRG/VCE/ZRH-ATL/BOS/ORD/IAH/LAX/MIA/MSP/JFK/SFO/IAD/DFW/DEN/DTW/EWR/MCO/PHX/RDU/SEA/AUS/LAS/PDX/SLC/SAN'
     ];
 
     const allTrips = [];
@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
         include_filtered: 'false',
         sources: 'virginatlantic',
         cabin: 'business',
-        carriers: 'DL',
+        carriers: 'DL%2CAF%2CKL',
         disable_live_filtering: 'true'
       };
 
@@ -118,19 +118,20 @@ export async function GET(req: NextRequest) {
                 if (tripUpdatedAt < sevenDaysAgo) continue;
               }
               
-              // Filter to only include DL flights
-              if (trip.FlightNumbers && !trip.FlightNumbers.startsWith('DL')) {
-                console.log('Skipping non-DL flight:', trip.FlightNumbers);
+              // Filter to only include DL, AF, or KL flights
+              if (trip.FlightNumbers && !trip.FlightNumbers.match(/^(DL|AF|KL)/)) {
+                console.log('Skipping non-DL/AF/KL flight:', trip.FlightNumbers);
                 continue;
               }
               
-              console.log('Including DL flight:', trip.FlightNumbers);
+              console.log('Including DL/AF/KL flight:', trip.FlightNumbers);
               
               // Prepare trip data for response
               const tripData = {
                 TotalDuration: trip.TotalDuration,
                 RemainingSeats: trip.RemainingSeats,
                 MileageCost: trip.MileageCost,
+                TotalTaxes: trip.TotalTaxes,
                 OriginAirport: trip.OriginAirport,
                 DestinationAirport: trip.DestinationAirport,
                 Aircraft: trip.Aircraft,
@@ -148,6 +149,7 @@ export async function GET(req: NextRequest) {
                 total_duration: trip.TotalDuration,
                 remaining_seats: trip.RemainingSeats,
                 mileage_cost: trip.MileageCost,
+                total_taxes: trip.TotalTaxes,
                 origin_airport: trip.OriginAirport,
                 destination_airport: trip.DestinationAirport,
                 aircraft: trip.Aircraft,
@@ -205,7 +207,7 @@ export async function GET(req: NextRequest) {
         endDate,
         sources: 'virginatlantic',
         cabin: 'business',
-        carriers: 'DL',
+        carriers: 'DL,AF,KL',
         totalTrips: allTrips.length,
         filterDate: format(sevenDaysAgo, 'yyyy-MM-dd'),
         filterDescription: 'Results filtered to exclude data older than 7 days',
