@@ -9,7 +9,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 // Zod schema for request validation
-const lhFOutboundSchema = z.object({
+const nhFOutboundSchema = z.object({
   O: z.string().length(3), // Origin airport
   D: z.string().length(3), // Destination airport
   T: z.string().min(8), // Timestamp (inbound arrival time)
@@ -57,37 +57,17 @@ interface FlightMapEntry {
   flightNumber: string;
 }
 
-// LH destinations by region
-const LH_DESTINATIONS = {
-  WEST: ['YUL', 'YYZ', 'YVR', 'SJO', 'MEX', 'ATL', 'AUS', 'BOS', 'CLT', 'ORD', 'DFW', 'DEN', 'DTW', 'IAH', 'LAX', 'MIA', 'EWR', 'JFK', 'RDU', 'STL', 'SAN', 'SFO', 'SEA', 'IAD', 'EZE', 'GIG', 'GRU', 'BOG'],
-  EAST: ['EVN', 'GYD', 'PEK', 'PVG', 'TBS', 'HKG', 'BLR', 'MAA', 'DEL', 'HYD', 'BOM', 'IKA', 'KIX', 'HND', 'AMM', 'ALA', 'NQZ', 'BEY', 'DMM', 'RUH', 'SIN', 'ICN', 'BKK', 'DXB'],
-  CENTRAL: ['TIA', 'GRZ', 'SZG', 'VIE', 'BRU', 'SJJ', 'SOF', 'DBV', 'ZAG', 'LCA', 'PRG', 'BLL', 'CPH', 'TLL', 'HEL', 'IVL', 'RVN', 'BSL', 'BOD', 'LYS', 'MRS', 'NTE', 'NCE', 'CDG', 'SXB', 'TLS', 'BER', 'BRE', 'CGN', 'DRS', 'DUS', 'FRA', 'HAM', 'HAJ', 'LEJ', 'FMO', 'MUC', 'NUE', 'STR', 'ATH', 'HER', 'JMK', 'RHO', 'SKG', 'JTR', 'BUD', 'KEF', 'DUB', 'BLQ', 'CTA', 'LIN', 'MXP', 'NAP', 'PMO', 'FCO', 'VCE', 'RIX', 'VNO', 'LUX', 'MLA', 'RMO', 'AMS', 'SKP', 'BGO', 'OSL', 'SVG', 'TOS', 'GDN', 'KTW', 'KRK', 'POZ', 'RZE', 'WAW', 'WRO', 'FAO', 'LIS', 'PDL', 'OPO', 'OTP', 'SBZ', 'TSR', 'BEG', 'LJU', 'ALC', 'BCN', 'BIO', 'MAD', 'AGP', 'PMI', 'SVQ', 'VLC', 'GOT', 'ARN', 'GVA', 'ZRH', 'IST', 'ADB', 'BHX', 'EDI', 'GLA', 'LHR', 'STN', 'MAN', 'NCL', 'ALG', 'LAD', 'CAI', 'SSG', 'NBO', 'CMN', 'ABV', 'LOS', 'PHC', 'CPT', 'JNB', 'TUN']
-};
+// NH destinations from TYO route string
+const NH_DESTINATIONS = [
+  'PEK', 'DLC', 'CAN', 'HGH', 'TAO', 'PVG', 'SHA', 'SZX', 'HKG', 'DEL', 'BOM', 'CGK', 'AXT', 'AOJ', 'AKJ', 'FUK', 'HKD', 'HIJ', 'ISG', 'IWK', 'KOJ', 'UKB', 'KCZ', 'KMQ', 'KMJ', 'KUH', 'MYJ', 'MMB', 'MMY', 'KMI', 'NGS', 'NGO', 'SHB', 'KIJ', 'OBO', 'OIT', 'OKJ', 'OKA', 'ITM', 'KIX', 'CTS', 'SDJ', 'FSZ', 'TAK', 'TKS', 'HND', 'NRT', 'TOY', 'UBJ', 'WKJ', 'KUM', 'KUL', 'MNL', 'SIN', 'GMP', 'TSA', 'BKK', 'HAN', 'SGN', 'PER', 'SYD'
+];
 
-// Function to determine destination airports based on origin region
+// Function to return NH destinations (excluding origin)
 function getDestinationAirports(origin: string): string[] {
   const originUpper = origin.toUpperCase();
   
-  // Determine origin region
-  let originRegion: 'WEST' | 'EAST' | 'CENTRAL' = 'CENTRAL';
-  if (LH_DESTINATIONS.WEST.includes(originUpper)) {
-    originRegion = 'WEST';
-  } else if (LH_DESTINATIONS.EAST.includes(originUpper)) {
-    originRegion = 'EAST';
-  }
-  
-  // Return destinations based on origin region
-  switch (originRegion) {
-    case 'WEST':
-      // If origin is West, use East + Central
-      return [...LH_DESTINATIONS.EAST, ...LH_DESTINATIONS.CENTRAL];
-    case 'EAST':
-      // If origin is East, use West + Central
-      return [...LH_DESTINATIONS.WEST, ...LH_DESTINATIONS.CENTRAL];
-    default:
-      // If origin is Central, use West + East
-      return [...LH_DESTINATIONS.WEST, ...LH_DESTINATIONS.EAST];
-  }
+  // Return all NH destinations except the origin
+  return NH_DESTINATIONS.filter(airport => airport !== originUpper);
 }
 
 /**
@@ -333,24 +313,19 @@ async function buildOutboundItineraries(
   const uniqueRoutes = new Set<string>();
   const pricingCache = new Map<string, any>();
   
-  // Collect all unique routes from the availability data
+  // Collect all unique routes from the availability data (direct routes only)
   if (availabilityData.groups) {
     for (const group of availabilityData.groups) {
       const { originAirport, destinationAirport } = group;
       
-      // Only process flights from the destination of the inbound flight (FRA or MUC)
-      if (originAirport !== destination) {
+      // Process flights from both HND and NRT hubs
+      if (!['HND', 'NRT'].includes(originAirport)) {
         continue;
       }
       
-      // Direct route
+      // Direct route only
       const directRouteKey = `${origin}-${originAirport}-${destinationAirport}`;
       uniqueRoutes.add(directRouteKey);
-      
-      // Connecting route through other hub
-      const hub = originAirport === 'FRA' ? 'MUC' : 'FRA';
-      const connectingRouteKey = `${origin}-${originAirport}-${hub}-${destinationAirport}`;
-      uniqueRoutes.add(connectingRouteKey);
     }
   }
 
@@ -385,8 +360,8 @@ async function buildOutboundItineraries(
     for (const group of availabilityData.groups) {
       const { originAirport, destinationAirport, date, flights } = group;
 
-      // Only process flights from the destination of the inbound flight (FRA or MUC)
-      if (originAirport !== destination) {
+      // Process flights from both HND and NRT hubs
+      if (!['HND', 'NRT'].includes(originAirport)) {
         continue;
       }
 
@@ -402,10 +377,40 @@ async function buildOutboundItineraries(
         
         const departureTime = parseISO(flight.DepartsAt);
         
-        // Check if departure is within the allowed window (after inbound arrival - 6 hours max)
-        const maxDepartureTime = addMinutes(inboundArrival, maxConnectionMinutes);
+        // Apply hub-specific time windows based on destination
+        let minHours: number;
+        let maxHours: number;
         
-        if (isBefore(departureTime, inboundArrival) || isAfter(departureTime, maxDepartureTime)) {
+        if (destination === 'NRT') {
+          // If inbound arrives at NRT
+          if (originAirport === 'NRT') {
+            minHours = 1; // NRT flights: 1-8 hours after T
+            maxHours = 8;
+          } else if (originAirport === 'HND') {
+            minHours = 3; // HND flights: 3-8 hours after T
+            maxHours = 8;
+          } else {
+            continue; // Skip non-Tokyo hubs
+          }
+        } else if (destination === 'HND') {
+          // If inbound arrives at HND
+          if (originAirport === 'HND') {
+            minHours = 1; // HND flights: 1-8 hours after T
+            maxHours = 8;
+          } else if (originAirport === 'NRT') {
+            minHours = 3; // NRT flights: 3-8 hours after T
+            maxHours = 8;
+          } else {
+            continue; // Skip non-Tokyo hubs
+          }
+        } else {
+          continue; // Skip if destination is neither HND nor NRT
+        }
+        
+        const minDepartureTime = addMinutes(inboundArrival, minHours * 60);
+        const maxDepartureTime = addMinutes(inboundArrival, maxHours * 60);
+        
+        if (isBefore(departureTime, minDepartureTime) || isAfter(departureTime, maxDepartureTime)) {
           continue;
         }
 
@@ -458,120 +463,6 @@ async function buildOutboundItineraries(
         
         // Mark this flight as processed to avoid duplicates
         processedFlights.add(flightKey);
-
-        // Now look for connecting flights through the other hub
-        const hub = originAirport === 'FRA' ? 'MUC' : 'FRA';
-        
-        // First, find flights from originAirport to hub (first leg)
-        for (const firstLegGroup of availabilityData.groups || []) {
-          if (firstLegGroup.originAirport === originAirport && firstLegGroup.destinationAirport === hub) {
-            for (const firstLegFlight of firstLegGroup.flights) {
-              const firstLegDepartureTime = parseISO(firstLegFlight.DepartsAt);
-              
-              // Check if first leg departs within the allowed window (after inbound arrival)
-              if (isBefore(firstLegDepartureTime, inboundArrival) || isAfter(firstLegDepartureTime, addMinutes(inboundArrival, maxConnectionMinutes))) {
-                continue;
-              }
-
-              // Now find connecting flights from hub to destinationAirport (second leg)
-              for (const secondLegGroup of availabilityData.groups || []) {
-                if (secondLegGroup.originAirport === hub && secondLegGroup.destinationAirport === destinationAirport) {
-                  for (const secondLegFlight of secondLegGroup.flights) {
-                    const secondLegDepartureTime = parseISO(secondLegFlight.DepartsAt);
-                    const firstLegArrivalTime = parseISO(firstLegFlight.ArrivesAt);
-                    
-                    // Check if second leg departs within connection window after first leg arrival
-                    const minSecondLegDepartureTime = addMinutes(firstLegArrivalTime, minConnectionMinutes);
-                    const maxSecondLegDepartureTime = addMinutes(firstLegArrivalTime, maxConnectionMinutes);
-                    
-                    if (isBefore(secondLegDepartureTime, minSecondLegDepartureTime) || isAfter(secondLegDepartureTime, maxSecondLegDepartureTime)) {
-                continue;
-              }
-
-              // Create unique identifier for connecting itinerary to avoid duplicates
-              const connectingKey = `${firstLegFlight.FlightNumbers}-${firstLegFlight.DepartsAt}-${firstLegFlight.ArrivesAt}-${secondLegFlight.FlightNumbers}-${secondLegFlight.DepartsAt}-${secondLegFlight.ArrivesAt}`;
-              
-              // Skip if we've already processed this exact connecting itinerary
-              if (processedFlights.has(connectingKey)) {
-                continue;
-              }
-              
-              // Create connecting flight itinerary
-                    const firstLegUUID = getFlightUUID(firstLegFlight);
-                    const secondLegUUID = getFlightUUID(secondLegFlight);
-                    flightMap.set(firstLegUUID, firstLegFlight);
-                    flightMap.set(secondLegUUID, secondLegFlight);
-
-              const connectingRoute = `${originAirport}-${hub}-${destinationAirport}`;
-                    const connectingItinerary = [firstLegUUID, secondLegUUID];
-              const connectingConnections = [hub];
-
-                                  // Calculate total duration and class percentages for connecting itinerary
-                    const connectingTotalDuration = firstLegFlight.TotalDuration + secondLegFlight.TotalDuration;
-                    
-                    // Calculate percentage of total flight duration where that cabin class has availability
-                    let connectingY = 0;
-                    let connectingW = 0;
-                    let connectingJ = 0;
-                    let connectingF = 0;
-                    
-                    if (firstLegFlight.YCount > 0) connectingY += Math.round((firstLegFlight.TotalDuration / connectingTotalDuration) * 100);
-                    if (secondLegFlight.YCount > 0) connectingY += Math.round((secondLegFlight.TotalDuration / connectingTotalDuration) * 100);
-                    
-                    if (firstLegFlight.WCount > 0) connectingW += Math.round((firstLegFlight.TotalDuration / connectingTotalDuration) * 100);
-                    if (secondLegFlight.WCount > 0) connectingW += Math.round((secondLegFlight.TotalDuration / connectingTotalDuration) * 100);
-                    
-                    if (firstLegFlight.JCount > 0) connectingJ += Math.round((firstLegFlight.TotalDuration / connectingTotalDuration) * 100);
-                    if (secondLegFlight.JCount > 0) connectingJ += Math.round((secondLegFlight.TotalDuration / connectingTotalDuration) * 100);
-                    
-                    if (firstLegFlight.FCount > 0) connectingF += Math.round((firstLegFlight.TotalDuration / connectingTotalDuration) * 100);
-                    if (secondLegFlight.FCount > 0) connectingF += Math.round((secondLegFlight.TotalDuration / connectingTotalDuration) * 100);
-
-              // Get cached pricing for connecting route
-              const connectingRouteKey = `${origin}-${originAirport}-${hub}-${destinationAirport}`;
-              const connectingPricing = pricingCache.get(connectingRouteKey) || {
-                f1: null, y2: null, j2: null, f2: null, y3: null, j3: null, f3: null,
-                totalRouteDistance: 0, segmentDistances: []
-              };
-
-              // Apply seat availability filtering for connecting flights
-              const filteredConnectingPricing = {
-                f1: connectingPricing.f1, // Always keep f1
-                      y2: firstLegFlight.YCount > 0 ? connectingPricing.y2 : null,
-                      j2: firstLegFlight.JCount > 0 ? connectingPricing.j2 : null,
-                      f2: firstLegFlight.FCount > 0 ? connectingPricing.f2 : null,
-                      y3: secondLegFlight.YCount > 0 ? connectingPricing.y3 : null,
-                      j3: secondLegFlight.JCount > 0 ? connectingPricing.j3 : null,
-                      f3: secondLegFlight.FCount > 0 ? connectingPricing.f3 : null,
-                totalRouteDistance: connectingPricing.totalRouteDistance,
-                segmentDistances: connectingPricing.segmentDistances
-              };
-
-              results.push({
-                route: connectingRoute,
-                date: format(parseISO(firstLegFlight.DepartsAt), 'yyyy-MM-dd'),
-                itinerary: connectingItinerary,
-                totalDuration: connectingTotalDuration,
-                      departureTime: firstLegFlight.DepartsAt,
-                      arrivalTime: secondLegFlight.ArrivesAt,
-                connections: connectingConnections,
-                classPercentages: { 
-                  y: connectingY, 
-                  w: connectingW, 
-                  j: connectingJ, 
-                  f: connectingF 
-                },
-                ...filteredConnectingPricing
-              });
-              
-              // Mark this connecting itinerary as processed to avoid duplicates
-              processedFlights.add(connectingKey);
-                  }
-                }
-              }
-            }
-          }
-        }
       }
     }
   }
@@ -583,7 +474,7 @@ export async function POST(req: NextRequest) {
   try {
     // Parse and validate body
     const body = await req.json();
-    const parseResult = lhFOutboundSchema.safeParse(body);
+    const parseResult = nhFOutboundSchema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json({ error: 'Invalid input', details: parseResult.error.errors }, { status: 400 });
     }
@@ -623,7 +514,7 @@ export async function POST(req: NextRequest) {
 
     // Get destination airports based on origin
     const destinationAirports = getDestinationAirports(origin);
-    const originAirports = ['FRA', 'MUC']; // LH hubs
+    const originAirports = ['HND', 'NRT']; // NH hubs (Tokyo)
 
     // Build seats.aero API parameters
     const baseParams: Record<string, string> = {
@@ -635,7 +526,7 @@ export async function POST(req: NextRequest) {
       include_trips: 'true',
       only_direct_flights: 'true',
       include_filtered: 'false',
-      carriers: 'LH',
+      carriers: 'NH',
       sources: 'aeroplan,united',
       disable_live_filtering: 'true'
     };
@@ -769,8 +660,8 @@ export async function POST(req: NextRequest) {
                 const normalizedFlightNumber = flightNumber.replace(/^([A-Z]{2,3})(0*)(\d+)$/i, (_: string, prefix: string, zeros: string, number: string) => `${prefix.toUpperCase()}${parseInt(number, 10)}`);
                 const flightPrefix = normalizedFlightNumber.slice(0, 2).toUpperCase();
                 
-                // Only include LH flights
-                if (flightPrefix !== 'LH') {
+                // Only include NH flights
+                if (flightPrefix !== 'NH') {
                   continue;
                 }
                 
@@ -808,7 +699,7 @@ export async function POST(req: NextRequest) {
         entry.originAirport,
         entry.destinationAirport,
         entry.date,
-        'SA' // LH is Star Alliance
+        'SA' // NH is Star Alliance
       ].join('|');
       
       // Create unique flight key for cabin aggregation
@@ -908,7 +799,7 @@ export async function POST(req: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('Error in /api/LH-F-outbound:', error);
+    console.error('Error in /api/NH-F-outbound:', error);
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: 500 }
