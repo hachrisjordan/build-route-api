@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import Valkey from 'iovalkey';
+import { getValkeyConfig } from '@/lib/env-utils';
 import { createHash } from 'crypto';
 import zlib from 'zlib';
 import { addDays, parseISO, format, subDays, addMinutes } from 'date-fns';
@@ -122,11 +123,15 @@ function meetsDistanceThresholds(flightPrefix: string, distance: number, mileage
 let valkey: any = null;
 function getValkeyClient(): any {
   if (valkey) return valkey;
-  const host = process.env.VALKEY_HOST;
-  const port = process.env.VALKEY_PORT ? parseInt(process.env.VALKEY_PORT, 10) : 6379;
-  const password = process.env.VALKEY_PASSWORD;
-  if (!host) return null;
-  valkey = new Valkey({ host, port, password });
+  const config = getValkeyConfig();
+  
+  // Validate Valkey configuration
+  if (!config.host) {
+    console.warn('VALKEY_HOST not configured, skipping Valkey setup');
+    return null;
+  }
+
+  valkey = new Valkey(config);
   return valkey;
 }
 // Helper to compress and save response to Valkey

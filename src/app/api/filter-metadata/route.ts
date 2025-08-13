@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createHash } from 'crypto';
 import zlib from 'zlib';
 import Redis from 'ioredis';
+import { getRedisConfig } from '@/lib/env-utils';
 
 // Input validation schema
 const filterMetadataSchema = z.object({
@@ -23,15 +24,12 @@ let redis: Redis | null = null;
 function getRedisClient(): Redis | null {
   if (redis) return redis;
   
-  const host = process.env.REDIS_HOST || '127.0.0.1';
-  const port = parseInt(process.env.REDIS_PORT || '6379', 10);
-  const password = process.env.REDIS_PASSWORD;
+  // Use sanitized Redis configuration
+  const config = getRedisConfig();
   
   try {
-    redis = new Redis({ 
-      host, 
-      port, 
-      password: password || undefined,
+    redis = new Redis({
+      ...config,
       maxRetriesPerRequest: 3,
       enableReadyCheck: false,
       lazyConnect: true

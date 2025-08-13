@@ -48,6 +48,36 @@ export function getValidatedSupabaseConfig() {
 }
 
 /**
+ * Gets Valkey configuration with sanitized environment variables
+ */
+export function getValkeyConfig() {
+  const host = getSanitizedEnv('VALKEY_HOST');
+  const port = parseInt(getSanitizedEnv('VALKEY_PORT') || '6379', 10);
+  const password = getSanitizedEnv('VALKEY_PASSWORD');
+  
+  return {
+    host,
+    port,
+    password: password || undefined,
+  };
+}
+
+/**
+ * Gets Redis configuration with sanitized environment variables
+ */
+export function getRedisConfig() {
+  const host = getSanitizedEnv('REDIS_HOST') || 'redis'; // Docker service name fallback
+  const port = parseInt(getSanitizedEnv('REDIS_PORT') || '6379', 10);
+  const password = getSanitizedEnv('REDIS_PASSWORD');
+  
+  return {
+    host,
+    port,
+    password: password || undefined,
+  };
+}
+
+/**
  * Validates that required environment variables are set and sanitized
  */
 export function validateRequiredEnvVars(requiredVars: string[]): { valid: boolean; missing: string[] } {

@@ -9,7 +9,7 @@ import { createClient } from '@supabase/supabase-js';
 import Redis from 'ioredis';
 import { parse } from 'url';
 import { CONCURRENCY_CONFIG, PERFORMANCE_MONITORING } from '@/lib/concurrency-config';
-import { getSanitizedEnv } from '@/lib/env-utils';
+import { getSanitizedEnv, getValkeyConfig, getRedisConfig } from '@/lib/env-utils';
 
 function getClassPercentages(
   flights: any[],
@@ -355,11 +355,15 @@ async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]>
 let valkey: any = null;
 function getValkeyClient(): any {
   if (valkey) return valkey;
-  const host = process.env.VALKEY_HOST;
-  const port = process.env.VALKEY_PORT ? parseInt(process.env.VALKEY_PORT, 10) : 6379;
-  const password = process.env.VALKEY_PASSWORD;
-  if (!host) return null;
-  valkey = new (require('iovalkey'))({ host, port, password });
+  const config = getValkeyConfig();
+  
+  // Validate Valkey configuration
+  if (!config.host) {
+    console.warn('VALKEY_HOST not configured, skipping Valkey setup');
+    return null;
+  }
+
+  valkey = new (require('iovalkey'))(config);
   return valkey;
 }
 async function getCachedAvailabilityV2Response(params: any) {
@@ -481,16 +485,12 @@ let redis: Redis | null = null;
 function getRedisClient(): Redis | null {
   if (redis) return redis;
   
-  // Hardcoded Redis connection for Docker
-  const host = 'redis'; // Docker service name
-  const port = 6379;    // Container port
-  const password = process.env.REDIS_PASSWORD;
+  // Use sanitized Redis configuration
+  const config = getRedisConfig();
   
   try {
     redis = new Redis({ 
-      host, 
-      port, 
-      password: password || undefined,
+      ...config,
       maxRetriesPerRequest: 3,
       enableReadyCheck: false,
       lazyConnect: true
