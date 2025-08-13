@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import Valkey from 'iovalkey';
-import { getValkeyConfig } from '@/lib/env-utils';
+
+import { getRedisConfig } from '@/lib/env-utils';
+import Redis from 'ioredis';
 import { createHash } from 'crypto';
 import zlib from 'zlib';
 import { addDays, parseISO, format, subDays, addMinutes } from 'date-fns';
@@ -119,32 +120,45 @@ function meetsDistanceThresholds(flightPrefix: string, distance: number, mileage
   return isValid;
 }
 
-// --- Valkey (iovalkey) setup ---
-let valkey: any = null;
-function getValkeyClient(): any {
-  if (valkey) return valkey;
-  const config = getValkeyConfig();
+// --- Redis setup ---
+let redis: Redis | null = null;
+
+function getRedisClient(): Redis | null {
+  if (redis) return redis;
   
-  // Validate Valkey configuration
-  if (!config.host) {
-    console.warn('VALKEY_HOST not configured, skipping Valkey setup');
+  // Use sanitized Redis configuration
+  const config = getRedisConfig();
+  
+  try {
+    redis = new Redis({ 
+      ...config,
+      maxRetriesPerRequest: 3,
+      enableReadyCheck: false,
+      lazyConnect: true
+    });
+    
+    redis.on('error', (err) => {
+      console.warn('Redis connection error:', err.message);
+    });
+    
+    return redis;
+  } catch (error) {
+    console.warn('Failed to create Redis client:', error);
     return null;
   }
-
-  valkey = new Valkey(config);
-  return valkey;
 }
-// Helper to compress and save response to Valkey
-async function saveCompressedResponseToValkey(key: string, response: any) {
-  const client = getValkeyClient();
+
+// Helper to compress and save response to Redis
+async function saveCompressedResponseToRedis(key: string, response: any) {
+  const client = getRedisClient();
   if (!client) return;
   try {
     const json = JSON.stringify(response);
     const compressed = zlib.gzipSync(json);
-    await client.setBuffer(key, compressed);
+    await client.set(key, compressed);
     await client.expire(key, 86400); // 24h TTL
   } catch (err) {
-    console.error('Valkey saveCompressedResponseToValkey error:', err);
+    console.error('Redis saveCompressedResponseToRedis error:', err);
   }
 }
 
@@ -747,10 +761,10 @@ export async function POST(req: NextRequest) {
       rlReset = lastResponse.headers.get('x-ratelimit-reset');
     }
     const responsePayload = { groups: groupedResults, seatsAeroRequests };
-    // Save compressed response to Valkey
+    // Save compressed response to Redis
     const hash = createHash('sha256').update(JSON.stringify({ origin, destination, timestamp, cabin, carriers, seats })).digest('hex');
-    const valkeyKey = `nh-f-response:${hash}`;
-    saveCompressedResponseToValkey(valkeyKey, responsePayload);
+    const redisKey = `nh-f-response:${hash}`;
+    saveCompressedResponseToRedis(redisKey, responsePayload);
     const nextRes = NextResponse.json(responsePayload);
     if (rlRemaining) nextRes.headers.set('x-ratelimit-remaining', rlRemaining);
     if (rlReset) nextRes.headers.set('x-ratelimit-reset', rlReset);

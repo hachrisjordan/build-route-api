@@ -3,13 +3,13 @@ import { z } from 'zod';
 import type { FullRoutePathResult } from '@/types/route';
 import { createHash } from 'crypto';
 import zlib from 'zlib';
-import Valkey from 'iovalkey';
+
 import { parseISO, isBefore, isEqual, startOfDay, endOfDay } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
 import Redis from 'ioredis';
 import { parse } from 'url';
 import { CONCURRENCY_CONFIG, PERFORMANCE_MONITORING } from '@/lib/concurrency-config';
-import { getSanitizedEnv, getValkeyConfig, getRedisConfig } from '@/lib/env-utils';
+import { getSanitizedEnv, getRedisConfig } from '@/lib/env-utils';
 
 function getClassPercentages(
   flights: any[],
@@ -361,23 +361,9 @@ async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]>
   });
 }
 
-// --- Valkey (iovalkey) setup ---
-let valkey: any = null;
-function getValkeyClient(): any {
-  if (valkey) return valkey;
-  const config = getValkeyConfig();
-  
-  // Validate Valkey configuration
-  if (!config.host) {
-    console.warn('VALKEY_HOST not configured, skipping Valkey setup');
-    return null;
-  }
-
-  valkey = new (require('iovalkey'))(config);
-  return valkey;
-}
+// --- Availability Cache (Redis) ---
 async function getCachedAvailabilityV2Response(params: any) {
-  const client = getValkeyClient();
+  const client = getRedisClient();
   if (!client) return null;
   try {
     const hash = createHash('sha256').update(JSON.stringify(params)).digest('hex');
@@ -387,8 +373,23 @@ async function getCachedAvailabilityV2Response(params: any) {
     const json = zlib.gunzipSync(compressed).toString();
     return JSON.parse(json);
   } catch (err) {
-    console.error('Valkey getCachedAvailabilityV2Response error:', err);
+    console.error('Redis getCachedAvailabilityV2Response error:', err);
     return null;
+  }
+}
+
+async function saveAvailabilityV2ResponseToCache(params: any, response: any) {
+  const client = getRedisClient();
+  if (!client) return;
+  try {
+    const hash = createHash('sha256').update(JSON.stringify(params)).digest('hex');
+    const key = `availability-v2-response:${hash}`;
+    const json = JSON.stringify(response);
+    const compressed = zlib.gzipSync(json);
+    await client.set(key, compressed);
+    await client.expire(key, 86400); // 24h TTL
+  } catch (err) {
+    console.error('Redis saveAvailabilityV2ResponseToCache error:', err);
   }
 }
 
@@ -1272,7 +1273,7 @@ export async function POST(req: NextRequest) {
         ...(carriers ? { carriers } : {}),
         ...(body.seats ? { seats: body.seats } : {}),
       };
-      // Try Valkey cache first
+      // Try Redis cache first
       const cached = await getCachedAvailabilityV2Response(params);
       if (cached) {
         return { routeId, error: false, data: cached };
@@ -1312,6 +1313,8 @@ export async function POST(req: NextRequest) {
           return { routeId, error: true, data: [] };
         }
         const data = await res.json();
+        // Cache the successful response
+        await saveAvailabilityV2ResponseToCache(params, data);
         return { routeId, error: false, data };
       } catch (err) {
         console.error(`Fetch error for routeId ${routeId}:`, err);
