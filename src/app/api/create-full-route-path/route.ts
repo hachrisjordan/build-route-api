@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createFullRoutePathSchema } from './schema';
 import { createClient } from '@supabase/supabase-js';
-import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchPathsOptimized, fetchPathsByMaxStop, fetchIntraRoutes, SupabaseClient, batchFetchAirportsByIata, batchFetchIntraRoutes } from '@/lib/route-helpers';
+import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchPathsOptimized, fetchPathsByMaxStop, fetchIntraRoutes, SupabaseClient, batchFetchAirportsByIata, batchFetchIntraRoutes, batchFetchPathsForRegionCombinations, globalBatchFetchIntraRoutes } from '@/lib/route-helpers';
 import { FullRoutePathResult, Path, IntraRoute } from '@/types/route';
 
 // Use environment variables for Supabase
@@ -13,6 +13,8 @@ interface RoutePathCache {
   airport: Map<string, any>;
   intraRoute: Map<string, IntraRoute[]>;
   path: Map<string, Path[]>;
+  sharedPaths: Map<string, Path[]>; // For batch-fetched regional path data
+  globalIntraRoutes: Map<string, IntraRoute[]>; // For globally batch-fetched intra routes
 }
 
 // Helper function to fetch airport with cache
@@ -53,20 +55,38 @@ async function batchFetchIntraRoutesCached(
   const uniquePairs = Array.from(new Set(pairs.map(p => `${p.origin}-${p.destination}`)));
   const pairMap: Record<string, IntraRoute[]> = {};
   
-  // Check cache first
-  const uncachedPairs = uniquePairs.filter(pair => !cache.intraRoute.has(pair));
-  const cachedPairs = uniquePairs.filter(pair => cache.intraRoute.has(pair));
+  // First check global cache (pre-fetched data)
+  let foundInGlobalCache = 0;
+  let notInGlobalCache: string[] = [];
   
-  // Get cached results
+  uniquePairs.forEach(pair => {
+    if (cache.globalIntraRoutes.has(pair)) {
+      pairMap[pair] = cache.globalIntraRoutes.get(pair)!;
+      foundInGlobalCache++;
+    } else {
+      notInGlobalCache.push(pair);
+    }
+  });
+  
+  if (foundInGlobalCache > 0) {
+    console.log(`Using global intra routes cache: ${foundInGlobalCache}/${uniquePairs.length} pairs`);
+  }
+  
+  // For any pairs not in global cache, check local cache
+  const uncachedPairs = notInGlobalCache.filter(pair => !cache.intraRoute.has(pair));
+  const cachedPairs = notInGlobalCache.filter(pair => cache.intraRoute.has(pair));
+  
+  // Get locally cached results
   cachedPairs.forEach(pair => {
     pairMap[pair] = cache.intraRoute.get(pair)!;
   });
   
-  // Fetch uncached pairs in parallel
+  // Fetch any remaining uncached pairs
   if (uncachedPairs.length > 0) {
+    console.log(`Fetching remaining ${uncachedPairs.length} intra route pairs individually`);
     const uncachedPairsArray = uncachedPairs.map(pair => {
       const [origin, destination] = pair.split('-');
-      return { origin, destination };
+      return { origin: origin!, destination: destination! };
     });
     
     const fetchedResults = await batchFetchIntraRoutes(supabase, uncachedPairsArray);
@@ -100,9 +120,87 @@ async function preFetchAirports(
   if (airportsToFetch.length > 0) {
     const airportsMap = await batchFetchAirportsByIata(supabase, airportsToFetch);
     Object.entries(airportsMap).forEach(([code, airport]) => {
-      cache.airport.set(code, airport);
+      if (airport) {
+        cache.airport.set(code, airport);
+      }
     });
   }
+}
+
+// Pre-analyze all intra route pairs needed across all airport combinations
+async function preAnalyzeIntraRoutePairs(
+  supabase: SupabaseClient,
+  originList: string[],
+  destinationList: string[],
+  maxStop: number,
+  cache: RoutePathCache
+): Promise<Array<{ origin: string; destination: string }>> {
+  const allIntraRoutePairs: Array<{ origin: string; destination: string }> = [];
+  
+  // For each origin-destination pair, simulate the path analysis to determine needed intra routes
+  for (const o of originList) {
+    for (const d of destinationList) {
+      const originAirport = cache.airport.get(o);
+      const destinationAirport = cache.airport.get(d);
+      
+      if (!originAirport || !destinationAirport || 
+          !originAirport.latitude || !originAirport.longitude ||
+          !destinationAirport.latitude || !destinationAirport.longitude ||
+          !originAirport.region || !destinationAirport.region) {
+        continue;
+      }
+      
+      // Get the shared path data for this pair
+      const directDistance = getHaversineDistance(
+        originAirport.latitude,
+        originAirport.longitude,
+        destinationAirport.latitude,
+        destinationAirport.longitude
+      );
+      const maxDistance = 2 * directDistance;
+      const sharedPathsKey = `${originAirport.region}-${destinationAirport.region}-${Math.ceil(maxDistance)}`;
+      
+      if (cache.sharedPaths.has(sharedPathsKey)) {
+        const paths = cache.sharedPaths.get(sharedPathsKey)!;
+        
+        // Apply the same filtering logic as in getFullRoutePath
+        const filteredPaths = paths.filter(p => {
+          if (maxStop === 0) {
+            return p.origin === o && p.destination === d;
+          } else if (maxStop === 1) {
+            return (p.origin === o || p.destination === d) && p.type !== 'A-H-H-B';
+          } else if (maxStop === 2) {
+            return (p.type === 'A-H-H-B' && p.origin === o && p.destination === d) ||
+                   (p.type === 'A-H-B' && (p.origin === o || p.destination === d)) ||
+                   p.type === 'A-B' || p.type === 'A-A';
+          }
+          return true;
+        });
+        
+        // Collect intra route pairs needed
+        // Case 2A: path.destination === destination, path.origin != origin
+        const case2APaths = filteredPaths.filter(p => p.destination === d && p.origin !== o);
+        case2APaths.forEach(p => {
+          if (p.origin) allIntraRoutePairs.push({ origin: o, destination: p.origin });
+        });
+        
+        // Case 2B: path.origin === origin, path.destination != destination
+        const case2BPaths = filteredPaths.filter(p => p.origin === o && p.destination !== d);
+        case2BPaths.forEach(p => {
+          if (p.destination) allIntraRoutePairs.push({ origin: p.destination, destination: d });
+        });
+        
+        // Case 3: path.origin != origin && path.destination != destination
+        const case3Paths = filteredPaths.filter(p => p.origin !== o && p.destination !== d);
+        case3Paths.forEach(p => {
+          if (p.origin) allIntraRoutePairs.push({ origin: o, destination: p.origin });
+          if (p.destination) allIntraRoutePairs.push({ origin: p.destination, destination: d });
+        });
+      }
+    }
+  }
+  
+  return allIntraRoutePairs;
 }
 
 // Proper mergeGroups function for grouping logic
@@ -117,16 +215,20 @@ function mergeGroups(groups: { keys: string[], dests: string[] }[]): { keys: str
         if (i === j) continue;
         
         // If i's dests are a subset of j's dests
-        const setI = new Set(merged[i].dests);
-        const setJ = new Set(merged[j].dests);
+        const groupI = merged[i];
+        const groupJ = merged[j];
+        if (!groupI || !groupJ) continue;
+        
+        const setI = new Set(groupI.dests);
+        const setJ = new Set(groupJ.dests);
         if ([...setI].every(d => setJ.has(d))) {
           // Check if merging would exceed the 60 limit
-          const combinedKeys = new Set([...merged[j].keys, ...merged[i].keys]);
-          const combinedDests = new Set([...merged[j].dests, ...merged[i].dests]);
+          const combinedKeys = new Set([...groupJ.keys, ...groupI.keys]);
+          const combinedDests = new Set([...groupJ.dests, ...groupI.dests]);
           if (combinedKeys.size * combinedDests.size <= 60) {
             // Merge i into j
-            merged[j].keys = Array.from(combinedKeys).sort();
-            merged[j].dests = Array.from(combinedDests).sort();
+            groupJ.keys = Array.from(combinedKeys).sort();
+            groupJ.dests = Array.from(combinedDests).sort();
             // Remove i
             merged.splice(i, 1);
             changed = true;
@@ -152,12 +254,14 @@ async function getFullRoutePath({
   maxStop,
   supabase,
   cache,
+  sharedPathsKey,
 }: {
   origin: string;
   destination: string;
   maxStop: number;
   supabase: SupabaseClient;
   cache: RoutePathCache;
+  sharedPathsKey?: string; // Key for shared path data
 }): Promise<{ routes: any[]; queryParamsArr: string[]; cached: boolean }> {
   const routeStart = performance.now();
   
@@ -182,13 +286,36 @@ async function getFullRoutePath({
   const maxDistance = 2 * directDistance;
   console.log(`[${origin}-${destination}] Distance calculation: ${(performance.now() - distanceStart).toFixed(2)}ms`);
   
-  // Fetch all data in parallel
+  // Fetch direct intra routes and get shared paths
   const dataFetchStart = performance.now();
-  const [directIntraRoutes, paths] = await Promise.all([
-    fetchIntraRoutesCached(supabase, origin, destination, cache),
-    fetchPathsCached(supabase, originAirport.region, destinationAirport.region, maxDistance, cache, origin, destination, maxStop)
-  ]);
-  console.log(`[${origin}-${destination}] Data fetch: ${(performance.now() - dataFetchStart).toFixed(2)}ms (${paths.length} paths, ${directIntraRoutes.length} direct routes)`);
+  const directIntraRoutes = await fetchIntraRoutesCached(supabase, origin, destination, cache);
+  
+  // Use shared path data if available, otherwise fetch individually
+  let paths: Path[];
+  if (sharedPathsKey && cache.sharedPaths.has(sharedPathsKey)) {
+    const allSharedPaths = cache.sharedPaths.get(sharedPathsKey)!;
+    // Filter shared paths for this specific pair and maxStop
+    paths = allSharedPaths.filter(p => {
+      // Apply maxStop filtering logic here
+      if (maxStop === 0) {
+        return p.origin === origin && p.destination === destination;
+      } else if (maxStop === 1) {
+        return (p.origin === origin || p.destination === destination) && p.type !== 'A-H-H-B';
+      } else if (maxStop === 2) {
+        return (p.type === 'A-H-H-B' && p.origin === origin && p.destination === destination) ||
+               (p.type === 'A-H-B' && (p.origin === origin || p.destination === destination)) ||
+               p.type === 'A-B' || p.type === 'A-A';
+      }
+      return true; // For maxStop > 2, include all
+    });
+    console.log(`[${origin}-${destination}] Using shared path data: ${paths.length} paths (filtered from ${allSharedPaths.length})`);
+  } else {
+    // Fallback to individual fetching
+    paths = await fetchPathsCached(supabase, originAirport.region, destinationAirport.region, maxDistance, cache, origin, destination, maxStop);
+    console.log(`[${origin}-${destination}] Individual data fetch: ${(performance.now() - dataFetchStart).toFixed(2)}ms (${paths.length} paths)`);
+  }
+  
+  console.log(`[${origin}-${destination}] Data preparation: ${(performance.now() - dataFetchStart).toFixed(2)}ms (${paths.length} paths, ${directIntraRoutes.length} direct routes)`);
 
   // Case 4: Direct intra_route (origin to destination)
   const case4Start = performance.now();
@@ -236,17 +363,21 @@ async function getFullRoutePath({
   
   // Case 2A: path.destination === destination, path.origin != origin
   const case2APaths = paths.filter(p => p.destination === destination && p.origin !== origin);
-  case2APaths.forEach(p => intraRoutePairs.push({ origin, destination: p.origin }));
+  case2APaths.forEach(p => {
+    if (p.origin) intraRoutePairs.push({ origin, destination: p.origin });
+  });
   
   // Case 2B: path.origin === origin, path.destination != destination
   const case2BPaths = paths.filter(p => p.origin === origin && p.destination !== destination);
-  case2BPaths.forEach(p => intraRoutePairs.push({ origin: p.destination, destination }));
+  case2BPaths.forEach(p => {
+    if (p.destination) intraRoutePairs.push({ origin: p.destination, destination });
+  });
   
   // Case 3: path.origin != origin && path.destination != destination
   const case3Paths = paths.filter(p => p.origin !== origin && p.destination !== destination);
   case3Paths.forEach(p => {
-    intraRoutePairs.push({ origin, destination: p.origin });
-    intraRoutePairs.push({ origin: p.destination, destination });
+    if (p.origin) intraRoutePairs.push({ origin, destination: p.origin });
+    if (p.destination) intraRoutePairs.push({ origin: p.destination, destination });
   });
 
   console.log(`[${origin}-${destination}] Intra route pairs prepared: ${intraRoutePairs.length} pairs`);
@@ -259,6 +390,7 @@ async function getFullRoutePath({
   // Process Case 2A
   const case2AStart = performance.now();
   for (const p of case2APaths) {
+    if (!p.origin) continue;
     const key = `${origin}-${p.origin}`;
     const intraMatches = intraRoutesMap[key] || [];
     for (const intra of intraMatches) {
@@ -285,6 +417,7 @@ async function getFullRoutePath({
   // Process Case 2B
   const case2BStart = performance.now();
   for (const p of case2BPaths) {
+    if (!p.destination) continue;
     const key = `${p.destination}-${destination}`;
     const intraMatches = intraRoutesMap[key] || [];
     for (const intra of intraMatches) {
@@ -311,6 +444,7 @@ async function getFullRoutePath({
   // Process Case 3
   const case3Start = performance.now();
   for (const p of case3Paths) {
+    if (!p.origin || !p.destination) continue;
     const leftKey = `${origin}-${p.origin}`;
     const rightKey = `${p.destination}-${destination}`;
     const intraLeftMatches = intraRoutesMap[leftKey] || [];
@@ -397,8 +531,8 @@ async function getFullRoutePath({
   for (const route of explodedResults) {
     const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
     for (let i = 0; i < codes.length - 1; i++) {
-      const from = codes[i];
-      const to = codes[i + 1];
+      const from = codes[i]!; // Safe due to filter above
+      const to = codes[i + 1]!; // Safe due to filter above
       if (to === destination) {
         if (!destMap[to]) destMap[to] = new Set();
         destMap[to].add(from);
@@ -431,16 +565,20 @@ async function getFullRoutePath({
       for (let j = 0; j < mergedGroups.length; j++) {
         if (i === j) continue;
         
-        const setI = new Set(mergedGroups[i].keys);
-        const setJ = new Set(mergedGroups[j].keys);
+        const groupI = mergedGroups[i];
+        const groupJ = mergedGroups[j];
+        if (!groupI || !groupJ) continue;
+        
+        const setI = new Set(groupI.keys);
+        const setJ = new Set(groupJ.keys);
         // If i's keys are a subset of j's keys
         if ([...setI].every(k => setJ.has(k))) {
           // Check if merging would exceed the 60 limit
-          const combinedKeys = new Set([...mergedGroups[j].keys, ...mergedGroups[i].keys]);
-          const combinedDests = new Set([...mergedGroups[j].dests, ...mergedGroups[i].dests]);
+          const combinedKeys = new Set([...groupJ.keys, ...groupI.keys]);
+          const combinedDests = new Set([...groupJ.dests, ...groupI.dests]);
           if (combinedKeys.size * combinedDests.size <= 60) {
             // Merge i's dests into j's dests (deduped)
-            mergedGroups[j].dests = Array.from(combinedDests).sort();
+            groupJ.dests = Array.from(combinedDests).sort();
             // The superset group (j) keeps its keys (origins)
             // Remove i (the subset group)
             mergedGroups.splice(i, 1);
@@ -451,10 +589,10 @@ async function getFullRoutePath({
         // If j's keys are a subset of i's keys, merge j into i
         if ([...setJ].every(k => setI.has(k))) {
           // Check if merging would exceed the 60 limit
-          const combinedKeys = new Set([...mergedGroups[i].keys, ...mergedGroups[j].keys]);
-          const combinedDests = new Set([...mergedGroups[i].dests, ...mergedGroups[j].dests]);
+          const combinedKeys = new Set([...groupI.keys, ...groupJ.keys]);
+          const combinedDests = new Set([...groupI.dests, ...groupJ.dests]);
           if (combinedKeys.size * combinedDests.size <= 60) {
-            mergedGroups[i].dests = Array.from(combinedDests).sort();
+            groupI.dests = Array.from(combinedDests).sort();
             // The superset group (i) keeps its keys (origins)
             mergedGroups.splice(j, 1);
             changed = true;
@@ -512,6 +650,8 @@ export async function POST(req: NextRequest) {
       airport: new Map(),
       intraRoute: new Map(),
       path: new Map(),
+      sharedPaths: new Map(),
+      globalIntraRoutes: new Map(),
     };
 
     // 2.6. Pre-fetch all airports for all origin-destination pairs
@@ -520,12 +660,120 @@ export async function POST(req: NextRequest) {
     console.log(`Pre-fetch airports took: ${(performance.now() - preFetchStart).toFixed(2)}ms`);
     console.log(`Airport cache size: ${cache.airport.size}`);
 
-    // 3. Process all origin-destination pairs in parallel
+    // 2.7. Pre-analysis: Group pairs by region combinations for batch fetching
+    const regionAnalysisStart = performance.now();
+    const regionCombinations = new Map<string, {
+      originRegion: string;
+      destinationRegion: string;
+      maxDistance: number;
+      pairs: Array<{ origin: string; destination: string; maxStop: number }>;
+    }>();
+
+    // Analyze all pairs to determine unique region combinations
+    for (const o of originList) {
+      for (const d of destinationList) {
+        const originAirport = cache.airport.get(o);
+        const destinationAirport = cache.airport.get(d);
+        
+        if (originAirport && destinationAirport && 
+            originAirport.latitude != null && originAirport.longitude != null &&
+            destinationAirport.latitude != null && destinationAirport.longitude != null &&
+            originAirport.region && destinationAirport.region) {
+          const directDistance = getHaversineDistance(
+            originAirport.latitude,
+            originAirport.longitude,
+            destinationAirport.latitude,
+            destinationAirport.longitude
+          );
+          const maxDistance = 2 * directDistance;
+          const key = `${originAirport.region}-${destinationAirport.region}-${Math.ceil(maxDistance)}`;
+          
+          if (!regionCombinations.has(key)) {
+            regionCombinations.set(key, {
+              originRegion: originAirport.region,
+              destinationRegion: destinationAirport.region,
+              maxDistance: Math.ceil(maxDistance),
+              pairs: []
+            });
+          }
+          
+          regionCombinations.get(key)!.pairs.push({
+            origin: o,
+            destination: d,
+            maxStop
+          });
+        }
+      }
+    }
+    
+    console.log(`Region analysis took: ${(performance.now() - regionAnalysisStart).toFixed(2)}ms`);
+    console.log(`Found ${regionCombinations.size} unique region combinations for ${originList.length * destinationList.length} pairs`);
+
+    // 2.8. Batch fetch paths for all region combinations
+    const batchFetchStart = performance.now();
+    const regionCombinationArray = Array.from(regionCombinations.values());
+    if (regionCombinationArray.length > 0) {
+      const sharedPathsData = await batchFetchPathsForRegionCombinations(supabase, regionCombinationArray);
+      
+      // Store in shared cache
+      Object.entries(sharedPathsData).forEach(([key, paths]) => {
+        cache.sharedPaths.set(key, paths);
+      });
+    }
+    console.log(`Batch path fetch took: ${(performance.now() - batchFetchStart).toFixed(2)}ms`);
+    console.log(`Shared paths cache size: ${cache.sharedPaths.size}`);
+
+    // 2.9. Pre-analyze and batch fetch all intra routes globally
+    const globalIntraRoutesStart = performance.now();
+    const allIntraRoutePairs = await preAnalyzeIntraRoutePairs(supabase, originList, destinationList, maxStop, cache);
+    console.log(`Intra routes pre-analysis took: ${(performance.now() - globalIntraRoutesStart).toFixed(2)}ms`);
+    console.log(`Found ${allIntraRoutePairs.length} total intra route pairs needed`);
+    
+    if (allIntraRoutePairs.length > 0) {
+      const globalIntraFetchStart = performance.now();
+      const globalIntraRoutesData = await globalBatchFetchIntraRoutes(supabase, allIntraRoutePairs);
+      
+      // Store in global cache
+      Object.entries(globalIntraRoutesData).forEach(([pair, routes]) => {
+        cache.globalIntraRoutes.set(pair, routes);
+      });
+      
+      console.log(`Global intra routes fetch took: ${(performance.now() - globalIntraFetchStart).toFixed(2)}ms`);
+      console.log(`Global intra routes cache size: ${cache.globalIntraRoutes.size}`);
+    }
+
+    // 3. Process all origin-destination pairs in parallel using shared data
     const pairProcessingStart = performance.now();
     const pairPromises = [];
     for (const o of originList) {
       for (const d of destinationList) {
-        pairPromises.push(getFullRoutePath({ origin: o, destination: d, maxStop, supabase, cache }));
+        // Calculate shared path key for this pair
+        const originAirport = cache.airport.get(o);
+        const destinationAirport = cache.airport.get(d);
+        let sharedPathsKey: string | undefined;
+        
+        if (originAirport && destinationAirport && 
+            originAirport.latitude != null && originAirport.longitude != null &&
+            destinationAirport.latitude != null && destinationAirport.longitude != null &&
+            originAirport.region && destinationAirport.region) {
+          const directDistance = getHaversineDistance(
+            originAirport.latitude,
+            originAirport.longitude,
+            destinationAirport.latitude,
+            destinationAirport.longitude
+          );
+          const maxDistance = 2 * directDistance;
+          sharedPathsKey = `${originAirport.region}-${destinationAirport.region}-${Math.ceil(maxDistance)}`;
+        }
+        
+        pairPromises.push(getFullRoutePath({ 
+          origin: o, 
+          destination: d, 
+          maxStop, 
+          supabase, 
+          cache, 
+          sharedPathsKey 
+        }));
       }
     }
     const pairResults = await Promise.allSettled(pairPromises);
@@ -559,8 +807,8 @@ export async function POST(req: NextRequest) {
       const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
       
       for (let i = 0; i < codes.length - 1; i++) {
-        const from = codes[i];
-        const to = codes[i + 1];
+        const from = codes[i]!; // Safe due to filter above
+        const to = codes[i + 1]!; // Safe due to filter above
         
         if (destinationList.includes(to)) {
           if (!destMap[to]) destMap[to] = new Set();
@@ -612,14 +860,18 @@ export async function POST(req: NextRequest) {
       mergedInputDestGroups = mergedInputDestGroups.sort((a, b) => a.keys.length - b.keys.length);
       outer: for (let i = 0; i < mergedInputDestGroups.length; i++) {
         for (let j = i + 1; j < mergedInputDestGroups.length; j++) {
-          const setI = new Set(mergedInputDestGroups[i].keys);
-          const setJ = new Set(mergedInputDestGroups[j].keys);
+          const groupI = mergedInputDestGroups[i];
+          const groupJ = mergedInputDestGroups[j];
+          if (!groupI || !groupJ) continue;
+          
+          const setI = new Set(groupI.keys);
+          const setJ = new Set(groupJ.keys);
           if ([...setI].every(k => setJ.has(k))) {
             // Check if merging would exceed the 60 limit
-            const combinedKeys = new Set([...mergedInputDestGroups[j].keys, ...mergedInputDestGroups[i].keys]);
-            const combinedDests = new Set([...mergedInputDestGroups[j].dests, ...mergedInputDestGroups[i].dests]);
+            const combinedKeys = new Set([...groupJ.keys, ...groupI.keys]);
+            const combinedDests = new Set([...groupJ.dests, ...groupI.dests]);
             if (combinedKeys.size * combinedDests.size <= 60) {
-              mergedInputDestGroups[j].dests = Array.from(combinedDests).sort();
+              groupJ.dests = Array.from(combinedDests).sort();
               mergedInputDestGroups.splice(i, 1);
               changed = true;
               break outer;
@@ -627,10 +879,10 @@ export async function POST(req: NextRequest) {
           }
           if ([...setJ].every(k => setI.has(k))) {
             // Check if merging would exceed the 60 limit
-            const combinedKeys = new Set([...mergedInputDestGroups[i].keys, ...mergedInputDestGroups[j].keys]);
-            const combinedDests = new Set([...mergedInputDestGroups[i].dests, ...mergedInputDestGroups[j].dests]);
+            const combinedKeys = new Set([...groupI.keys, ...groupJ.keys]);
+            const combinedDests = new Set([...groupI.dests, ...groupJ.dests]);
             if (combinedKeys.size * combinedDests.size <= 60) {
-              mergedInputDestGroups[i].dests = Array.from(combinedDests).sort();
+              groupI.dests = Array.from(combinedDests).sort();
               mergedInputDestGroups.splice(j, 1);
               changed = true;
               break outer;

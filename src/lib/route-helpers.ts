@@ -402,4 +402,127 @@ async function fetchPathsStreaming(
   }
   
   return allPaths;
+}
+
+// Batch fetch paths for multiple region combinations
+export async function batchFetchPathsForRegionCombinations(
+  supabase: SupabaseClient,
+  regionCombinations: Array<{
+    originRegion: string;
+    destinationRegion: string;
+    maxDistance: number;
+    pairs: Array<{ origin: string; destination: string; maxStop: number }>;
+  }>
+): Promise<Record<string, Path[]>> {
+  console.log(`Batch fetching paths for ${regionCombinations.length} region combinations`);
+  
+  const results: Record<string, Path[]> = {};
+  
+  // Fetch all region combinations in parallel
+  const fetchPromises = regionCombinations
+    .filter(combo => combo.pairs.length > 0) // Filter out empty combinations
+    .map(async (combo) => {
+      const key = `${combo.originRegion}-${combo.destinationRegion}-${combo.maxDistance}`;
+      
+      // For each region combination, we need to consider all maxStop values from its pairs
+      const maxStops = [...new Set(combo.pairs.map(p => p.maxStop))];
+      const maxStopValue = Math.max(...maxStops);
+      
+      // Use the most permissive maxStop filtering for this region combination
+      // We'll filter more specifically during processing
+      const firstPair = combo.pairs[0]!; // Safe to use ! after filtering above
+      
+      const paths = await fetchPathsByMaxStop(
+        supabase,
+        firstPair.origin, // Use first pair's origin as reference
+        firstPair.destination, // Use first pair's destination as reference  
+        maxStopValue,
+        combo.originRegion,
+        combo.destinationRegion,
+        combo.maxDistance
+      );
+      
+      return { key, paths };
+    });
+  
+  const fetchResults = await Promise.all(fetchPromises);
+  
+  fetchResults.forEach(({ key, paths }) => {
+    results[key] = paths;
+  });
+  
+  console.log(`Batch fetch completed: ${Object.keys(results).length} region combinations loaded`);
+  return results;
+}
+
+// Global batch fetch intra routes for all pairs across multiple airport combinations
+export async function globalBatchFetchIntraRoutes(
+  supabase: SupabaseClient,
+  allIntraRoutePairs: Array<{ origin: string; destination: string }>
+): Promise<Record<string, IntraRoute[]>> {
+  if (allIntraRoutePairs.length === 0) return {};
+  
+  // Deduplicate pairs globally
+  const uniquePairs = [...new Set(allIntraRoutePairs.map(p => `${p.origin}-${p.destination}`))];
+  console.log(`Global intra routes fetch: ${allIntraRoutePairs.length} total pairs → ${uniquePairs.length} unique pairs`);
+  
+  const result: Record<string, IntraRoute[]> = {};
+  
+  // Group pairs for more efficient querying - batch by origin airport
+  const originGroups = new Map<string, string[]>();
+  uniquePairs.forEach(pair => {
+    const [origin] = pair.split('-');
+    if (origin) {
+      if (!originGroups.has(origin)) {
+        originGroups.set(origin, []);
+      }
+      originGroups.get(origin)!.push(pair);
+    }
+  });
+  
+  console.log(`Batching ${uniquePairs.length} pairs into ${originGroups.size} origin groups for efficient querying`);
+  
+  // Fetch all routes for each origin in parallel
+  const fetchPromises = Array.from(originGroups.entries()).map(async ([origin, pairs]) => {
+    // Get all routes FROM this origin
+    const { data: routesFromOrigin, error } = await supabase
+      .from('intra_routes')
+      .select('*')
+      .eq('Origin', origin);
+    
+    if (error) {
+      console.warn(`Error fetching routes from ${origin}:`, error);
+      return { origin, routes: [] };
+    }
+    
+    return { origin, routes: routesFromOrigin as IntraRoute[] };
+  });
+  
+  const fetchResults = await Promise.all(fetchPromises);
+  
+  // Process results and match to requested pairs
+  fetchResults.forEach(({ origin, routes }) => {
+    // For each pair that starts with this origin, filter the routes
+    const originPairs = originGroups.get(origin) || [];
+    
+    originPairs.forEach(pair => {
+      const [pairOrigin, pairDestination] = pair.split('-');
+      if (pairOrigin && pairDestination) {
+        const matchingRoutes = routes.filter(route => 
+          route.Origin === pairOrigin && route.Destination === pairDestination
+        );
+        result[pair] = matchingRoutes;
+      }
+    });
+  });
+  
+  // Handle any missing pairs (set empty array)
+  uniquePairs.forEach(pair => {
+    if (!result[pair]) {
+      result[pair] = [];
+    }
+  });
+  
+  console.log(`Global intra routes fetch completed: ${Object.keys(result).length} pairs processed`);
+  return result;
 } 
