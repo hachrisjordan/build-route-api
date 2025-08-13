@@ -216,6 +216,10 @@ async function fetchPathsByMaxStopBatch(
     // For A-H-B: origin = user input origin OR destination = user input destination
     // For A-B and A-A: no filtering (include all)
     query = query.or(`and(type.eq.A-H-H-B,origin.eq.${origin},destination.eq.${destination}),and(type.eq.A-H-B,or(origin.eq.${origin},destination.eq.${destination})),type.eq.A-B,type.eq.A-A`);
+  } else if (maxStop === 3) {
+    // For A-H-H-B: origin = user input origin OR destination = user input destination
+    // For A-B, A-H-B, A-A: no filtering (include all)
+    query = query.or(`and(type.eq.A-H-H-B,or(origin.eq.${origin},destination.eq.${destination})),type.eq.A-B,type.eq.A-H-B,type.eq.A-A`);
   }
 
   const { data, error } = await query;
@@ -252,6 +256,10 @@ export async function fetchPathsByMaxStop(
     // For A-H-B: origin = user input origin OR destination = user input destination
     // For A-B and A-A: no filtering (include all)
     countQuery = countQuery.or(`and(type.eq.A-H-H-B,origin.eq.${origin},destination.eq.${destination}),and(type.eq.A-H-B,or(origin.eq.${origin},destination.eq.${destination})),type.eq.A-B,type.eq.A-A`);
+  } else if (maxStop === 3) {
+    // For A-H-H-B: origin = user input origin OR destination = user input destination
+    // For A-B, A-H-B, A-A: no filtering (include all)
+    countQuery = countQuery.or(`and(type.eq.A-H-H-B,or(origin.eq.${origin},destination.eq.${destination})),type.eq.A-B,type.eq.A-H-B,type.eq.A-A`);
   }
 
   const { count, error: countError } = await countQuery;

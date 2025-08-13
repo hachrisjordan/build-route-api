@@ -142,13 +142,32 @@ interface AvailabilityGroup {
   flights: AvailabilityFlight[];
 }
 
+// UUID cache to avoid redundant hash calculations
+const uuidCache = new Map<string, string>();
+
 function getFlightUUID(flight: AvailabilityFlight): string {
   const key = `${flight.FlightNumbers}|${flight.DepartsAt}|${flight.ArrivesAt}`;
-  return createHash('md5').update(key).digest('hex');
+  
+  // Check cache first
+  let uuid = uuidCache.get(key);
+  if (uuid) return uuid;
+  
+  // Generate and cache
+  uuid = createHash('md5').update(key).digest('hex');
+  uuidCache.set(key, uuid);
+  
+  // Prevent memory leaks by limiting cache size
+  if (uuidCache.size > 50000) {
+    // Clear oldest 10% of entries
+    const keysToDelete = Array.from(uuidCache.keys()).slice(0, 5000);
+    keysToDelete.forEach(k => uuidCache.delete(k));
+  }
+  
+  return uuid;
 }
 
 /**
- * Compose all valid itineraries for a given route path.
+ * Optimized compose function with early filtering and reduced allocations
  * @param segments Array of [from, to] pairs (e.g., [[HAN, SGN], [SGN, BKK]])
  * @param segmentAvail Array of arrays of AvailabilityGroup (one per segment)
  * @param alliances Array of arrays of allowed alliances for each segment
@@ -165,108 +184,170 @@ function composeItineraries(
   const results: Record<string, string[][]> = {};
   if (segments.length === 0 || segmentAvail.some(arr => arr.length === 0)) return results;
 
-  // Helper: recursively build combinations
-  function dfs(
-    segIdx: number,
-    path: string[],
-    usedAirports: Set<string>,
-    prevArrival: string | null,
-    date: string
-  ) {
-    if (segIdx === segments.length) {
-      // Valid itinerary
-      if (!results[date]) results[date] = [];
-      results[date].push([...path]);
-      return;
+  // Pre-filter and index segments by from-to for faster lookups
+  const segmentMap = new Map<string, { groups: AvailabilityGroup[]; allowedAlliances: string[] | null }>();
+  for (let i = 0; i < segments.length; i++) {
+    const [from, to] = segments[i];
+    const key = `${from}-${to}`;
+    const groups = segmentAvail[i]?.filter(g => g.originAirport === from && g.destinationAirport === to) || [];
+    segmentMap.set(key, { groups, allowedAlliances: alliances[i] });
+  }
+
+  // Early termination if any segment has no valid groups
+  if (segmentMap.size !== segments.length || Array.from(segmentMap.values()).some(seg => seg.groups.length === 0)) {
+    return results;
+  }
+
+  // Use iterative approach instead of recursive for better performance
+  const firstSegmentKey = `${segments[0][0]}-${segments[0][1]}`;
+  const firstSegmentData = segmentMap.get(firstSegmentKey);
+  if (!firstSegmentData) return results;
+
+  // Group flights by date for faster processing
+  const flightsByDate = new Map<string, AvailabilityFlight[]>();
+  for (const group of firstSegmentData.groups) {
+    if (!flightsByDate.has(group.date)) {
+      flightsByDate.set(group.date, []);
     }
-    const segment = segments[segIdx];
-    if (!segment) return;
-    const [from, to] = segment;
-    const allowedAlliances = alliances[segIdx];
-    const segmentGroups = segmentAvail[segIdx];
-    if (!segmentGroups) return;
-    for (const group of segmentGroups) {
-      if (group.originAirport !== from || group.destinationAirport !== to) continue;
-      // For the first segment, require group.date === date; for later segments, allow any date
-      if (segIdx === 0 && group.date !== date) continue;
-      for (const flight of group.flights) {
-        // Only check for duplicate 'to' (destination), and for 'from' only if it's not the previous segment's destination
-        if ((segIdx > 0 && usedAirports.has(to)) || (segIdx === 0 && usedAirports.has(from))) {
-          continue;
-        }
-        // Alliance filter: if allowedAlliances is set and not empty, only allow those
-        if (allowedAlliances && allowedAlliances.length > 0 && !allowedAlliances.includes(group.alliance)) {
-          continue;
-        }
-        // Check connection time
-        if (prevArrival) {
-          const prev = new Date(prevArrival);
-          const dep = new Date(flight.DepartsAt);
-          const diffMinutes = (dep.getTime() - prev.getTime()) / 60000;
-          if (diffMinutes < minConnectionMinutes || diffMinutes > 24 * 60) {
-            continue;
-          }
-        }
-        const uuid = getFlightUUID(flight);
-        if (!flightMap.has(uuid)) {
-          flightMap.set(uuid, flight);
-        }
-        usedAirports.add(from);
-        usedAirports.add(to);
-        path.push(uuid);
-        dfs(segIdx + 1, path, usedAirports, flight.ArrivesAt, date);
-        path.pop();
-        usedAirports.delete(from);
-        usedAirports.delete(to);
+    // Pre-filter by alliance
+    const validFlights = firstSegmentData.allowedAlliances && firstSegmentData.allowedAlliances.length > 0
+      ? group.flights.filter(f => firstSegmentData.allowedAlliances!.includes(group.alliance))
+      : group.flights;
+    flightsByDate.get(group.date)!.push(...validFlights);
+  }
+
+  // Build itineraries for each date
+  for (const [date, firstFlights] of flightsByDate) {
+    const dateResults: string[][] = [];
+    
+    // Use stack-based iteration instead of recursion
+    const stack: {
+      segIdx: number;
+      path: string[];
+      usedAirports: Set<string>;
+      prevArrival: string | null;
+    }[] = [];
+
+    // Initialize with first segment flights
+    for (const flight of firstFlights) {
+      const uuid = getFlightUUID(flight);
+      if (!flightMap.has(uuid)) {
+        flightMap.set(uuid, flight);
       }
+      const [from, to] = segments[0];
+      stack.push({
+        segIdx: 1,
+        path: [uuid],
+        usedAirports: new Set([from, to]),
+        prevArrival: flight.ArrivesAt
+      });
+    }
+
+    // Process stack
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      
+      if (current.segIdx === segments.length) {
+        // Complete itinerary found
+        dateResults.push([...current.path]);
+        continue;
+      }
+
+      const [from, to] = segments[current.segIdx];
+      const segmentKey = `${from}-${to}`;
+      const segmentData = segmentMap.get(segmentKey);
+      if (!segmentData) continue;
+
+      // Skip if destination already visited (avoid loops)
+      if (current.usedAirports.has(to)) continue;
+
+      for (const group of segmentData.groups) {
+        // Alliance filter
+        if (segmentData.allowedAlliances && segmentData.allowedAlliances.length > 0 && 
+            !segmentData.allowedAlliances.includes(group.alliance)) {
+          continue;
+        }
+
+        for (const flight of group.flights) {
+          // Connection time check with cached Date objects
+          if (current.prevArrival) {
+            const prevTime = new Date(current.prevArrival).getTime();
+            const depTime = new Date(flight.DepartsAt).getTime();
+            const diffMinutes = (depTime - prevTime) / 60000;
+            if (diffMinutes < minConnectionMinutes || diffMinutes > 24 * 60) {
+              continue;
+            }
+          }
+
+          const uuid = getFlightUUID(flight);
+          if (!flightMap.has(uuid)) {
+            flightMap.set(uuid, flight);
+          }
+
+          // Create new state for next iteration
+          const newUsedAirports = new Set(current.usedAirports);
+          newUsedAirports.add(to);
+          
+          stack.push({
+            segIdx: current.segIdx + 1,
+            path: [...current.path, uuid],
+            usedAirports: newUsedAirports,
+            prevArrival: flight.ArrivesAt
+          });
+        }
+      }
+    }
+
+    // Deduplicate using more efficient method
+    if (dateResults.length > 0) {
+      const uniqueResults = Array.from(
+        new Map(dateResults.map(itin => [itin.join('>'), itin])).values()
+      );
+      results[date] = uniqueResults;
     }
   }
 
-  // For each possible date in the first segment, try to build full itineraries
-  const firstSegmentGroups = segmentAvail[0];
-  if (!firstSegmentGroups) return results;
-  const firstSegmentDates = new Set(firstSegmentGroups.map(g => g.date));
-  for (const date of firstSegmentDates) {
-    dfs(0, [], new Set(), null, date);
-    // Deduplicate itineraries for this date
-    if (results[date]) {
-      const seen = new Set<string>();
-      results[date] = results[date].filter(itinerary => {
-        const key = itinerary.join('>');
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-    }
-  }
   return results;
 }
 
-// Simple concurrency pool for async tasks
+// Optimized concurrency pool with better memory management
 async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
-  const results: T[] = [];
-  let i = 0;
-  const executing: Promise<void>[] = [];
-  async function run(task: () => Promise<T>) {
-    const result = await task();
-    results.push(result);
+  if (tasks.length === 0) return [];
+  if (tasks.length <= limit) {
+    // If tasks are fewer than limit, run all in parallel
+    return Promise.all(tasks.map(task => task()));
   }
-  while (i < tasks.length) {
-    while (executing.length < limit && i < tasks.length) {
-      const task = tasks[i++];
-      if (!task) continue;
-      const p = run(task).finally(() => {
-        const idx = executing.indexOf(p);
-        if (idx > -1) executing.splice(idx, 1);
-      });
-      executing.push(p);
+
+  const results: T[] = new Array(tasks.length);
+  let completed = 0;
+  let started = 0;
+  
+  return new Promise((resolve, reject) => {
+    const startNext = () => {
+      if (started >= tasks.length) return;
+      
+      const index = started++;
+      const task = tasks[index];
+      
+      task()
+        .then(result => {
+          results[index] = result;
+          completed++;
+          
+          if (completed === tasks.length) {
+            resolve(results);
+          } else {
+            startNext();
+          }
+        })
+        .catch(reject);
+    };
+    
+    // Start initial batch
+    for (let i = 0; i < Math.min(limit, tasks.length); i++) {
+      startNext();
     }
-    if (executing.length >= limit) {
-      await Promise.race(executing);
-    }
-  }
-  await Promise.all(executing);
-  return results;
+  });
 }
 
 // --- Valkey (iovalkey) setup ---
@@ -1271,86 +1352,167 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 6. Compose itineraries for each route path
+    // 6. Optimized parallel route processing
     const output: Record<string, Record<string, string[][]>> = {};
     const flightMap = new Map<string, AvailabilityFlight>();
-    for (const route of routes as FullRoutePathResult[]) {
-      // Decompose route into segments
-      const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
-      if (codes.length < 2) continue;
-      const segments: [string, string][] = [];
-      for (let i = 0; i < codes.length - 1; i++) {
-        const code1 = codes[i];
-        const code2 = codes[i + 1];
-        if (code1 && code2) {
-          segments.push([code1, code2]);
+    
+    // Process routes in parallel if enabled
+    if (CONCURRENCY_CONFIG.PARALLEL_ROUTE_PROCESSING && routes.length > 10) {
+      const routeTasks = (routes as FullRoutePathResult[]).map(route => async () => {
+        // Decompose route into segments
+        const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
+        if (codes.length < 2) return null;
+        
+        const segments: [string, string][] = [];
+        for (let i = 0; i < codes.length - 1; i++) {
+          const code1 = codes[i];
+          const code2 = codes[i + 1];
+          if (code1 && code2) {
+            segments.push([code1, code2]);
+          }
         }
-      }
-      // For each segment, get the corresponding availability from the pool
-      const segmentAvail: AvailabilityGroup[][] = segments.map(([from, to]) => {
-        const segKey = `${from}-${to}`;
-        return segmentPool[segKey] || [];
-      });
-      // Alliance arrays: determine for each segment based on from/to
-      const alliances: (string[] | null)[] = [];
-      for (const [from, to] of segments) {
-        if (route.O && route.A && from === route.O && to === route.A) {
-          // O-A
-          alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
-        } else if (route.B && route.D && from === route.B && to === route.D) {
-          // B-D
-          alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
-        } else {
-          // All others
-          alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
-        }
-      }
-      // Compose itineraries (now with UUIDs)
-      const routeKey = codes.join('-');
-      const itineraries = composeItineraries(segments, segmentAvail, alliances, flightMap);
-      if (!output[routeKey]) output[routeKey] = {};
-      for (const [date, itinerariesForDate] of Object.entries(itineraries)) {
-        if (!output[routeKey][date]) output[routeKey][date] = [];
-        output[routeKey][date].push(...itinerariesForDate);
-      }
-    }
-
-    // Deduplicate itineraries for each date
-    for (const routeKey of Object.keys(output)) {
-      for (const date of Object.keys(output[routeKey])) {
-        const seen = new Set<string>();
-        output[routeKey][date] = output[routeKey][date].filter(itin => {
-          const key = itin.join('>');
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
+        
+        // Early exit if any segment has no availability
+        const hasAvailability = segments.every(([from, to]) => {
+          const segKey = `${from}-${to}`;
+          return segmentPool[segKey] && segmentPool[segKey].length > 0;
         });
+        if (!hasAvailability) return null;
+        
+        // For each segment, get the corresponding availability from the pool
+        const segmentAvail: AvailabilityGroup[][] = segments.map(([from, to]) => {
+          const segKey = `${from}-${to}`;
+          return segmentPool[segKey] || [];
+        });
+        
+        // Alliance arrays: determine for each segment based on from/to
+        const alliances: (string[] | null)[] = [];
+        for (const [from, to] of segments) {
+          if (route.O && route.A && from === route.O && to === route.A) {
+            // O-A
+            alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
+          } else if (route.B && route.D && from === route.B && to === route.D) {
+            // B-D
+            alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
+          } else {
+            // All others
+            alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
+          }
+        }
+        
+        // Create local flight map for this route
+        const localFlightMap = new Map<string, AvailabilityFlight>();
+        const itineraries = composeItineraries(segments, segmentAvail, alliances, localFlightMap);
+        const routeKey = codes.join('-');
+        
+        return { routeKey, itineraries, flights: localFlightMap };
+      });
+      
+      const routeResults = await pool(routeTasks, Math.min(10, Math.ceil(routes.length / 4)));
+      
+      // Merge results
+      for (const result of routeResults) {
+        if (!result) continue;
+        const { routeKey, itineraries, flights } = result;
+        
+        // Merge flights into main map
+        for (const [uuid, flight] of flights) {
+          flightMap.set(uuid, flight);
+        }
+        
+        // Merge itineraries
+        if (!output[routeKey]) output[routeKey] = {};
+        for (const [date, itinerariesForDate] of Object.entries(itineraries)) {
+          if (!output[routeKey][date]) output[routeKey][date] = [];
+          output[routeKey][date].push(...itinerariesForDate);
+        }
+      }
+    } else {
+      // Sequential processing for smaller datasets
+      for (const route of routes as FullRoutePathResult[]) {
+        // Decompose route into segments
+        const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
+        if (codes.length < 2) continue;
+        const segments: [string, string][] = [];
+        for (let i = 0; i < codes.length - 1; i++) {
+          const code1 = codes[i];
+          const code2 = codes[i + 1];
+          if (code1 && code2) {
+            segments.push([code1, code2]);
+          }
+        }
+        // For each segment, get the corresponding availability from the pool
+        const segmentAvail: AvailabilityGroup[][] = segments.map(([from, to]) => {
+          const segKey = `${from}-${to}`;
+          return segmentPool[segKey] || [];
+        });
+        // Alliance arrays: determine for each segment based on from/to
+        const alliances: (string[] | null)[] = [];
+        for (const [from, to] of segments) {
+          if (route.O && route.A && from === route.O && to === route.A) {
+            // O-A
+            alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
+          } else if (route.B && route.D && from === route.B && to === route.D) {
+            // B-D
+            alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
+          } else {
+            // All others
+            alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
+          }
+        }
+        // Compose itineraries (now with UUIDs)
+        const routeKey = codes.join('-');
+        const itineraries = composeItineraries(segments, segmentAvail, alliances, flightMap);
+        if (!output[routeKey]) output[routeKey] = {};
+        for (const [date, itinerariesForDate] of Object.entries(itineraries)) {
+          if (!output[routeKey][date]) output[routeKey][date] = [];
+          output[routeKey][date].push(...itinerariesForDate);
+        }
       }
     }
 
-    // Remove empty route keys after filtering
-    Object.keys(output).forEach((key) => {
-      if (!output[key] || Object.keys(output[key]).length === 0) {
-        delete output[key];
-      }
-    });
-
-    // Remove flights that are not in any itinerary (after all filtering)
+    // Optimized deduplication and cleanup in a single pass
     const usedFlightUUIDs = new Set<string>();
+    const cleanedOutput: Record<string, Record<string, string[][]>> = {};
+    
     for (const routeKey of Object.keys(output)) {
-      for (const date of Object.keys(output[routeKey])) {
-        for (const itin of output[routeKey][date]) {
-          for (const uuid of itin) {
-            usedFlightUUIDs.add(uuid);
+      const routeData = output[routeKey];
+      const cleanedRouteData: Record<string, string[][]> = {};
+      
+      for (const date of Object.keys(routeData)) {
+        // Deduplicate using Map for better performance
+        const uniqueItineraries = Array.from(
+          new Map(routeData[date].map(itin => [itin.join('>'), itin])).values()
+        );
+        
+        if (uniqueItineraries.length > 0) {
+          cleanedRouteData[date] = uniqueItineraries;
+          
+          // Track used flights
+          for (const itin of uniqueItineraries) {
+            for (const uuid of itin) {
+              usedFlightUUIDs.add(uuid);
+            }
           }
         }
       }
+      
+      // Only keep routes with valid dates
+      if (Object.keys(cleanedRouteData).length > 0) {
+        cleanedOutput[routeKey] = cleanedRouteData;
+      }
     }
-    for (const uuid of Array.from(flightMap.keys())) {
+    
+    // Remove unused flights in batch
+    for (const uuid of flightMap.keys()) {
       if (!usedFlightUUIDs.has(uuid)) {
         flightMap.delete(uuid);
       }
     }
+    
+    // Replace output with cleaned version
+    Object.keys(output).forEach(key => delete output[key]);
+    Object.assign(output, cleanedOutput);
 
     // Filter itineraries to only include those whose first flight departs between startDate and endDate (inclusive), using raw UTC date math
     const startDateObj = startOfDay(parseISO(startDate));

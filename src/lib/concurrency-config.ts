@@ -7,28 +7,35 @@
 
 export const CONCURRENCY_CONFIG = {
   // Availability requests concurrency - optimized for 6 vCPUs
-  AVAILABILITY_CONCURRENT_REQUESTS: 30, // Increased for 6 vCPUs (5 per vCPU)
+  AVAILABILITY_CONCURRENT_REQUESTS: 50, // Increased for faster parallel processing
   
-  // Pagination settings (now sequential)
-  PAGINATION_MAX_PAGES: 15, // Increased for better data coverage
-  PAGINATION_SEQUENTIAL: true, // Changed from parallel to sequential
+  // Pagination settings - optimized for speed
+  PAGINATION_MAX_PAGES: 20, // Increased for better data coverage
+  PAGINATION_SEQUENTIAL: false, // Changed back to parallel for speed
+  PAGINATION_CONCURRENT_REQUESTS: 8, // New setting for pagination concurrency
   
   // Database batching settings - optimized for 12GB RAM
-  DATABASE_BATCH_SIZE: 15000, // Increased batch size
-  DATABASE_CONCURRENT_BATCHES: 8, // Increased for 6 vCPUs
+  DATABASE_BATCH_SIZE: 20000, // Increased batch size for better throughput
+  DATABASE_CONCURRENT_BATCHES: 12, // Increased for 6 vCPUs with hyperthreading
   
   // Memory limits - optimized for 12GB RAM
   MAX_MEMORY_USAGE_MB: 8192, // 8GB limit (leaving 4GB for system)
   
   // Rate limiting considerations
   SEATS_AERO_RATE_LIMIT: {
-    REQUESTS_PER_MINUTE: 200, // Increased for higher capacity
-    BURST_LIMIT: 100, // Increased burst limit
+    REQUESTS_PER_MINUTE: 300, // Increased for higher capacity
+    BURST_LIMIT: 150, // Increased burst limit
   },
   
   // Performance monitoring
   ENABLE_PERFORMANCE_MONITORING: true,
   LOG_CONCURRENCY_METRICS: true,
+  
+  // New optimization settings
+  OPTIMIZE_ITINERARY_COMPOSITION: true,
+  ENABLE_EARLY_FILTERING: true,
+  CACHE_INTERMEDIATE_RESULTS: true,
+  PARALLEL_ROUTE_PROCESSING: true,
 } as const;
 
 /**
