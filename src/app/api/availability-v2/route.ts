@@ -6,6 +6,7 @@ import zlib from 'zlib';
 import { addDays, parseISO, format, subDays } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
 import { CONCURRENCY_CONFIG } from '@/lib/concurrency-config';
+import { getSupabaseConfig } from '@/lib/env-utils';
 
 // Zod schema for request validation
 const availabilityV2Schema = z.object({
@@ -141,9 +142,8 @@ function normalizeFlightNumber(flightNumber: string): string {
   return `${prefix.toUpperCase()}${parseInt(number, 10)}`;
 }
 
-// Use environment variables for Supabase
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+// Use environment variables for Supabase with Unicode sanitization
+const { url: supabaseUrl, serviceRoleKey: supabaseKey } = getSupabaseConfig();
 
 // --- Reliability Table In-Memory Cache ---
 let reliabilityCache: any[] | null = null;
