@@ -153,8 +153,8 @@ function getFlightUUID(flight: AvailabilityFlight): string {
   let uuid = uuidCache.get(key);
   if (uuid) return uuid;
   
-  // Generate and cache
-  uuid = createHash('md5').update(key).digest('hex');
+  // Performance optimization: SHA1 is faster than MD5 for longer strings
+  uuid = createHash('sha1').update(key).digest('hex');
   uuidCache.set(key, uuid);
   
   // Prevent memory leaks by limiting cache size
@@ -188,10 +188,13 @@ function composeItineraries(
   // Pre-filter and index segments by from-to for faster lookups
   const segmentMap = new Map<string, { groups: AvailabilityGroup[]; allowedAlliances: string[] | null }>();
   for (let i = 0; i < segments.length; i++) {
-    const [from, to] = segments[i];
+    const segment = segments[i];
+    if (!segment) continue;
+    const [from, to] = segment;
     const key = `${from}-${to}`;
     const groups = segmentAvail[i]?.filter(g => g.originAirport === from && g.destinationAirport === to) || [];
-    segmentMap.set(key, { groups, allowedAlliances: alliances[i] });
+    const allowedAlliances = alliances[i] || null;
+    segmentMap.set(key, { groups, allowedAlliances });
   }
 
   // Early termination if any segment has no valid groups
@@ -200,7 +203,9 @@ function composeItineraries(
   }
 
   // Use iterative approach instead of recursive for better performance
-  const firstSegmentKey = `${segments[0][0]}-${segments[0][1]}`;
+  const firstSegment = segments[0];
+  if (!firstSegment) return results;
+  const firstSegmentKey = `${firstSegment[0]}-${firstSegment[1]}`;
   const firstSegmentData = segmentMap.get(firstSegmentKey);
   if (!firstSegmentData) return results;
 
@@ -235,7 +240,9 @@ function composeItineraries(
       if (!flightMap.has(uuid)) {
         flightMap.set(uuid, flight);
       }
-      const [from, to] = segments[0];
+      const firstSegment = segments[0];
+      if (!firstSegment) continue;
+      const [from, to] = firstSegment;
       stack.push({
         segIdx: 1,
         path: [uuid],
@@ -254,7 +261,9 @@ function composeItineraries(
         continue;
       }
 
-      const [from, to] = segments[current.segIdx];
+      const currentSegment = segments[current.segIdx];
+      if (!currentSegment) continue;
+      const [from, to] = currentSegment;
       const segmentKey = `${from}-${to}`;
       const segmentData = segmentMap.get(segmentKey);
       if (!segmentData) continue;
@@ -329,6 +338,7 @@ async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]>
       
       const index = started++;
       const task = tasks[index];
+      if (!task) return;
       
       task()
         .then(result => {
@@ -1354,13 +1364,42 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 6. Optimized parallel route processing
+    // 6. Pre-filter routes based on segment availability (fail-fast optimization)
+    const preFilterStart = Date.now();
+    const allRoutes = routes as FullRoutePathResult[];
+    const validRoutes = allRoutes.filter(route => {
+      // Decompose route into segments
+      const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
+      if (codes.length < 2) return false;
+      
+      // Check if ALL segments have availability
+      for (let i = 0; i < codes.length - 1; i++) {
+        const from = codes[i];
+        const to = codes[i + 1];
+        if (!from || !to) return false;
+        
+        const segKey = `${from}-${to}`;
+        const availability = segmentPool[segKey];
+        
+        // If any segment has no availability, eliminate this entire route
+        if (!availability || availability.length === 0) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+    
+    const preFilterTime = Date.now() - preFilterStart;
+    console.log(`[build-itineraries] Route pre-filtering: ${allRoutes.length} → ${validRoutes.length} routes (eliminated ${allRoutes.length - validRoutes.length} impossible routes) in ${preFilterTime}ms`);
+
+    // 7. Optimized parallel route processing
     const output: Record<string, Record<string, string[][]>> = {};
     const flightMap = new Map<string, AvailabilityFlight>();
     
     // Process routes in parallel if enabled
-    if (CONCURRENCY_CONFIG.PARALLEL_ROUTE_PROCESSING && routes.length > 10) {
-      const routeTasks = (routes as FullRoutePathResult[]).map(route => async () => {
+    if (CONCURRENCY_CONFIG.PARALLEL_ROUTE_PROCESSING && validRoutes.length > 10) {
+      const routeTasks = validRoutes.map(route => async () => {
         // Decompose route into segments
         const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
         if (codes.length < 2) return null;
@@ -1431,7 +1470,7 @@ export async function POST(req: NextRequest) {
       }
     } else {
       // Sequential processing for smaller datasets
-      for (const route of routes as FullRoutePathResult[]) {
+      for (const route of validRoutes) {
         // Decompose route into segments
         const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
         if (codes.length < 2) continue;
@@ -1473,37 +1512,35 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Optimized deduplication and cleanup in a single pass
+    // NOTE: Deduplication already handled in composeItineraries function (lines 302-308)
+    // Removing redundant deduplication here for performance optimization
+    
+    // Track used flights for cleanup
     const usedFlightUUIDs = new Set<string>();
-    const cleanedOutput: Record<string, Record<string, string[][]>> = {};
     
     for (const routeKey of Object.keys(output)) {
       const routeData = output[routeKey];
-      const cleanedRouteData: Record<string, string[][]> = {};
+      if (!routeData) continue;
       
       for (const date of Object.keys(routeData)) {
-        // Deduplicate using Map for better performance
-        const uniqueItineraries = Array.from(
-          new Map(routeData[date].map(itin => [itin.join('>'), itin])).values()
-        );
+        const dateItineraries = routeData[date];
+        if (!dateItineraries) continue;
         
-        if (uniqueItineraries.length > 0) {
-          cleanedRouteData[date] = uniqueItineraries;
-          
-          // Track used flights
-          for (const itin of uniqueItineraries) {
-            for (const uuid of itin) {
-              usedFlightUUIDs.add(uuid);
-            }
+        for (const itin of dateItineraries) {
+          for (const uuid of itin) {
+            usedFlightUUIDs.add(uuid);
           }
         }
       }
-      
-      // Only keep routes with valid dates
-      if (Object.keys(cleanedRouteData).length > 0) {
-        cleanedOutput[routeKey] = cleanedRouteData;
-      }
     }
+    
+    // Remove empty route keys after processing
+    Object.keys(output).forEach((key) => {
+      const routeData = output[key];
+      if (!routeData || Object.keys(routeData).length === 0) {
+        delete output[key];
+      }
+    });
     
     // Remove unused flights in batch
     for (const uuid of flightMap.keys()) {
@@ -1512,30 +1549,46 @@ export async function POST(req: NextRequest) {
       }
     }
     
-    // Replace output with cleaned version
-    Object.keys(output).forEach(key => delete output[key]);
-    Object.assign(output, cleanedOutput);
+    // No need to replace output since we removed redundant deduplication
 
     // Filter itineraries to only include those whose first flight departs between startDate and endDate (inclusive), using raw UTC date math
     const startDateObj = startOfDay(parseISO(startDate));
     const endDateObj = endOfDay(parseISO(endDate));
+    
+    // Performance optimization: Cache parsed dates to avoid repeated parsing
+    const flightDateCache = new Map<string, number>();
+    
     for (const routeKey of Object.keys(output)) {
-      for (const date of Object.keys(output[routeKey])) {
-        output[routeKey][date] = output[routeKey][date].filter(itin => {
+      const routeData = output[routeKey];
+      if (!routeData) continue;
+      for (const date of Object.keys(routeData)) {
+        const dateItineraries = routeData[date];
+        if (!dateItineraries) continue;
+        routeData[date] = dateItineraries.filter(itin => {
           if (!itin.length) return false;
           const firstFlightUUID = itin[0];
+          if (!firstFlightUUID) return false;
           const firstFlight = flightMap.get(firstFlightUUID);
           if (!firstFlight || !firstFlight.DepartsAt) return false;
-          const depDate = new Date(firstFlight.DepartsAt);
-          return depDate >= startDateObj && depDate <= endDateObj;
+          
+          // Use cached date parsing for performance
+          let depDateTime: number;
+          if (flightDateCache.has(firstFlight.DepartsAt)) {
+            depDateTime = flightDateCache.get(firstFlight.DepartsAt)!;
+          } else {
+            depDateTime = new Date(firstFlight.DepartsAt).getTime();
+            flightDateCache.set(firstFlight.DepartsAt, depDateTime);
+          }
+          
+          return depDateTime >= startDateObj.getTime() && depDateTime <= endDateObj.getTime();
         });
         // Remove empty date keys
-        if (output[routeKey][date].length === 0) {
-          delete output[routeKey][date];
+        if (routeData[date].length === 0) {
+          delete routeData[date];
         }
       }
       // Remove empty route keys after filtering
-      if (Object.keys(output[routeKey]).length === 0) {
+      if (Object.keys(routeData).length === 0) {
         delete output[routeKey];
       }
     }
@@ -1678,30 +1731,42 @@ function extractFilterMetadata(
     metadata.stops.add(stopCount);
 
     // Extract airports
-    metadata.airports.origins.add(routeSegments[0]);
-    metadata.airports.destinations.add(routeSegments[routeSegments.length - 1]);
+    const origin = routeSegments[0];
+    const destination = routeSegments[routeSegments.length - 1];
+    if (origin) metadata.airports.origins.add(origin);
+    if (destination) metadata.airports.destinations.add(destination);
     for (let i = 1; i < routeSegments.length - 1; i++) {
-      metadata.airports.connections.add(routeSegments[i]);
+      const connection = routeSegments[i];
+      if (connection) metadata.airports.connections.add(connection);
     }
 
-    for (const date of Object.keys(itineraries[routeKey])) {
-      for (const itinerary of itineraries[routeKey][date]) {
+    const routeData = itineraries[routeKey];
+    if (!routeData) continue;
+    for (const date of Object.keys(routeData)) {
+      const dateItineraries = routeData[date];
+      if (!dateItineraries) continue;
+      for (const itinerary of dateItineraries) {
         const flightObjs = itinerary.map(uuid => flights[uuid]).filter(Boolean);
         if (flightObjs.length === 0) continue;
 
         // Extract airline codes
         flightObjs.forEach(flight => {
-          const airlineCode = flight.FlightNumbers.slice(0, 2).toUpperCase();
-          metadata.airlines.add(airlineCode);
+          if (flight && flight.FlightNumbers) {
+            const airlineCode = flight.FlightNumbers.slice(0, 2).toUpperCase();
+            metadata.airlines.add(airlineCode);
+          }
         });
 
         // Calculate total duration (including layovers)
         let totalDuration = 0;
         for (let i = 0; i < flightObjs.length; i++) {
-          totalDuration += flightObjs[i].TotalDuration;
-          if (i > 0) {
-            const prevArrive = new Date(flightObjs[i - 1].ArrivesAt).getTime();
-            const currDepart = new Date(flightObjs[i].DepartsAt).getTime();
+          const currentFlight = flightObjs[i];
+          const prevFlight = flightObjs[i - 1];
+          if (!currentFlight) continue;
+          totalDuration += currentFlight.TotalDuration;
+          if (i > 0 && prevFlight && prevFlight.ArrivesAt && currentFlight.DepartsAt) {
+            const prevArrive = new Date(prevFlight.ArrivesAt).getTime();
+            const currDepart = new Date(currentFlight.DepartsAt).getTime();
             const layover = Math.max(0, Math.round((currDepart - prevArrive) / (1000 * 60)));
             totalDuration += layover;
           }
@@ -1710,8 +1775,11 @@ function extractFilterMetadata(
         metadata.duration.max = Math.max(metadata.duration.max, totalDuration);
 
         // Extract departure/arrival times
-        const depTime = new Date(flightObjs[0].DepartsAt).getTime();
-        const arrTime = new Date(flightObjs[flightObjs.length - 1].ArrivesAt).getTime();
+        const firstFlight = flightObjs[0];
+        const lastFlight = flightObjs[flightObjs.length - 1];
+        if (!firstFlight?.DepartsAt || !lastFlight?.ArrivesAt) continue;
+        const depTime = new Date(firstFlight.DepartsAt).getTime();
+        const arrTime = new Date(lastFlight.ArrivesAt).getTime();
         metadata.departure.min = Math.min(metadata.departure.min, depTime);
         metadata.departure.max = Math.max(metadata.departure.max, depTime);
         metadata.arrival.min = Math.min(metadata.arrival.min, arrTime);
