@@ -1,7 +1,13 @@
 import { createBrowserClient } from '@supabase/ssr';
+import { getSupabaseConfig } from './env-utils';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/[^\x00-\x7F]/g, '') || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.replace(/[^\x00-\x7F]/g, '') || '';
+const { url: supabaseUrl, anonKey: supabaseAnonKey } = getSupabaseConfig();
 
-export const createSupabaseBrowserClient = () =>
-  createBrowserClient(supabaseUrl, supabaseAnonKey); 
+export const createSupabaseBrowserClient = () => {
+  // Runtime validation
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error('Missing Supabase environment variables');
+  }
+  
+  return createBrowserClient(supabaseUrl, supabaseAnonKey);
+}; 

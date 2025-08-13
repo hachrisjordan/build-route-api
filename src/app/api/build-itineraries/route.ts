@@ -9,6 +9,7 @@ import { createClient } from '@supabase/supabase-js';
 import Redis from 'ioredis';
 import { parse } from 'url';
 import { CONCURRENCY_CONFIG, PERFORMANCE_MONITORING } from '@/lib/concurrency-config';
+import { getSanitizedEnv } from '@/lib/env-utils';
 
 function getClassPercentages(
   flights: any[],
@@ -387,8 +388,8 @@ async function getReliabilityTableCached() {
   if (reliabilityCache && now - reliabilityCacheTimestamp < RELIABILITY_CACHE_TTL_MS) {
     return reliabilityCache;
   }
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/[^\x00-\x7F]/g, '');
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.replace(/[^\x00-\x7F]/g, '');
+  const supabaseUrl = getSanitizedEnv('NEXT_PUBLIC_SUPABASE_URL');
+  const supabaseKey = getSanitizedEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !supabaseKey) return [];
   const supabase = createClient(supabaseUrl, supabaseKey);
   const { data, error } = await supabase.from('reliability').select('code, min_count, exemption');
@@ -1177,8 +1178,8 @@ export async function POST(req: NextRequest) {
 
     // If apiKey is null, fetch pro_key with largest remaining from Supabase
     if (apiKey === null) {
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/[^\x00-\x7F]/g, '');
-      const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.replace(/[^\x00-\x7F]/g, '');
+      const supabaseUrl = getSanitizedEnv('NEXT_PUBLIC_SUPABASE_URL');
+      const supabaseServiceRoleKey = getSanitizedEnv('SUPABASE_SERVICE_ROLE_KEY');
       if (!supabaseUrl || !supabaseServiceRoleKey) {
         return NextResponse.json({ error: 'Supabase credentials not set' }, { status: 500 });
       }
@@ -1199,7 +1200,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Build absolute base URL for internal fetches
-    let baseUrl = process.env.NEXT_PUBLIC_BASE_URL?.replace(/[^\x00-\x7F]/g, '');
+    let baseUrl = getSanitizedEnv('NEXT_PUBLIC_BASE_URL');
     if (!baseUrl) {
       const proto = req.headers.get('x-forwarded-proto') || 'http';
       const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || 'localhost:3000';
@@ -1554,8 +1555,8 @@ export async function POST(req: NextRequest) {
     // After all processing, if we used a pro_key, update its remaining and last_updated
     if (usedProKey && usedProKeyRowId && typeof minRateLimitRemaining === 'number') {
       try {
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/[^\x00-\x7F]/g, '');
-        const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.replace(/[^\x00-\x7F]/g, '');
+        const supabaseUrl = getSanitizedEnv('NEXT_PUBLIC_SUPABASE_URL');
+        const supabaseServiceRoleKey = getSanitizedEnv('SUPABASE_SERVICE_ROLE_KEY');
         if (supabaseUrl && supabaseServiceRoleKey) {
           const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
           const updateResult = await supabase

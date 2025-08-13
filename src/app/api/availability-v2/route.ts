@@ -143,6 +143,7 @@ function normalizeFlightNumber(flightNumber: string): string {
 }
 
 // Use environment variables for Supabase with Unicode sanitization
+// Note: Using non-throwing version for build-time compatibility
 const { url: supabaseUrl, serviceRoleKey: supabaseKey } = getSupabaseConfig();
 
 // --- Reliability Table In-Memory Cache ---
@@ -155,6 +156,13 @@ async function getReliabilityTableCached() {
   if (reliabilityCache && now - reliabilityCacheTimestamp < RELIABILITY_CACHE_TTL_MS) {
     return reliabilityCache;
   }
+  
+  // Validate environment variables at runtime
+  if (!supabaseUrl || !supabaseKey) {
+    console.error('Missing Supabase environment variables');
+    return [];
+  }
+  
   const supabase = createClient(supabaseUrl, supabaseKey);
   const { data, error } = await supabase.from('reliability').select('code, min_count, exemption, ffp_program');
   if (error) {

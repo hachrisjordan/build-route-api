@@ -3,10 +3,11 @@ import { createFullRoutePathSchema } from './schema';
 import { createClient } from '@supabase/supabase-js';
 import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchPathsOptimized, fetchPathsByMaxStop, fetchIntraRoutes, SupabaseClient, batchFetchAirportsByIata, batchFetchIntraRoutes, batchFetchPathsForRegionCombinations, globalBatchFetchIntraRoutes } from '@/lib/route-helpers';
 import { FullRoutePathResult, Path, IntraRoute } from '@/types/route';
+import { getSupabaseConfig } from '@/lib/env-utils';
 
 // Use environment variables for Supabase with Unicode character sanitization
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/[^\x00-\x7F]/g, '') || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.replace(/[^\x00-\x7F]/g, '') || '';
+// Note: Using non-throwing version for build-time compatibility
+const { url: supabaseUrl, serviceRoleKey: supabaseKey } = getSupabaseConfig();
 
 // In-memory per-request caches
 interface RoutePathCache {
@@ -642,6 +643,15 @@ export async function POST(req: NextRequest) {
 
     // 2. Create Supabase client
     const clientStart = performance.now();
+    
+    // Validate environment variables at runtime
+    if (!supabaseUrl || !supabaseKey) {
+      return NextResponse.json(
+        { error: 'Missing Supabase environment variables' },
+        { status: 500 }
+      );
+    }
+    
     const supabase: SupabaseClient = createClient(supabaseUrl, supabaseKey);
     console.log(`Supabase client creation took: ${(performance.now() - clientStart).toFixed(2)}ms`);
 
