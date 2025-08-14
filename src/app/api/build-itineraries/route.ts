@@ -12,6 +12,7 @@ import { CONCURRENCY_CONFIG, PERFORMANCE_MONITORING } from '@/lib/concurrency-co
 import { getSanitizedEnv, getRedisConfig } from '@/lib/env-utils';
 import { smartRateLimit } from '@/lib/smart-rate-limiter';
 import { getAvailableProKey, updateProKeyRemaining } from '@/lib/supabase-admin';
+import { getReliabilityTableCached, getReliabilityMap } from '@/lib/reliability-cache';
 
 function getClassPercentages(
   flights: any[],
@@ -395,38 +396,7 @@ async function saveAvailabilityV2ResponseToCache(params: any, response: any) {
   }
 }
 
-// --- Reliability Table In-Memory Cache ---
-let reliabilityCache: any[] | null = null;
-let reliabilityCacheTimestamp = 0;
-const RELIABILITY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-async function getReliabilityTableCached() {
-  const now = Date.now();
-  if (reliabilityCache && now - reliabilityCacheTimestamp < RELIABILITY_CACHE_TTL_MS) {
-    return reliabilityCache;
-  }
-  const supabaseUrl = getSanitizedEnv('NEXT_PUBLIC_SUPABASE_URL');
-  const supabaseKey = getSanitizedEnv('SUPABASE_SERVICE_ROLE_KEY');
-  if (!supabaseUrl || !supabaseKey) return [];
-  const supabase = createClient(supabaseUrl, supabaseKey);
-  const { data, error } = await supabase.from('reliability').select('code, min_count, exemption');
-  if (error) {
-    console.error('Failed to fetch reliability table:', error);
-    reliabilityCache = [];
-  } else {
-    reliabilityCache = data || [];
-  }
-  reliabilityCacheTimestamp = now;
-  return reliabilityCache;
-}
-
-function getReliabilityMap(table: any[]): Record<string, { min_count: number; exemption?: string }> {
-  const map: Record<string, { min_count: number; exemption?: string }> = {};
-  for (const row of table) {
-    map[row.code] = { min_count: row.min_count, exemption: row.exemption };
-  }
-  return map;
-}
+// Note: Reliability table caching moved to shared service at @/lib/reliability-cache
 
 function isUnreliableFlight(flight: AvailabilityFlight, reliability: Record<string, { min_count: number; exemption?: string }>) {
   const code = flight.FlightNumbers.slice(0, 2).toUpperCase();

@@ -7,6 +7,7 @@ import { addDays, parseISO, format, subDays } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
 import { CONCURRENCY_CONFIG } from '@/lib/concurrency-config';
 import { getSupabaseConfig, getRedisConfig } from '@/lib/env-utils';
+import { getReliabilityTableCached } from '@/lib/reliability-cache';
 import Redis from 'ioredis';
 
 // Performance optimization caches
@@ -198,34 +199,7 @@ function normalizeFlightNumber(flightNumber: string): string {
 // Note: Using non-throwing version for build-time compatibility
 const { url: supabaseUrl, serviceRoleKey: supabaseKey } = getSupabaseConfig();
 
-// --- Reliability Table In-Memory Cache ---
-let reliabilityCache: any[] | null = null;
-let reliabilityCacheTimestamp = 0;
-const RELIABILITY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-async function getReliabilityTableCached() {
-  const now = Date.now();
-  if (reliabilityCache && now - reliabilityCacheTimestamp < RELIABILITY_CACHE_TTL_MS) {
-    return reliabilityCache;
-  }
-  
-  // Validate environment variables at runtime
-  if (!supabaseUrl || !supabaseKey) {
-    console.error('Missing Supabase environment variables');
-    return [];
-  }
-  
-  const supabase = createClient(supabaseUrl, supabaseKey);
-  const { data, error } = await supabase.from('reliability').select('code, min_count, exemption, ffp_program');
-  if (error) {
-    console.error('Failed to fetch reliability table:', error);
-    reliabilityCache = [];
-  } else {
-    reliabilityCache = data || [];
-  }
-  reliabilityCacheTimestamp = now;
-  return reliabilityCache;
-}
+// Note: Reliability table caching moved to shared service at @/lib/reliability-cache
 
 /**
  * Returns the count multiplier for a given flight/cabin/source based on reliability table.
