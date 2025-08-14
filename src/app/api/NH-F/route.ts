@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { getAvailableProKey } from '@/lib/supabase-admin';
 
 import { getRedisConfig } from '@/lib/env-utils';
 import Redis from 'ioredis';
@@ -219,23 +220,15 @@ function getCountMultiplier({ code, cabin, source, reliabilityTable }: { code: s
  */
 export async function POST(req: NextRequest) {
   try {
-    // Get API key from Supabase
-    const supabase = createClient(supabaseUrl, supabaseKey);
-    const { data, error } = await supabase
-      .from('pro_key')
-      .select('pro_key, remaining, last_updated')
-      .order('remaining', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (error || !data || !data.pro_key) {
+    // Get API key using admin client
+    const proKeyData = await getAvailableProKey();
+    if (!proKeyData || !proKeyData.pro_key) {
       return NextResponse.json({ 
-        error: 'No available pro_key found', 
-        details: error?.message 
+        error: 'No available pro_key found' 
       }, { status: 500 });
     }
 
-    const apiKey = data.pro_key;
+    const apiKey = proKeyData.pro_key;
 
     // Parse and validate body
     const body = await req.json();

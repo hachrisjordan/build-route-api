@@ -10,6 +10,8 @@ import Redis from 'ioredis';
 import { parse } from 'url';
 import { CONCURRENCY_CONFIG, PERFORMANCE_MONITORING } from '@/lib/concurrency-config';
 import { getSanitizedEnv, getRedisConfig } from '@/lib/env-utils';
+import { smartRateLimit } from '@/lib/smart-rate-limiter';
+import { getAvailableProKey, updateProKeyRemaining } from '@/lib/supabase-admin';
 
 function getClassPercentages(
   flights: any[],
@@ -1061,6 +1063,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid input', details: parseResult.error.errors }, { status: 400 });
     }
     let { origin, destination, maxStop, startDate, endDate, apiKey, cabin, carriers, minReliabilityPercent } = parseResult.data;
+
+    // 2. Apply smart rate limiting and null API key restrictions
+    const rateLimitResult = await smartRateLimit(req, parseResult.data);
+    if (!rateLimitResult.allowed) {
+      return NextResponse.json({ 
+        error: rateLimitResult.reason || 'Rate limit exceeded',
+        ...(rateLimitResult.retryAfter && { retryAfter: rateLimitResult.retryAfter })
+      }, { status: 429 });
+    }
     if (typeof minReliabilityPercent !== 'number' || isNaN(minReliabilityPercent)) {
       minReliabilityPercent = 85;
     }
@@ -1187,27 +1198,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(response);
     }
 
-    // If apiKey is null, fetch pro_key with largest remaining from Supabase
+    // If apiKey is null, fetch pro_key with largest remaining using admin client
     if (apiKey === null) {
-      const supabaseUrl = getSanitizedEnv('NEXT_PUBLIC_SUPABASE_URL');
-      const supabaseServiceRoleKey = getSanitizedEnv('SUPABASE_SERVICE_ROLE_KEY');
-      if (!supabaseUrl || !supabaseServiceRoleKey) {
-        return NextResponse.json({ error: 'Supabase credentials not set' }, { status: 500 });
+      try {
+        const proKeyData = await getAvailableProKey();
+        if (!proKeyData || !proKeyData.pro_key) {
+          return NextResponse.json({ 
+            error: 'No available pro_key found',
+            details: 'All API keys may have reached their quota limits'
+          }, { status: 500 });
+        }
+        
+        apiKey = proKeyData.pro_key;
+        usedProKey = proKeyData.pro_key;
+        usedProKeyRowId = proKeyData.pro_key; // pro_key is the primary key
+        
+        console.log(`[build-itineraries] Using pro_key with ${proKeyData.remaining} remaining quota`);
+      } catch (error) {
+        console.error('[build-itineraries] Failed to get pro_key:', error);
+        return NextResponse.json({ 
+          error: 'Failed to retrieve API key',
+          details: 'Database connection error'
+        }, { status: 500 });
       }
-      const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
-      // Get pro_key with largest remaining
-      const { data, error } = await supabase
-        .from('pro_key')
-        .select('pro_key, remaining, last_updated')
-        .order('remaining', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error || !data || !data.pro_key) {
-        return NextResponse.json({ error: 'No available pro_key found', details: error?.message }, { status: 500 });
-      }
-      apiKey = data.pro_key;
-      usedProKey = data.pro_key;
-      usedProKeyRowId = data.pro_key; // pro_key is the primary key
     }
 
     // Build absolute base URL for internal fetches
@@ -1608,21 +1621,17 @@ export async function POST(req: NextRequest) {
       }
     });
 
-    // After all processing, if we used a pro_key, update its remaining and last_updated
+    // After all processing, if we used a pro_key, update its remaining quota using admin client
     if (usedProKey && usedProKeyRowId && typeof minRateLimitRemaining === 'number') {
       try {
-        const supabaseUrl = getSanitizedEnv('NEXT_PUBLIC_SUPABASE_URL');
-        const supabaseServiceRoleKey = getSanitizedEnv('SUPABASE_SERVICE_ROLE_KEY');
-        if (supabaseUrl && supabaseServiceRoleKey) {
-          const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
-          const updateResult = await supabase
-            .from('pro_key')
-            .update({ remaining: minRateLimitRemaining, last_updated: new Date().toISOString() })
-            .eq('pro_key', usedProKeyRowId);
-          console.log(`[pro_key] Updated: pro_key=${usedProKeyRowId}, remaining=${minRateLimitRemaining}, last_updated=${new Date().toISOString()}`, updateResult);
+        const updateSuccess = await updateProKeyRemaining(usedProKeyRowId, minRateLimitRemaining);
+        if (updateSuccess) {
+          console.log(`[build-itineraries] Updated pro_key quota: ${usedProKeyRowId} -> ${minRateLimitRemaining} remaining`);
+        } else {
+          console.warn(`[build-itineraries] Failed to update pro_key quota for ${usedProKeyRowId}`);
         }
-      } catch (err) {
-        console.error('Failed to update pro_key remaining:', err);
+      } catch (error) {
+        console.error('[build-itineraries] Error updating pro_key quota:', error);
       }
     }
 

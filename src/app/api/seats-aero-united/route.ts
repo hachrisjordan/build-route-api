@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { addDays, format, subDays } from 'date-fns';
+import { getAvailableProKey } from '@/lib/supabase-admin';
 
 // Use environment variables for Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -60,23 +61,25 @@ function normalizeFlightNumber(flightNumber: string): string {
  */
 export async function GET(req: NextRequest) {
   try {
-    // Get API key from Supabase
-    const supabase = createClient(supabaseUrl, supabaseKey);
-    const { data, error } = await supabase
-      .from('pro_key')
-      .select('pro_key, remaining, last_updated')
-      .order('remaining', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (error || !data || !data.pro_key) {
+    // Get API key using admin client
+    let apiKey: string;
+    try {
+      const proKeyData = await getAvailableProKey();
+      if (!proKeyData || !proKeyData.pro_key) {
+        return NextResponse.json({ 
+          error: 'No available pro_key found',
+          details: 'All API keys may have reached their quota limits'
+        }, { status: 500 });
+      }
+      apiKey = proKeyData.pro_key;
+      console.log(`[seats-aero-united] Using pro_key with ${proKeyData.remaining} remaining quota`);
+    } catch (error) {
+      console.error('[seats-aero-united] Failed to get pro_key:', error);
       return NextResponse.json({ 
-        error: 'No available pro_key found', 
-        details: error?.message 
+        error: 'Failed to retrieve API key',
+        details: 'Database connection error'
       }, { status: 500 });
     }
-
-    const apiKey = data.pro_key;
 
     // Get parameters from URL
     const { searchParams } = new URL(req.url);

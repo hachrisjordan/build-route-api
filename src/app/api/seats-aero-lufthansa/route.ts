@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { getAvailableProKey } from '@/lib/supabase-admin';
 import { addDays, format, subDays } from 'date-fns';
+import { createClient } from '@supabase/supabase-js';
 
-// Use environment variables for Supabase
+// Regular Supabase client for data queries (not pro_key)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 /**
  * Calculate mileage cost based on origin and destination airports
@@ -75,23 +76,18 @@ async function calculateMileageCost(supabase: any, originAirport: string, destin
  */
 export async function GET(req: NextRequest) {
   try {
-    // Get API key from Supabase
-    const supabase = createClient(supabaseUrl, supabaseKey);
-    const { data, error } = await supabase
-      .from('pro_key')
-      .select('pro_key, remaining, last_updated')
-      .order('remaining', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (error || !data || !data.pro_key) {
+    // Get API key using admin client
+    const proKeyData = await getAvailableProKey();
+    if (!proKeyData || !proKeyData.pro_key) {
       return NextResponse.json({ 
-        error: 'No available pro_key found', 
-        details: error?.message 
+        error: 'No available pro_key found' 
       }, { status: 500 });
     }
 
-    const apiKey = data.pro_key;
+    const apiKey = proKeyData.pro_key;
+
+    // Create regular supabase client for data queries
+    const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
     // Calculate dates: today to 365 days from today
     const today = new Date();

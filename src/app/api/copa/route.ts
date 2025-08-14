@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { getAvailableProKey } from '@/lib/supabase-admin';
 import { parseISO, addMinutes, isAfter, isBefore, addDays, format, subDays } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
 import { CONCURRENCY_CONFIG } from '@/lib/concurrency-config';
@@ -245,22 +246,15 @@ export async function POST(req: NextRequest) {
 
     const originCountryCode = originAirportData.country_code;
 
-    // Get API key from Supabase
-    const { data, error } = await supabase
-      .from('pro_key')
-      .select('pro_key, remaining, last_updated')
-      .order('remaining', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (error || !data || !data.pro_key) {
+    // Get API key using admin client
+    const proKeyData = await getAvailableProKey();
+    if (!proKeyData || !proKeyData.pro_key) {
       return NextResponse.json({ 
-        error: 'No available pro_key found', 
-        details: error?.message 
+        error: 'No available pro_key found' 
       }, { status: 500 });
     }
 
-    const apiKey = data.pro_key;
+    const apiKey = proKeyData.pro_key;
 
     // Parse timestamp and extract date
     let startDate: string;
