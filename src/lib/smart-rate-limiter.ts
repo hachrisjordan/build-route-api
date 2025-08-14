@@ -378,6 +378,12 @@ export async function smartRateLimit(req: any, body: SearchRequest): Promise<Rat
   const url = new URL(req.url, `http://${req.headers.get('host') || 'localhost'}`);
   const queryParams = url.searchParams;
   
+  // Only apply rate limiting if API key is null (free tier)
+  if (body.apiKey !== null) {
+    console.log(`[smart-rate-limit] IP: ${clientIP}, API key provided - skipping rate limits, Search: ${body.origin}->${body.destination}`);
+    return { allowed: true };
+  }
+  
   // 1. Validate null API key restrictions (including pageSize limit)
   const nullApiValidation = validateNullApiKeyRestrictions(body, queryParams);
   if (!nullApiValidation.allowed) {
