@@ -5,9 +5,9 @@ import { customAlphabet } from 'nanoid';
 import { parseISO } from 'date-fns';
 import { v4 as uuidv4 } from 'uuid';
 import { SupabaseClient } from '@/lib/route-helpers';
+import { getSupabaseConfig } from '@/lib/env-utils';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const { url: SUPABASE_URL, serviceRoleKey: SUPABASE_KEY } = getSupabaseConfig();
 
 const nanoid = customAlphabet('1234567890abcdef', 32);
 

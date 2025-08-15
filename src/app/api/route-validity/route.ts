@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
+import { getSupabaseConfig } from '@/lib/env-utils';
 
 // Supabase configuration
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const { url: SUPABASE_URL, serviceRoleKey: SUPABASE_KEY } = getSupabaseConfig();
 
 // Input validation schema
 const RouteValiditySchema = z.object({

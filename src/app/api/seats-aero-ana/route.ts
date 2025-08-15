@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { addDays, format, subDays } from 'date-fns';
 import { getAvailableProKey } from '@/lib/supabase-admin';
 import { createClient } from '@supabase/supabase-js';
+import { getSupabaseConfig } from '@/lib/env-utils';
 
 // Regular Supabase client for data queries (not pro_key)
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const { url: supabaseUrl, anonKey: supabaseAnonKey } = getSupabaseConfig();
 
 /**
  * Calculate mileage cost based on origin and destination airports

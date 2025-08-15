@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { addDays, format, subDays } from 'date-fns';
 import { getAvailableProKey } from '@/lib/supabase-admin';
+import { getSupabaseConfig } from '@/lib/env-utils';
 
 // Use environment variables for Supabase
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const { url: supabaseUrl, serviceRoleKey: supabaseKey } = getSupabaseConfig();
 
 // --- Reliability Table In-Memory Cache ---
 let reliabilityCache: any[] | null = null;

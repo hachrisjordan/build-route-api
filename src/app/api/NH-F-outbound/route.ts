@@ -4,10 +4,10 @@ import { getAvailableProKey } from '@/lib/supabase-admin';
 import { parseISO, addMinutes, isAfter, isBefore, addDays, format, subDays } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
 import { CONCURRENCY_CONFIG } from '@/lib/concurrency-config';
+import { getSupabaseConfig } from '@/lib/env-utils';
 
 // Use environment variables for Supabase
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const { url: supabaseUrl, serviceRoleKey: supabaseKey } = getSupabaseConfig();
 
 // Zod schema for request validation
 const nhFOutboundSchema = z.object({
