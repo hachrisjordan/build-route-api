@@ -1892,10 +1892,16 @@ export async function POST(req: NextRequest) {
         
         // Create local flight map for this route
         const localFlightMap = new Map<string, AvailabilityFlight>();
+        
+        // Track itinerary composition timing
+        const compositionStart = Date.now();
         const itineraries = composeItineraries(segments, segmentAvail, alliances, localFlightMap, flightMetadata, connectionMatrix);
+        const compositionTime = Date.now() - compositionStart;
+        
+        // Aggregate composition timing (will be processed in parallel results)
         const routeKey = codes.join('-');
         
-        return { routeKey, itineraries, flights: localFlightMap };
+        return { routeKey, itineraries, flights: localFlightMap, compositionTime, segmentsCount: segments.length };
       });
       
               const routeResults = await pool(routeTasks, Math.min(10, Math.ceil(routes.length / 4)));
@@ -1907,23 +1913,39 @@ export async function POST(req: NextRequest) {
         itineraryMetrics.phases.routeProcessing.avgMs = parallelProcessingTime / validRoutes.length;
         itineraryMetrics.totals.routesProcessed = validRoutes.length;
         
-        // Merge results
+        // Merge results and aggregate composition timing
+        let totalCompositionTime = 0;
+        let totalItinerariesCreated = 0;
+        let totalSegmentsProcessed = 0;
+        
         for (const result of routeResults) {
-        if (!result) continue;
-        const { routeKey, itineraries, flights } = result;
-        
-        // Merge flights into main map
-        for (const [uuid, flight] of flights) {
-          flightMap.set(uuid, flight);
+          if (!result) continue;
+          const { routeKey, itineraries, flights, compositionTime, segmentsCount } = result;
+          
+          // Aggregate timing metrics
+          if (compositionTime) totalCompositionTime += compositionTime;
+          if (segmentsCount) totalSegmentsProcessed += segmentsCount;
+          totalItinerariesCreated += Object.values(itineraries).flat().length;
+          
+          // Merge flights into main map
+          for (const [uuid, flight] of flights) {
+            flightMap.set(uuid, flight);
+          }
+          
+          // Merge itineraries
+          if (!output[routeKey]) output[routeKey] = {};
+          for (const [date, itinerariesForDate] of Object.entries(itineraries)) {
+            if (!output[routeKey][date]) output[routeKey][date] = [];
+            output[routeKey][date].push(...itinerariesForDate);
+          }
         }
         
-        // Merge itineraries
-        if (!output[routeKey]) output[routeKey] = {};
-        for (const [date, itinerariesForDate] of Object.entries(itineraries)) {
-          if (!output[routeKey][date]) output[routeKey][date] = [];
-          output[routeKey][date].push(...itinerariesForDate);
-        }
-      }
+        // Update metrics for parallel processing
+        itineraryMetrics.phases.itineraryComposition.totalMs = totalCompositionTime;
+        itineraryMetrics.phases.itineraryComposition.count = totalItinerariesCreated;
+        itineraryMetrics.phases.itineraryComposition.avgMs = totalItinerariesCreated > 0 ? totalCompositionTime / totalItinerariesCreated : 0;
+        itineraryMetrics.totals.segmentsProcessed = totalSegmentsProcessed;
+        itineraryMetrics.totals.itinerariesCreated = totalItinerariesCreated;
           } else {
         // Sequential processing for smaller datasets
         const sequentialStart = Date.now();
@@ -1963,7 +1985,16 @@ export async function POST(req: NextRequest) {
         }
         // Compose itineraries (now with UUIDs)
         const routeKey = codes.join('-');
+        
+        // Track itinerary composition timing
+        const compositionStart = Date.now();
         const itineraries = composeItineraries(segments, segmentAvail, alliances, flightMap, flightMetadata, connectionMatrix);
+        const compositionTime = Date.now() - compositionStart;
+        
+        // Aggregate composition timing
+        itineraryMetrics.phases.itineraryComposition.totalMs += compositionTime;
+        compositionCount += Object.values(itineraries).flat().length;
+        
         if (!output[routeKey]) output[routeKey] = {};
         for (const [date, itinerariesForDate] of Object.entries(itineraries)) {
           if (!output[routeKey][date]) output[routeKey][date] = [];
