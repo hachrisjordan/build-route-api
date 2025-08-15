@@ -144,6 +144,11 @@ interface AvailabilityGroup {
   date: string;
   alliance: string;
   flights: AvailabilityFlight[];
+  // Group timing metadata for optimization
+  earliestDeparture?: string;
+  latestDeparture?: string;
+  earliestArrival?: string;
+  latestArrival?: string;
 }
 
 // UUID cache to avoid redundant hash calculations
@@ -308,46 +313,165 @@ function filterUnreliableSegments(
 }
 
 /**
- * Build connection validation matrix to eliminate repeated connection time calculations
- * Pre-computes valid connections between all flight pairs
+ * Check if two groups can potentially connect based on their timing metadata
+ * This eliminates impossible group combinations before checking individual flights
  */
-function buildConnectionMatrix(
-  metadata: Map<string, FlightMetadata>,
+function canGroupsConnect(
+  groupA: AvailabilityGroup,
+  groupB: AvailabilityGroup,
+  minConnectionMinutes = 45
+): boolean {
+  // If metadata is missing, fall back to individual flight checking
+  if (!groupA.latestArrival || !groupB.earliestDeparture) {
+    return true;
+  }
+  
+  const latestArrival = new Date(groupA.latestArrival).getTime();
+  const earliestDeparture = new Date(groupB.earliestDeparture).getTime();
+  const connectionMinutes = (earliestDeparture - latestArrival) / 60000;
+  
+  // Valid connection window: 45 minutes to 24 hours
+  return connectionMinutes >= minConnectionMinutes && connectionMinutes <= 24 * 60;
+}
+
+/**
+ * Build group-level connection matrix to eliminate impossible group combinations
+ * This dramatically reduces the number of flight pairs we need to check
+ */
+function buildGroupConnectionMatrix(
+  segmentPool: Record<string, AvailabilityGroup[]>,
   minConnectionMinutes = 45
 ): Map<string, Set<string>> {
-  console.log('[build-itineraries] Building connection matrix...');
+  console.log('[build-itineraries] Building group connection matrix...');
   const startTime = Date.now();
-  const connections = new Map<string, Set<string>>();
-  const flights = Array.from(metadata.values());
   
-  // Sort flights by departure time for potential optimization
-  flights.sort((a, b) => a.departureTime - b.departureTime);
+  const groupConnections = new Map<string, Set<string>>();
+  const allGroups: Array<{group: AvailabilityGroup; key: string; index: number}> = [];
   
-  for (let i = 0; i < flights.length; i++) {
-    const fromFlight = flights[i];
-    if (!fromFlight) continue;
+  // Collect all groups with their identifiers
+  let groupIndex = 0;
+  for (const [segmentKey, groups] of Object.entries(segmentPool)) {
+    for (const group of groups) {
+      const groupKey = `${segmentKey}:${group.date}:${group.alliance}:${groupIndex}`;
+      allGroups.push({ group, key: groupKey, index: groupIndex });
+      groupIndex++;
+    }
+  }
+  
+  let totalGroupPairs = 0;
+  let validGroupPairs = 0;
+  
+  // Check group-to-group connections
+  for (let i = 0; i < allGroups.length; i++) {
+    const groupA = allGroups[i];
+    if (!groupA) continue;
     const validConnections = new Set<string>();
     
-    // Early termination: if departure time is too late, skip remaining flights
-    for (let j = 0; j < flights.length; j++) {
+    for (let j = 0; j < allGroups.length; j++) {
       if (i === j) continue; // Can't connect to self
       
-      const toFlight = flights[j];
-      if (!toFlight) continue;
-      const diffMinutes = (toFlight.departureTime - fromFlight.arrivalTime) / 60000;
+      const groupB = allGroups[j];
+      if (!groupB) continue;
+      totalGroupPairs++;
       
-      // Valid connection time window: 45 minutes to 24 hours
-      if (diffMinutes >= minConnectionMinutes && diffMinutes <= 24 * 60) {
-        validConnections.add(toFlight.uuid);
+      if (canGroupsConnect(groupA.group, groupB.group, minConnectionMinutes)) {
+        validConnections.add(groupB.key);
+        validGroupPairs++;
       }
     }
     
-    connections.set(fromFlight.uuid, validConnections);
+    groupConnections.set(groupA.key, validConnections);
+  }
+  
+  const buildTime = Date.now() - startTime;
+  const reductionPercent = totalGroupPairs > 0 ? Math.round((1 - validGroupPairs / totalGroupPairs) * 100) : 0;
+  console.log(`[build-itineraries] Group connection matrix: ${validGroupPairs}/${totalGroupPairs} valid group pairs (${reductionPercent}% eliminated) in ${buildTime}ms`);
+  
+  return groupConnections;
+}
+
+/**
+ * Build connection validation matrix to eliminate repeated connection time calculations
+ * Pre-computes valid connections between all flight pairs (optimized with group pre-filtering)
+ */
+function buildConnectionMatrix(
+  metadata: Map<string, FlightMetadata>,
+  segmentPool: Record<string, AvailabilityGroup[]>,
+  groupConnections: Map<string, Set<string>>,
+  minConnectionMinutes = 45
+): Map<string, Set<string>> {
+  console.log('[build-itineraries] Building optimized flight connection matrix...');
+  const startTime = Date.now();
+  const connections = new Map<string, Set<string>>();
+  
+  // Create flight-to-group mapping for efficient group lookup
+  const flightToGroup = new Map<string, string>();
+  const groupToFlights = new Map<string, string[]>();
+  
+  let groupIndex = 0;
+  for (const [segmentKey, groups] of Object.entries(segmentPool)) {
+    for (const group of groups) {
+      const groupKey = `${segmentKey}:${group.date}:${group.alliance}:${groupIndex}`;
+      const groupFlights: string[] = [];
+      
+      for (const flight of group.flights) {
+        const uuid = getFlightUUID(flight);
+        flightToGroup.set(uuid, groupKey);
+        groupFlights.push(uuid);
+      }
+      
+      groupToFlights.set(groupKey, groupFlights);
+      groupIndex++;
+    }
+  }
+  
+  let totalFlightPairs = 0;
+  let validFlightPairs = 0;
+  let skippedByGroupFilter = 0;
+  
+  // Build connections only between flights from connectable groups
+  for (const [flightUuid, flightMeta] of metadata) {
+    const fromGroupKey = flightToGroup.get(flightUuid);
+    if (!fromGroupKey) continue;
+    
+    const validConnections = new Set<string>();
+    const connectedGroups = groupConnections.get(fromGroupKey);
+    if (!connectedGroups) continue;
+    
+    // Only check flights from groups that can connect
+    for (const toGroupKey of connectedGroups) {
+      const groupFlights = groupToFlights.get(toGroupKey);
+      if (!groupFlights) continue;
+      
+      for (const toFlightUuid of groupFlights) {
+        if (flightUuid === toFlightUuid) continue; // Can't connect to self
+        
+        const toFlightMeta = metadata.get(toFlightUuid);
+        if (!toFlightMeta) continue;
+        
+        totalFlightPairs++;
+        const diffMinutes = (toFlightMeta.departureTime - flightMeta.arrivalTime) / 60000;
+        
+        // Valid connection time window: 45 minutes to 24 hours
+        if (diffMinutes >= minConnectionMinutes && diffMinutes <= 24 * 60) {
+          validConnections.add(toFlightUuid);
+          validFlightPairs++;
+        }
+      }
+    }
+    
+    // Count flights that were skipped due to group filtering
+    const totalPossibleFlights = metadata.size - 1; // exclude self
+    const checkedFlights = totalFlightPairs;
+    skippedByGroupFilter += (totalPossibleFlights - checkedFlights);
+    
+    connections.set(flightUuid, validConnections);
   }
   
   const buildTime = Date.now() - startTime;
   const totalConnections = Array.from(connections.values()).reduce((sum, set) => sum + set.size, 0);
-  console.log(`[build-itineraries] Built connection matrix with ${totalConnections} valid connections in ${buildTime}ms`);
+  const reductionPercent = totalFlightPairs > 0 ? Math.round((1 - totalFlightPairs / (metadata.size * metadata.size)) * 100) : 0;
+  console.log(`[build-itineraries] Built optimized connection matrix: ${totalConnections} valid connections from ${totalFlightPairs} checked pairs (${reductionPercent}% flight pairs eliminated by group filtering) in ${buildTime}ms`);
   
   return connections;
 }
@@ -1543,9 +1667,10 @@ export async function POST(req: NextRequest) {
     // Filter segments: remove unreliable intermediate segments but keep origin/destination segments
     const filteredSegmentPool = filterUnreliableSegments(segmentPool, reliabilityMap, origin, destination, minReliabilityPercent);
 
-    // PHASE 1 OPTIMIZATION: Pre-compute flight metadata and connection matrix from filtered pool
+    // PHASE 1 OPTIMIZATION: Pre-compute flight metadata and connection matrices from filtered pool
+    const groupConnectionMatrix = buildGroupConnectionMatrix(filteredSegmentPool);
     const flightMetadata = precomputeFlightMetadata(filteredSegmentPool);
-    const connectionMatrix = buildConnectionMatrix(flightMetadata);
+    const connectionMatrix = buildConnectionMatrix(flightMetadata, filteredSegmentPool, groupConnectionMatrix);
 
     // 6. Pre-filter routes based on segment availability (fail-fast optimization)
     const preFilterStart = Date.now();
