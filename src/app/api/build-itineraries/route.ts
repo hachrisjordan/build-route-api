@@ -170,12 +170,196 @@ function getFlightUUID(flight: AvailabilityFlight): string {
   return uuid;
 }
 
+// PHASE 1 OPTIMIZATION: Pre-computed flight metadata to eliminate repeated operations
+interface FlightMetadata {
+  uuid: string;
+  departureTime: number;
+  arrivalTime: number;
+  duration: number;
+  airlineCode: string;
+  originalFlight: AvailabilityFlight;
+}
+
 /**
- * Optimized compose function with early filtering and reduced allocations
+ * Pre-compute all flight metadata to eliminate repeated Date parsing and UUID generation
+ * This runs once per request instead of millions of times in tight loops
+ */
+function precomputeFlightMetadata(segmentPool: Record<string, AvailabilityGroup[]>): Map<string, FlightMetadata> {
+  console.log('[build-itineraries] Pre-computing flight metadata...');
+  const startTime = Date.now();
+  const metadata = new Map<string, FlightMetadata>();
+  
+  for (const groups of Object.values(segmentPool)) {
+    for (const group of groups) {
+      for (const flight of group.flights) {
+        const uuid = getFlightUUID(flight); // Call once per unique flight
+        
+        if (!metadata.has(uuid)) {
+          metadata.set(uuid, {
+            uuid,
+            departureTime: new Date(flight.DepartsAt).getTime(), // Parse once
+            arrivalTime: new Date(flight.ArrivesAt).getTime(),   // Parse once
+            duration: flight.TotalDuration,
+            airlineCode: flight.FlightNumbers.slice(0, 2).toUpperCase(),
+            originalFlight: flight
+          });
+        }
+      }
+    }
+  }
+  
+  const computeTime = Date.now() - startTime;
+  console.log(`[build-itineraries] Pre-computed metadata for ${metadata.size} unique flights in ${computeTime}ms`);
+  
+  return metadata;
+}
+
+/**
+ * Filter unreliable segments from availability pool before processing
+ * Special rule: Allow unreliable segments that depart from origin or arrive at destination
+ * Remove unreliable intermediate segments to reduce processing load
+ */
+function filterUnreliableSegments(
+  segmentPool: Record<string, AvailabilityGroup[]>,
+  reliability: Record<string, { min_count: number; exemption?: string }>,
+  origin: string,
+  destination: string,
+  minReliabilityPercent: number
+): Record<string, AvailabilityGroup[]> {
+  console.log('[build-itineraries] Filtering unreliable segments from availability pool...');
+  const startTime = Date.now();
+  
+  const filtered: Record<string, AvailabilityGroup[]> = {};
+  let totalSegmentsBefore = 0;
+  let totalSegmentsAfter = 0;
+  let totalFlightsBefore = 0;
+  let totalFlightsAfter = 0;
+  
+  for (const [segKey, groups] of Object.entries(segmentPool)) {
+    const [segOrigin, segDestination] = segKey.split('-');
+    totalSegmentsBefore++;
+    
+    // Check if this is an origin or destination segment
+    const isOriginSegment = segOrigin === origin;
+    const isDestinationSegment = segDestination === destination;
+    const isOriginOrDestinationSegment = isOriginSegment || isDestinationSegment;
+    
+    const filteredGroups: AvailabilityGroup[] = [];
+    
+    for (const group of groups) {
+      const filteredFlights: AvailabilityFlight[] = [];
+      totalFlightsBefore += group.flights.length;
+      
+      for (const flight of group.flights) {
+        // For origin/destination segments, allow all flights (they'll be filtered later in reliability filtering)
+        if (isOriginOrDestinationSegment) {
+          filteredFlights.push(flight);
+          continue;
+        }
+        
+        // For intermediate segments, apply strict reliability filtering
+        const airlineCode = flight.FlightNumbers.slice(0, 2).toUpperCase();
+        const rel = reliability[airlineCode];
+        const minCount = rel?.min_count ?? 1;
+        const exemption = rel?.exemption || '';
+        
+        // Determine minimum counts for each class
+        const minY = exemption.includes('Y') ? 1 : minCount;
+        const minW = exemption.includes('W') ? 1 : minCount;
+        const minJ = exemption.includes('J') ? 1 : minCount;
+        const minF = exemption.includes('F') ? 1 : minCount;
+        
+        // Check if flight meets minimum reliability requirements
+        const isReliable = (
+          flight.YCount >= minY ||
+          flight.WCount >= minW ||
+          flight.JCount >= minJ ||
+          flight.FCount >= minF
+        );
+        
+        if (isReliable) {
+          filteredFlights.push(flight);
+        }
+      }
+      
+      totalFlightsAfter += filteredFlights.length;
+      
+      // Only keep groups that have flights after filtering
+      if (filteredFlights.length > 0) {
+        filteredGroups.push({
+          ...group,
+          flights: filteredFlights
+        });
+      }
+    }
+    
+    // Only keep segments that have groups after filtering
+    if (filteredGroups.length > 0) {
+      filtered[segKey] = filteredGroups;
+      totalSegmentsAfter++;
+    }
+  }
+  
+  const filterTime = Date.now() - startTime;
+  console.log(`[build-itineraries] Segment filtering: ${totalSegmentsBefore} → ${totalSegmentsAfter} segments, ${totalFlightsBefore} → ${totalFlightsAfter} flights in ${filterTime}ms`);
+  console.log(`[build-itineraries] Eliminated ${totalSegmentsBefore - totalSegmentsAfter} unreliable intermediate segments`);
+  
+  return filtered;
+}
+
+/**
+ * Build connection validation matrix to eliminate repeated connection time calculations
+ * Pre-computes valid connections between all flight pairs
+ */
+function buildConnectionMatrix(
+  metadata: Map<string, FlightMetadata>,
+  minConnectionMinutes = 45
+): Map<string, Set<string>> {
+  console.log('[build-itineraries] Building connection matrix...');
+  const startTime = Date.now();
+  const connections = new Map<string, Set<string>>();
+  const flights = Array.from(metadata.values());
+  
+  // Sort flights by departure time for potential optimization
+  flights.sort((a, b) => a.departureTime - b.departureTime);
+  
+  for (let i = 0; i < flights.length; i++) {
+    const fromFlight = flights[i];
+    if (!fromFlight) continue;
+    const validConnections = new Set<string>();
+    
+    // Early termination: if departure time is too late, skip remaining flights
+    for (let j = 0; j < flights.length; j++) {
+      if (i === j) continue; // Can't connect to self
+      
+      const toFlight = flights[j];
+      if (!toFlight) continue;
+      const diffMinutes = (toFlight.departureTime - fromFlight.arrivalTime) / 60000;
+      
+      // Valid connection time window: 45 minutes to 24 hours
+      if (diffMinutes >= minConnectionMinutes && diffMinutes <= 24 * 60) {
+        validConnections.add(toFlight.uuid);
+      }
+    }
+    
+    connections.set(fromFlight.uuid, validConnections);
+  }
+  
+  const buildTime = Date.now() - startTime;
+  const totalConnections = Array.from(connections.values()).reduce((sum, set) => sum + set.size, 0);
+  console.log(`[build-itineraries] Built connection matrix with ${totalConnections} valid connections in ${buildTime}ms`);
+  
+  return connections;
+}
+
+/**
+ * Optimized compose function with pre-computed metadata and connection matrix
  * @param segments Array of [from, to] pairs (e.g., [[HAN, SGN], [SGN, BKK]])
  * @param segmentAvail Array of arrays of AvailabilityGroup (one per segment)
  * @param alliances Array of arrays of allowed alliances for each segment
  * @param flightMap Map to store all unique flights
+ * @param flightMetadata Pre-computed flight metadata for fast lookups
+ * @param connectionMatrix Pre-computed valid connections between flights
  * @returns Map of date to array of valid itineraries (each as array of UUIDs)
  */
 function composeItineraries(
@@ -183,6 +367,8 @@ function composeItineraries(
   segmentAvail: AvailabilityGroup[][],
   alliances: (string[] | null)[],
   flightMap: Map<string, AvailabilityFlight>,
+  flightMetadata: Map<string, FlightMetadata>,
+  connectionMatrix: Map<string, Set<string>>,
   minConnectionMinutes = 45
 ): Record<string, string[][]> {
   const results: Record<string, string[][]> = {};
@@ -250,7 +436,7 @@ function composeItineraries(
         segIdx: 1,
         path: [uuid],
         usedAirports: new Set([from, to]),
-        prevArrival: flight.ArrivesAt
+        prevArrival: uuid // Store UUID for connection matrix lookup
       });
     }
 
@@ -282,22 +468,21 @@ function composeItineraries(
         }
 
         for (const flight of group.flights) {
-          // Connection time check with cached Date objects
+          const uuid = getFlightUUID(flight);
+          
+          // OPTIMIZATION: Use pre-computed connection matrix for instant validation
           if (current.prevArrival) {
-            const prevTime = new Date(current.prevArrival).getTime();
-            const depTime = new Date(flight.DepartsAt).getTime();
-            const diffMinutes = (depTime - prevTime) / 60000;
-            if (diffMinutes < minConnectionMinutes || diffMinutes > 24 * 60) {
-              continue;
+            const validConnections = connectionMatrix.get(current.prevArrival);
+            if (!validConnections || !validConnections.has(uuid)) {
+              continue; // Invalid connection - skip immediately
             }
           }
 
-          const uuid = getFlightUUID(flight);
           if (!flightMap.has(uuid)) {
             flightMap.set(uuid, flight);
           }
 
-          // Create new state for next iteration
+          // OPTIMIZATION: Use more efficient data structures
           const newUsedAirports = new Set(current.usedAirports);
           newUsedAirports.add(to);
           
@@ -305,7 +490,7 @@ function composeItineraries(
             segIdx: current.segIdx + 1,
             path: [...current.path, uuid],
             usedAirports: newUsedAirports,
-            prevArrival: flight.ArrivesAt
+            prevArrival: uuid // Store UUID instead of timestamp for connection matrix lookup
           });
         }
       }
@@ -1350,6 +1535,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // EARLY FILTERING: Remove unreliable intermediate segments from availability pool
+    // This requires reliability data, so fetch it first
+    const reliabilityTable = await getReliabilityTableCached();
+    const reliabilityMap = getReliabilityMap(reliabilityTable);
+    
+    // Filter segments: remove unreliable intermediate segments but keep origin/destination segments
+    const filteredSegmentPool = filterUnreliableSegments(segmentPool, reliabilityMap, origin, destination, minReliabilityPercent);
+
+    // PHASE 1 OPTIMIZATION: Pre-compute flight metadata and connection matrix from filtered pool
+    const flightMetadata = precomputeFlightMetadata(filteredSegmentPool);
+    const connectionMatrix = buildConnectionMatrix(flightMetadata);
+
     // 6. Pre-filter routes based on segment availability (fail-fast optimization)
     const preFilterStart = Date.now();
     const allRoutes = routes as FullRoutePathResult[];
@@ -1365,7 +1562,7 @@ export async function POST(req: NextRequest) {
         if (!from || !to) return false;
         
         const segKey = `${from}-${to}`;
-        const availability = segmentPool[segKey];
+        const availability = filteredSegmentPool[segKey];
         
         // If any segment has no availability, eliminate this entire route
         if (!availability || availability.length === 0) {
@@ -1402,14 +1599,14 @@ export async function POST(req: NextRequest) {
         // Early exit if any segment has no availability
         const hasAvailability = segments.every(([from, to]) => {
           const segKey = `${from}-${to}`;
-          return segmentPool[segKey] && segmentPool[segKey].length > 0;
+          return filteredSegmentPool[segKey] && filteredSegmentPool[segKey].length > 0;
         });
         if (!hasAvailability) return null;
         
         // For each segment, get the corresponding availability from the pool
         const segmentAvail: AvailabilityGroup[][] = segments.map(([from, to]) => {
           const segKey = `${from}-${to}`;
-          return segmentPool[segKey] || [];
+          return filteredSegmentPool[segKey] || [];
         });
         
         // Alliance arrays: determine for each segment based on from/to
@@ -1429,7 +1626,7 @@ export async function POST(req: NextRequest) {
         
         // Create local flight map for this route
         const localFlightMap = new Map<string, AvailabilityFlight>();
-        const itineraries = composeItineraries(segments, segmentAvail, alliances, localFlightMap);
+        const itineraries = composeItineraries(segments, segmentAvail, alliances, localFlightMap, flightMetadata, connectionMatrix);
         const routeKey = codes.join('-');
         
         return { routeKey, itineraries, flights: localFlightMap };
@@ -1471,7 +1668,7 @@ export async function POST(req: NextRequest) {
         // For each segment, get the corresponding availability from the pool
         const segmentAvail: AvailabilityGroup[][] = segments.map(([from, to]) => {
           const segKey = `${from}-${to}`;
-          return segmentPool[segKey] || [];
+          return filteredSegmentPool[segKey] || [];
         });
         // Alliance arrays: determine for each segment based on from/to
         const alliances: (string[] | null)[] = [];
@@ -1489,7 +1686,7 @@ export async function POST(req: NextRequest) {
         }
         // Compose itineraries (now with UUIDs)
         const routeKey = codes.join('-');
-        const itineraries = composeItineraries(segments, segmentAvail, alliances, flightMap);
+        const itineraries = composeItineraries(segments, segmentAvail, alliances, flightMap, flightMetadata, connectionMatrix);
         if (!output[routeKey]) output[routeKey] = {};
         for (const [date, itinerariesForDate] of Object.entries(itineraries)) {
           if (!output[routeKey][date]) output[routeKey][date] = [];
@@ -1580,9 +1777,7 @@ export async function POST(req: NextRequest) {
     }
 
     // --- SERVER-SIDE RELIABILITY FILTERING ---
-    // Fetch reliability table and filter itineraries
-    const reliabilityTable = await getReliabilityTableCached();
-    const reliabilityMap = getReliabilityMap(reliabilityTable);
+    // Use previously fetched reliability data for final itinerary filtering
     const filteredOutput = filterReliableItineraries(output, flightMap, reliabilityMap, minReliabilityPercent);
     // Remove empty route keys after filtering
     Object.keys(filteredOutput).forEach((key) => {
