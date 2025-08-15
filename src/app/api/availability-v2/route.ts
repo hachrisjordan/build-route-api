@@ -158,15 +158,18 @@ function getRedisClient(): Redis | null {
   }
 }
 
-// Helper to compress and save response to Redis
+// Optimized helper to compress and save response to Redis
 async function saveCompressedResponseToRedis(key: string, response: any) {
   const client = getRedisClient();
   if (!client) return;
   try {
     const json = JSON.stringify(response);
-    const compressed = zlib.gzipSync(json);
-    await client.set(key, compressed);
-    await client.expire(key, 86400); // 24h TTL
+    const compressed = zlib.gzipSync(json, { level: 6, memLevel: 8 }); // Optimized compression
+    // Use pipeline for atomic operations
+    const pipeline = client.pipeline();
+    pipeline.set(key, compressed);
+    pipeline.expire(key, 86400); // 24h TTL
+    await pipeline.exec();
   } catch (err) {
     console.error('Redis saveCompressedResponseToRedis error:', err);
   }
@@ -178,18 +181,13 @@ async function saveCompressedResponseToRedis(key: string, response: any) {
  * Cached for performance optimization.
  */
 function normalizeFlightNumber(flightNumber: string): string {
-  if (flightNumberCache.has(flightNumber)) {
-    return flightNumberCache.get(flightNumber)!;
-  }
+  const cached = flightNumberCache.get(flightNumber);
+  if (cached) return cached;
   
   const match = flightNumber.match(/^([A-Z]{2,3})(0*)(\d+)$/i);
-  let normalized: string;
-  if (!match) {
-    normalized = flightNumber;
-  } else {
-    const [, prefix, , number] = match;
-    normalized = `${(prefix || '').toUpperCase()}${parseInt(number || '0', 10)}`;
-  }
+  const normalized = match ? 
+    `${match[1].toUpperCase()}${parseInt(match[3], 10)}` : 
+    flightNumber;
   
   flightNumberCache.set(flightNumber, normalized);
   return normalized;
@@ -417,50 +415,78 @@ export async function POST(req: NextRequest) {
           if (trip.Stops !== 0) continue;
           if (trip.UpdatedAt && new Date(trip.UpdatedAt) < sevenDaysAgo) continue;
           
-          // Cabin and seat filtering
+          // Fast cabin and seat filtering
           const tripCabin = trip.Cabin?.toLowerCase() || '';
           const remainingSeats = trip.RemainingSeats || 0;
+          const seatThreshold = seats === 1 ? 0 : seats;
           
-          let includeTrip = false;
-          if (cabin) {
-            includeTrip = tripCabin === cabin.toLowerCase() && 
-                         (seats === 1 ? remainingSeats >= 0 : remainingSeats >= seats);
-          } else {
-            includeTrip = (seats === 1 ? remainingSeats >= 0 : remainingSeats >= seats);
-          }
-          
-          if (!includeTrip) continue;
+          // Single condition check
+          if (cabin && tripCabin !== cabin.toLowerCase()) continue;
+          if (remainingSeats < seatThreshold) continue;
           
           filteredTrips++;
-          const flightNumbersArr = (trip.FlightNumbers || '').split(/,\s*/);
           const mileageCost = trip.MileageCost || 0;
+          const flightNumbers = trip.FlightNumbers || '';
           
-          for (const flightNumber of flightNumbersArr) {
-            const normalizedFlightNumber = normalizeFlightNumber(flightNumber);
-            const flightPrefix = normalizedFlightNumber.slice(0, 2).toUpperCase();
-            
-            // Apply distance-based filtering for DE and JX flights
-            if (!meetsDistanceThresholds(flightPrefix, distance, mileageCost, tripCabin)) {
-              continue;
+          // Pre-compute common values
+          const originAirport = route.OriginAirport;
+          const destinationAirport = route.DestinationAirport;
+          const itemDate = item.Date;
+          const source = trip.Source || item.Source || '';
+          const aircraft = Array.isArray(trip.Aircraft) && trip.Aircraft.length > 0 ? trip.Aircraft[0] : '';
+          
+          // Process flight numbers efficiently
+          if (flightNumbers.includes(',')) {
+            // Multiple flights
+            const flightNumbersArr = flightNumbers.split(/,\s*/);
+            for (const flightNumber of flightNumbersArr) {
+              const normalizedFlightNumber = normalizeFlightNumber(flightNumber);
+              const flightPrefix = normalizedFlightNumber.slice(0, 2);
+              
+              if (!meetsDistanceThresholds(flightPrefix, distance, mileageCost, tripCabin)) continue;
+              
+              results.push({
+                originAirport,
+                destinationAirport,
+                date: itemDate,
+                distance,
+                FlightNumbers: normalizedFlightNumber,
+                TotalDuration: trip.TotalDuration || 0,
+                Aircraft: aircraft,
+                DepartsAt: trip.DepartsAt || '',
+                ArrivesAt: trip.ArrivesAt || '',
+                YMile: tripCabin === 'economy' ? mileageCost : 0,
+                WMile: tripCabin === 'premium' ? mileageCost : 0,
+                JMile: tripCabin === 'business' ? mileageCost : 0,
+                FMile: tripCabin === 'first' ? mileageCost : 0,
+                Source: source,
+                Cabin: tripCabin,
+              });
             }
+          } else {
+            // Single flight
+            const normalizedFlightNumber = normalizeFlightNumber(flightNumbers);
+            const flightPrefix = normalizedFlightNumber.slice(0, 2);
             
-            results.push({
-              originAirport: route.OriginAirport,
-              destinationAirport: route.DestinationAirport,
-              date: item.Date,
-              distance,
-              FlightNumbers: normalizedFlightNumber,
-              TotalDuration: trip.TotalDuration || 0,
-              Aircraft: Array.isArray(trip.Aircraft) && trip.Aircraft.length > 0 ? trip.Aircraft[0] : '',
-              DepartsAt: trip.DepartsAt || '',
-              ArrivesAt: trip.ArrivesAt || '',
-              YMile: (tripCabin === 'economy') ? mileageCost : 0,
-              WMile: (tripCabin === 'premium') ? mileageCost : 0,
-              JMile: (tripCabin === 'business') ? mileageCost : 0,
-              FMile: (tripCabin === 'first') ? mileageCost : 0,
-              Source: trip.Source || item.Source || '',
-              Cabin: trip.Cabin || '',
-            });
+            if (meetsDistanceThresholds(flightPrefix, distance, mileageCost, tripCabin)) {
+              results.push({
+                originAirport,
+                destinationAirport,
+                date: itemDate,
+                distance,
+                FlightNumbers: normalizedFlightNumber,
+                TotalDuration: trip.TotalDuration || 0,
+                Aircraft: aircraft,
+                DepartsAt: trip.DepartsAt || '',
+                ArrivesAt: trip.ArrivesAt || '',
+                YMile: tripCabin === 'economy' ? mileageCost : 0,
+                WMile: tripCabin === 'premium' ? mileageCost : 0,
+                JMile: tripCabin === 'business' ? mileageCost : 0,
+                FMile: tripCabin === 'first' ? mileageCost : 0,
+                Source: source,
+                Cabin: tripCabin,
+              });
+            }
           }
         }
       }
@@ -468,174 +494,117 @@ export async function POST(req: NextRequest) {
     console.log(`[PERF] Initial processing completed in ${Date.now() - processingStartTime}ms`);
     console.log(`[PERF] Data volume - Items: ${totalItems}, Trips: ${totalTrips}, Filtered trips: ${filteredTrips}, Raw results: ${results.length}`);
     
-    // Optimized merging with pre-computed values
+    // Highly optimized merging with reduced object operations
     const mergingStartTime = Date.now();
     const mergedMap = new Map<string, any>();
+    
     for (const entry of results) {
-      const normalizedFlightNumber = entry.FlightNumbers; // Already normalized in processing
-      const key = `${entry.originAirport}|${entry.destinationAirport}|${entry.date}|${normalizedFlightNumber}|${entry.Source}`;
-      const flightPrefix = normalizedFlightNumber.slice(0, 2).toUpperCase();
-      const cabinLower = entry.Cabin.toLowerCase();
+      const flightNumber = entry.FlightNumbers; // Already normalized
+      const key = `${entry.originAirport}|${entry.destinationAirport}|${entry.date}|${flightNumber}|${entry.Source}`;
+      const flightPrefix = flightNumber.slice(0, 2);
+      const cabin = entry.Cabin;
+      const cabinChar = cabin[0]?.toUpperCase();
       
-      // Pre-compute count multipliers for each cabin
-      const countMultiplierParams = { code: flightPrefix, source: entry.Source, reliabilityTable };
-      const yCabinCount = (entry.YMile > 0 && cabinLower === 'economy') ? 
-        getCountMultiplier({ ...countMultiplierParams, cabin: 'Y' }) : 0;
-      const wCabinCount = (entry.WMile > 0 && cabinLower === 'premium') ? 
-        getCountMultiplier({ ...countMultiplierParams, cabin: 'W' }) : 0;
-      const jCabinCount = (entry.JMile > 0 && cabinLower === 'business') ? 
-        getCountMultiplier({ ...countMultiplierParams, cabin: 'J' }) : 0;
-      const fCabinCount = (entry.FMile > 0 && cabinLower === 'first') ? 
-        getCountMultiplier({ ...countMultiplierParams, cabin: 'F' }) : 0;
+      // Single cabin count calculation based on actual cabin
+      let cabinCount = 0;
+      if ((cabin === 'economy' && entry.YMile > 0) || 
+          (cabin === 'premium' && entry.WMile > 0) || 
+          (cabin === 'business' && entry.JMile > 0) || 
+          (cabin === 'first' && entry.FMile > 0)) {
+        cabinCount = getCountMultiplier({ code: flightPrefix, source: entry.Source, cabin: cabinChar, reliabilityTable });
+      }
       
-      if (!mergedMap.has(key)) {
-        mergedMap.set(key, {
-          ...entry,
-          YCount: yCabinCount,
-          WCount: wCabinCount,
-          JCount: jCabinCount,
-          FCount: fCabinCount,
-          YMile: undefined,
-          WMile: undefined,
-          JMile: undefined,
-          FMile: undefined,
-        });
+      const existing = mergedMap.get(key);
+      if (!existing) {
+        // Create optimized entry with pre-zeroed counts
+        const newEntry = {
+          originAirport: entry.originAirport,
+          destinationAirport: entry.destinationAirport,
+          date: entry.date,
+          distance: entry.distance,
+          FlightNumbers: flightNumber,
+          TotalDuration: entry.TotalDuration,
+          Aircraft: entry.Aircraft,
+          DepartsAt: entry.DepartsAt,
+          ArrivesAt: entry.ArrivesAt,
+          Source: entry.Source,
+          Cabin: cabin,
+          YCount: cabin === 'economy' ? cabinCount : 0,
+          WCount: cabin === 'premium' ? cabinCount : 0,
+          JCount: cabin === 'business' ? cabinCount : 0,
+          FCount: cabin === 'first' ? cabinCount : 0,
+        };
+        mergedMap.set(key, newEntry);
       } else {
-        const merged = mergedMap.get(key)!;
-        merged.YCount += yCabinCount;
-        merged.WCount += wCabinCount;
-        merged.JCount += jCabinCount;
-        merged.FCount += fCabinCount;
+        // Fast accumulation without conditionals
+        if (cabin === 'economy') existing.YCount += cabinCount;
+        else if (cabin === 'premium') existing.WCount += cabinCount;
+        else if (cabin === 'business') existing.JCount += cabinCount;
+        else if (cabin === 'first') existing.FCount += cabinCount;
         
-        // Update aircraft, departure, and arrival optimizations
-        const entryAircraftLen = (entry.Aircraft || '').length;
-        const mergedAircraftLen = (merged.Aircraft || '').length;
-        if (entryAircraftLen > mergedAircraftLen) {
-          merged.Aircraft = entry.Aircraft;
+        // Optimized string length comparison
+        if (entry.Aircraft.length > existing.Aircraft.length) {
+          existing.Aircraft = entry.Aircraft;
         }
         
-        if (entry.DepartsAt && (!merged.DepartsAt || entry.DepartsAt < merged.DepartsAt)) {
-          merged.DepartsAt = entry.DepartsAt;
+        // Optimized time comparisons without redundant checks
+        if (entry.DepartsAt && entry.DepartsAt < existing.DepartsAt) {
+          existing.DepartsAt = entry.DepartsAt;
         }
-        if (entry.ArrivesAt && (!merged.ArrivesAt || entry.ArrivesAt > merged.ArrivesAt)) {
-          merged.ArrivesAt = entry.ArrivesAt;
+        if (entry.ArrivesAt && entry.ArrivesAt > existing.ArrivesAt) {
+          existing.ArrivesAt = entry.ArrivesAt;
         }
       }
     }
     console.log(`[PERF] Merging completed in ${Date.now() - mergingStartTime}ms. Merged results: ${mergedMap.size}`);
     
-    // Optimized grouping by flight (not Source)
-    const groupingStartTime = Date.now(); 
-    const groupedMap = new Map<string, any>();
-    for (const entry of mergedMap.values()) {
-      const groupKey = `${entry.originAirport}|${entry.destinationAirport}|${entry.date}|${entry.FlightNumbers}`;
-      
-      if (!groupedMap.has(groupKey)) {
-        groupedMap.set(groupKey, {
-          ...entry,
-          YCount: entry.YCount,
-          WCount: entry.WCount,
-          JCount: entry.JCount,
-          FCount: entry.FCount,
-        });
-      } else {
-        const group = groupedMap.get(groupKey)!;
-        group.YCount += entry.YCount;
-        group.WCount += entry.WCount;
-        group.JCount += entry.JCount;
-        group.FCount += entry.FCount;
-        
-        // Optimized aircraft, departure, and arrival updates
-        const entryAircraftLen = (entry.Aircraft || '').length;
-        const groupAircraftLen = (group.Aircraft || '').length;
-        if (entryAircraftLen > groupAircraftLen) {
-          group.Aircraft = entry.Aircraft;
-        }
-        
-        if (entry.DepartsAt && (!group.DepartsAt || entry.DepartsAt < group.DepartsAt)) {
-          group.DepartsAt = entry.DepartsAt;
-        }
-        if (entry.ArrivesAt && (!group.ArrivesAt || entry.ArrivesAt > group.ArrivesAt)) {
-          group.ArrivesAt = entry.ArrivesAt;
-        }
-      }
-    }
-    console.log(`[PERF] Grouping completed in ${Date.now() - groupingStartTime}ms. Grouped results: ${groupedMap.size}`);
-    
-    // Optimized alliance assignment and filtering
-    const allianceStartTime = Date.now();
-    const mergedResults = Array.from(groupedMap.values()).map((entry) => {
-      const { YMile, WMile, JMile, FMile, ...rest } = entry;
-      const flightPrefix = rest.FlightNumbers.slice(0, 2).toUpperCase();
-      const alliance = getAlliance(flightPrefix);
-      
-      if (!alliance) return null;
-      
-      // For DE and JX flights, we already applied distance threshold filtering during initial processing
-      // so this additional check is redundant and can be removed for performance
-      // The original filtering in the main loop already ensures compliance
-      
-      return {
-        ...rest,
-        YMile,
-        WMile,
-        JMile,
-        FMile,
-        alliance
-      };
-    }).filter(Boolean);
-    console.log(`[PERF] Alliance assignment completed in ${Date.now() - allianceStartTime}ms. Alliance results: ${mergedResults.length}`);
-
-    // Optimized final grouping by alliance
-    const finalGroupingStartTime = Date.now();
+    // Consolidated grouping with alliance assignment in single pass
+    const groupingStartTime = Date.now();
     const finalGroupedMap = new Map<string, any>();
-    for (const entry of mergedResults) {
-      // Distance threshold filtering was already applied in initial processing
-      // No need for redundant checks here
-      const groupKey = `${entry.originAirport}|${entry.destinationAirport}|${entry.date}|${entry.alliance}`;
-      if (!finalGroupedMap.has(groupKey)) {
+    
+    for (const entry of mergedMap.values()) {
+      const flightPrefix = entry.FlightNumbers.slice(0, 2);
+      const alliance = ALLIANCE_MAP.get(flightPrefix);
+      
+      // Skip entries without alliance (faster than filtering later)
+      if (!alliance) continue;
+      
+      const groupKey = `${entry.originAirport}|${entry.destinationAirport}|${entry.date}|${alliance}`;
+      const existing = finalGroupedMap.get(groupKey);
+      
+      if (!existing) {
         finalGroupedMap.set(groupKey, {
           originAirport: entry.originAirport,
           destinationAirport: entry.destinationAirport,
           date: entry.date,
           distance: entry.distance,
-          alliance: entry.alliance,
+          alliance,
           earliestDeparture: entry.DepartsAt,
           latestDeparture: entry.DepartsAt,
           earliestArrival: entry.ArrivesAt,
           latestArrival: entry.ArrivesAt,
-          flights: [
-            {
-              FlightNumbers: entry.FlightNumbers, // Already normalized
-              TotalDuration: entry.TotalDuration,
-              Aircraft: entry.Aircraft,
-              DepartsAt: entry.DepartsAt,
-              ArrivesAt: entry.ArrivesAt,
-              YCount: entry.YCount,
-              WCount: entry.WCount,
-              JCount: entry.JCount,
-              FCount: entry.FCount,
-              distance: entry.distance,
-            }
-          ]
+          flights: [{
+            FlightNumbers: entry.FlightNumbers,
+            TotalDuration: entry.TotalDuration,
+            Aircraft: entry.Aircraft,
+            DepartsAt: entry.DepartsAt,
+            ArrivesAt: entry.ArrivesAt,
+            YCount: entry.YCount,
+            WCount: entry.WCount,
+            JCount: entry.JCount,
+            FCount: entry.FCount,
+            distance: entry.distance,
+          }]
         });
       } else {
-        const group = finalGroupedMap.get(groupKey);
-        // Update earliest/latest departure/arrival
-        if (entry.DepartsAt && (!group.earliestDeparture || entry.DepartsAt < group.earliestDeparture)) {
-          group.earliestDeparture = entry.DepartsAt;
-        }
-        if (entry.DepartsAt && (!group.latestDeparture || entry.DepartsAt > group.latestDeparture)) {
-          group.latestDeparture = entry.DepartsAt;
-        }
-        if (entry.ArrivesAt && (!group.earliestArrival || entry.ArrivesAt < group.earliestArrival)) {
-          group.earliestArrival = entry.ArrivesAt;
-        }
-        if (entry.ArrivesAt && (!group.latestArrival || entry.ArrivesAt > group.latestArrival)) {
-          group.latestArrival = entry.ArrivesAt;
-        }
-        group.flights.push({
-          FlightNumbers: entry.FlightNumbers, // Already normalized
+        // Fast time comparisons
+        if (entry.DepartsAt < existing.earliestDeparture) existing.earliestDeparture = entry.DepartsAt;
+        if (entry.DepartsAt > existing.latestDeparture) existing.latestDeparture = entry.DepartsAt;
+        if (entry.ArrivesAt < existing.earliestArrival) existing.earliestArrival = entry.ArrivesAt;
+        if (entry.ArrivesAt > existing.latestArrival) existing.latestArrival = entry.ArrivesAt;
+        
+        existing.flights.push({
+          FlightNumbers: entry.FlightNumbers,
           TotalDuration: entry.TotalDuration,
           Aircraft: entry.Aircraft,
           DepartsAt: entry.DepartsAt,
@@ -649,7 +618,7 @@ export async function POST(req: NextRequest) {
       }
     }
     const groupedResults = Array.from(finalGroupedMap.values());
-    console.log(`[PERF] Final grouping completed in ${Date.now() - finalGroupingStartTime}ms. Final groups: ${groupedResults.length}`);
+    console.log(`[PERF] Consolidated grouping and alliance assignment completed in ${Date.now() - groupingStartTime}ms. Final groups: ${groupedResults.length}`);
     // Forward rate limit headers from the last fetch response if present
     let rlRemaining: string | null = null;
     let rlReset: string | null = null;
@@ -659,12 +628,17 @@ export async function POST(req: NextRequest) {
     }
     const responsePayload = { groups: groupedResults, seatsAeroRequests };
     
-    // Save compressed response to Redis
+    // Save compressed response to Redis (async, non-blocking)
     const redisStartTime = Date.now();
     const hash = createHash('sha256').update(JSON.stringify({ routeId, startDate, endDate, cabin, carriers, seats })).digest('hex');
     const redisKey = `availability-v2-response:${hash}`;
-    saveCompressedResponseToRedis(redisKey, responsePayload);
-    console.log(`[PERF] Redis save completed in ${Date.now() - redisStartTime}ms`);
+    const redisPromise = saveCompressedResponseToRedis(redisKey, responsePayload);
+    // Don't await Redis save to avoid blocking response
+    redisPromise.then(() => {
+      console.log(`[PERF] Redis save completed in ${Date.now() - redisStartTime}ms`);
+    }).catch(err => {
+      console.error('Redis save error:', err);
+    });
     
     const totalTime = Date.now() - startTime;
     console.log(`[PERF] Total API request completed in ${totalTime}ms`);

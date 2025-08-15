@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAvailableProKey } from '@/lib/supabase-admin';
 import { addDays, format, subDays } from 'date-fns';
+import { createClient } from '@supabase/supabase-js';
+import { getSupabaseConfig } from '@/lib/env-utils';
 
+// Regular Supabase client for data queries (not pro_key)
+const { url: supabaseUrl, anonKey: supabaseAnonKey } = getSupabaseConfig();
 
 
 /**
@@ -19,6 +23,9 @@ export async function GET(req: NextRequest) {
     }
 
     const apiKey = proKeyData.pro_key;
+
+    // Create regular supabase client for data queries
+    const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
     // Calculate dates: today to 365 days from today
     const today = new Date();
