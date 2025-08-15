@@ -335,25 +335,58 @@ function canGroupsConnect(
 }
 
 /**
- * Build group-level connection matrix to eliminate impossible group combinations
- * This dramatically reduces the number of flight pairs we need to check
+ * Build group-level connection matrix EFFICIENTLY - only check groups that could actually connect
+ * Groups can only connect if destination of A = origin of B
  */
 function buildGroupConnectionMatrix(
   segmentPool: Record<string, AvailabilityGroup[]>,
   minConnectionMinutes = 45
 ): Map<string, Set<string>> {
-  console.log('[build-itineraries] Building group connection matrix...');
+  console.log('[build-itineraries] Building optimized group connection matrix...');
   const startTime = Date.now();
   
   const groupConnections = new Map<string, Set<string>>();
-  const allGroups: Array<{group: AvailabilityGroup; key: string; index: number}> = [];
   
-  // Collect all groups with their identifiers
+  // Pre-process groups and parse timing metadata once
+  interface GroupWithTiming {
+    group: AvailabilityGroup;
+    key: string;
+    segmentKey: string;
+    latestArrivalTime?: number;
+    earliestDepartureTime?: number;
+  }
+  
+  // Index groups by their destination airports for efficient lookup
+  const groupsByDestination = new Map<string, GroupWithTiming[]>();
+  const groupsByOrigin = new Map<string, GroupWithTiming[]>();
+  const allGroupKeys: string[] = [];
+  const groupsWithTiming: GroupWithTiming[] = [];
   let groupIndex = 0;
+  
   for (const [segmentKey, groups] of Object.entries(segmentPool)) {
     for (const group of groups) {
       const groupKey = `${segmentKey}:${group.date}:${group.alliance}:${groupIndex}`;
-      allGroups.push({ group, key: groupKey, index: groupIndex });
+      allGroupKeys.push(groupKey);
+      
+      // Pre-parse timing metadata
+      const latestArrivalTime = group.latestArrival ? new Date(group.latestArrival).getTime() : undefined;
+      const earliestDepartureTime = group.earliestDeparture ? new Date(group.earliestDeparture).getTime() : undefined;
+      
+      const groupData = { group, key: groupKey, segmentKey, latestArrivalTime, earliestDepartureTime };
+      groupsWithTiming.push(groupData);
+      
+      // Index by destination airport
+      if (!groupsByDestination.has(group.destinationAirport)) {
+        groupsByDestination.set(group.destinationAirport, []);
+      }
+      groupsByDestination.get(group.destinationAirport)!.push(groupData);
+      
+      // Index by origin airport
+      if (!groupsByOrigin.has(group.originAirport)) {
+        groupsByOrigin.set(group.originAirport, []);
+      }
+      groupsByOrigin.get(group.originAirport)!.push(groupData);
+      
       groupIndex++;
     }
   }
@@ -361,31 +394,52 @@ function buildGroupConnectionMatrix(
   let totalGroupPairs = 0;
   let validGroupPairs = 0;
   
-  // Check group-to-group connections
-  for (let i = 0; i < allGroups.length; i++) {
-    const groupA = allGroups[i];
-    if (!groupA) continue;
+  // Only compare groups where destination of A = origin of B
+  for (const groupA of groupsWithTiming) {
     const validConnections = new Set<string>();
     
-    for (let j = 0; j < allGroups.length; j++) {
-      if (i === j) continue; // Can't connect to self
+    // Find groups that originate from this group's destination
+    const potentialConnections = groupsByOrigin.get(groupA.group.destinationAirport);
+    if (!potentialConnections) {
+      groupConnections.set(groupA.key, validConnections);
+      continue;
+    }
+    
+    for (const groupB of potentialConnections) {
+      if (groupA.key === groupB.key) continue; // Can't connect to self
       
-      const groupB = allGroups[j];
-      if (!groupB) continue;
       totalGroupPairs++;
       
-      if (canGroupsConnect(groupA.group, groupB.group, minConnectionMinutes)) {
-        validConnections.add(groupB.key);
-        validGroupPairs++;
+      // Fast timing check using pre-parsed timestamps
+      if (groupA.latestArrivalTime && groupB.earliestDepartureTime) {
+        const connectionMinutes = (groupB.earliestDepartureTime - groupA.latestArrivalTime) / 60000;
+        if (connectionMinutes >= minConnectionMinutes && connectionMinutes <= 24 * 60) {
+          validConnections.add(groupB.key);
+          validGroupPairs++;
+        }
+      } else {
+        // Fallback to original function if metadata missing
+        if (canGroupsConnect(groupA.group, groupB.group, minConnectionMinutes)) {
+          validConnections.add(groupB.key);
+          validGroupPairs++;
+        }
       }
     }
     
     groupConnections.set(groupA.key, validConnections);
   }
   
+  // Initialize empty connections for groups that weren't processed
+  for (const groupKey of allGroupKeys) {
+    if (!groupConnections.has(groupKey)) {
+      groupConnections.set(groupKey, new Set<string>());
+    }
+  }
+  
   const buildTime = Date.now() - startTime;
   const reductionPercent = totalGroupPairs > 0 ? Math.round((1 - validGroupPairs / totalGroupPairs) * 100) : 0;
-  console.log(`[build-itineraries] Group connection matrix: ${validGroupPairs}/${totalGroupPairs} valid group pairs (${reductionPercent}% eliminated) in ${buildTime}ms`);
+  console.log(`[build-itineraries] Optimized group connection matrix: ${validGroupPairs}/${totalGroupPairs} valid group pairs (${reductionPercent}% eliminated) in ${buildTime}ms`);
+  console.log(`[build-itineraries] Processed ${groupsWithTiming.length} total groups with smart connection filtering`);
   
   return groupConnections;
 }
