@@ -778,7 +778,7 @@ async function saveAvailabilityV2ResponseToCache(params: any, response: any) {
     const json = JSON.stringify(response);
     const compressed = zlib.gzipSync(json);
     await client.set(key, compressed);
-    await client.expire(key, 86400); // 24h TTL
+    await client.expire(key, 1800); // 30 minutes TTL
   } catch (err) {
     console.error('Redis saveAvailabilityV2ResponseToCache error:', err);
   }

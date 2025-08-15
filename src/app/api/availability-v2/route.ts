@@ -168,7 +168,7 @@ async function saveCompressedResponseToRedis(key: string, response: any) {
     // Use pipeline for atomic operations
     const pipeline = client.pipeline();
     pipeline.set(key, compressed);
-    pipeline.expire(key, 86400); // 24h TTL
+    pipeline.expire(key, 1800); // 30 minutes TTL
     await pipeline.exec();
   } catch (err) {
     console.error('Redis saveCompressedResponseToRedis error:', err);
