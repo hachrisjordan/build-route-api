@@ -315,6 +315,7 @@ function filterUnreliableSegments(
 /**
  * Check if two groups can potentially connect based on their timing metadata
  * This eliminates impossible group combinations before checking individual flights
+ * IMPORTANT: Only eliminate if NO possible connection exists between ANY flights in the groups
  */
 function canGroupsConnect(
   groupA: AvailabilityGroup,
@@ -322,16 +323,30 @@ function canGroupsConnect(
   minConnectionMinutes = 45
 ): boolean {
   // If metadata is missing, fall back to individual flight checking
-  if (!groupA.latestArrival || !groupB.earliestDeparture) {
+  if (!groupA.earliestArrival || !groupA.latestArrival || 
+      !groupB.earliestDeparture || !groupB.latestDeparture) {
     return true;
   }
   
-  const latestArrival = new Date(groupA.latestArrival).getTime();
-  const earliestDeparture = new Date(groupB.earliestDeparture).getTime();
-  const connectionMinutes = (earliestDeparture - latestArrival) / 60000;
+  const earliestArrivalA = new Date(groupA.earliestArrival).getTime();
+  const latestArrivalA = new Date(groupA.latestArrival).getTime();
+  const earliestDepartureB = new Date(groupB.earliestDeparture).getTime();
+  const latestDepartureB = new Date(groupB.latestDeparture).getTime();
   
-  // Valid connection window: 45 minutes to 24 hours
-  return connectionMinutes >= minConnectionMinutes && connectionMinutes <= 24 * 60;
+  // Calculate the range of possible connection times
+  const shortestConnection = (earliestDepartureB - latestArrivalA) / 60000;  // worst case
+  const longestConnection = (latestDepartureB - earliestArrivalA) / 60000;   // best case
+  
+  // Groups CAN connect if there's any overlap with the valid connection window (45min to 24h)
+  // Only eliminate if ALL possible connections are outside the valid window
+  const canConnect = (
+    // Some connection is long enough (≥ 45 min)
+    longestConnection >= minConnectionMinutes &&
+    // Some connection is short enough (≤ 24 hours)  
+    shortestConnection <= 24 * 60
+  );
+  
+  return canConnect;
 }
 
 /**
@@ -352,8 +367,10 @@ function buildGroupConnectionMatrix(
     group: AvailabilityGroup;
     key: string;
     segmentKey: string;
+    earliestArrivalTime?: number;
     latestArrivalTime?: number;
     earliestDepartureTime?: number;
+    latestDepartureTime?: number;
   }
   
   // Index groups by their destination airports for efficient lookup
@@ -369,10 +386,12 @@ function buildGroupConnectionMatrix(
       allGroupKeys.push(groupKey);
       
       // Pre-parse timing metadata
+      const earliestArrivalTime = group.earliestArrival ? new Date(group.earliestArrival).getTime() : undefined;
       const latestArrivalTime = group.latestArrival ? new Date(group.latestArrival).getTime() : undefined;
       const earliestDepartureTime = group.earliestDeparture ? new Date(group.earliestDeparture).getTime() : undefined;
+      const latestDepartureTime = group.latestDeparture ? new Date(group.latestDeparture).getTime() : undefined;
       
-      const groupData = { group, key: groupKey, segmentKey, latestArrivalTime, earliestDepartureTime };
+      const groupData = { group, key: groupKey, segmentKey, earliestArrivalTime, latestArrivalTime, earliestDepartureTime, latestDepartureTime };
       groupsWithTiming.push(groupData);
       
       // Index by destination airport
@@ -402,18 +421,24 @@ function buildGroupConnectionMatrix(
     const potentialConnections = groupsByOrigin.get(groupA.group.destinationAirport);
     if (!potentialConnections) {
       groupConnections.set(groupA.key, validConnections);
-      continue;
-    }
-    
+        continue;
+      }
+      
     for (const groupB of potentialConnections) {
       if (groupA.key === groupB.key) continue; // Can't connect to self
       
       totalGroupPairs++;
       
-      // Fast timing check using pre-parsed timestamps
-      if (groupA.latestArrivalTime && groupB.earliestDepartureTime) {
-        const connectionMinutes = (groupB.earliestDepartureTime - groupA.latestArrivalTime) / 60000;
-        if (connectionMinutes >= minConnectionMinutes && connectionMinutes <= 24 * 60) {
+      // Fast timing check using pre-parsed timestamps with correct range logic
+      if (groupA.earliestArrivalTime && groupA.latestArrivalTime && 
+          groupB.earliestDepartureTime && groupB.latestDepartureTime) {
+        
+        // Calculate range of possible connections using all pre-parsed values
+        const shortestConnection = (groupB.earliestDepartureTime - groupA.latestArrivalTime) / 60000;
+        const longestConnection = (groupB.latestDepartureTime - groupA.earliestArrivalTime) / 60000;
+        
+        // Groups can connect if any connection is within valid window
+        if (longestConnection >= minConnectionMinutes && shortestConnection <= 24 * 60) {
           validConnections.add(groupB.key);
           validGroupPairs++;
         }
