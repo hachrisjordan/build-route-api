@@ -17,3 +17,6 @@ docker/jetblue-crontab
 scripts/jetblue-batch-cron.ts
 scripts/jetblue-batch-cron.ts
 docker/jetblue-crontab
+
+# Sentry Config File
+.env.sentry-build-plugin

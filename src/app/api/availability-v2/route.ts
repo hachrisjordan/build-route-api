@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import * as Sentry from '@sentry/nextjs';
 
 import { createHash } from 'crypto';
 import zlib from 'zlib';
@@ -225,6 +226,8 @@ function getAlliance(flightPrefix: string): string | undefined {
  */
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
+  let parseResult: any = null;
+  let seatsAeroRequests = 0;
   console.log(`[PERF] API Request started at ${new Date().toISOString()}`);
   
   try {
@@ -237,7 +240,7 @@ export async function POST(req: NextRequest) {
     // Parse and validate body
     const validationStartTime = Date.now();
     const body = await req.json();
-    const parseResult = availabilityV2Schema.safeParse(body);
+    parseResult = availabilityV2Schema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json({ error: 'Invalid input', details: parseResult.error.errors }, { status: 400 });
     }
@@ -271,7 +274,6 @@ export async function POST(req: NextRequest) {
     let processedCount = 0;
     const uniqueItems = new Map<string, boolean>();
     const results: any[] = [];
-    let seatsAeroRequests = 0;
     let lastResponse: Response | null = null;
 
     // Fetch reliability table (cached)
@@ -651,6 +653,25 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     // Log with context, but avoid flooding logs
     console.error('Error in /api/availability-v2:', error);
+    
+    // Capture error in Sentry with additional context
+    Sentry.captureException(error, {
+      tags: {
+        route: 'availability-v2',
+        routeId: parseResult?.data?.routeId || 'unknown',
+        startDate: parseResult?.data?.startDate || 'unknown',
+        endDate: parseResult?.data?.endDate || 'unknown',
+        cabin: parseResult?.data?.cabin || 'unknown',
+      },
+      extra: {
+        requestUrl: req.url,
+        userAgent: req.headers.get('user-agent'),
+        requestId: req.headers.get('x-request-id'),
+        processingTime: Date.now() - startTime,
+        seatsAeroRequests: seatsAeroRequests || 0,
+      },
+    });
+    
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: 500 }

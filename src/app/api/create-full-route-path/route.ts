@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createFullRoutePathSchema } from './schema';
 import { createClient } from '@supabase/supabase-js';
+import * as Sentry from '@sentry/nextjs';
 import { getHaversineDistance, fetchAirportByIata, fetchPaths, fetchPathsOptimized, fetchPathsByMaxStop, fetchIntraRoutes, SupabaseClient, batchFetchAirportsByIata, batchFetchIntraRoutes, batchFetchPathsForRegionCombinations, globalBatchFetchIntraRoutes } from '@/lib/route-helpers';
 import { FullRoutePathResult, Path, IntraRoute } from '@/types/route';
 import { getSupabaseConfig } from '@/lib/env-utils';
@@ -620,11 +621,12 @@ async function getFullRoutePath({
 
 export async function POST(req: NextRequest) {
   const startTime = performance.now();
+  let parseResult: any = null;
   try {
     // 1. Validate input
     const validationStart = performance.now();
     const body = await req.json();
-    const parseResult = createFullRoutePathSchema.safeParse(body);
+    parseResult = createFullRoutePathSchema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json({ error: 'Invalid input', details: parseResult.error.errors }, { status: 400 });
     }
@@ -923,6 +925,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ routes: allRoutes, queryParamsArr });
   } catch (err) {
     console.error(`Error occurred after ${(performance.now() - startTime).toFixed(2)}ms:`, err);
+    
+    // Capture error in Sentry with additional context
+    Sentry.captureException(err, {
+      tags: {
+        route: 'create-full-route-path',
+        origin: parseResult?.data?.origin || 'unknown',
+        destination: parseResult?.data?.destination || 'unknown',
+        maxStop: parseResult?.data?.maxStop || 'unknown',
+      },
+      extra: {
+        requestUrl: req.url,
+        userAgent: req.headers.get('user-agent'),
+        requestId: req.headers.get('x-request-id'),
+        processingTime: performance.now() - startTime,
+      },
+    });
+    
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });
   }
 } 

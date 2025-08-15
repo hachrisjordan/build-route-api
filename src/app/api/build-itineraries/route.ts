@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { FullRoutePathResult } from '@/types/route';
 import { createHash } from 'crypto';
 import zlib from 'zlib';
+import * as Sentry from '@sentry/nextjs';
 
 import { parseISO, isBefore, isEqual, startOfDay, endOfDay } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
@@ -1410,13 +1411,35 @@ export async function POST(req: NextRequest) {
   const t0 = Date.now();
   let usedProKey: string | null = null;
   let usedProKeyRowId: string | null = null;
+  let parseResult: any = null;
+  
+  // Performance monitoring variables
+  const performanceMetrics = {
+    availabilityFetch: 0,
+    reliabilityCache: 0,
+    segmentFiltering: 0,
+    groupConnectionMatrix: 0,
+    flightMetadata: 0,
+    flightConnectionMatrix: 0,
+    routePreFiltering: 0,
+    itineraryBuild: 0,
+    totalTime: 0,
+  };
+  
+  // Set Sentry context for performance tracking
+  Sentry.setContext('performance', {
+    route: 'build-itineraries',
+    origin: 'pending',
+    destination: 'pending',
+    maxStop: 'pending',
+  });
   
   console.log('[build-itineraries] Starting request processing...');
   
   try {
     // 1. Validate input
     const body = await req.json();
-    const parseResult = buildItinerariesSchema.safeParse(body);
+    parseResult = buildItinerariesSchema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json({ error: 'Invalid input', details: parseResult.error.errors }, { status: 400 });
     }
@@ -1720,6 +1743,14 @@ export async function POST(req: NextRequest) {
     
     console.log('[build-itineraries] Total seats.aero HTTP requests:', totalSeatsAeroHttpRequests);
 
+    // Track availability fetch performance
+    performanceMetrics.availabilityFetch = afterAvailabilityTime - t0;
+    Sentry.setContext('performance', {
+      route: 'build-itineraries',
+      availabilityFetchMs: performanceMetrics.availabilityFetch,
+      totalSeatsAeroRequests: totalSeatsAeroHttpRequests,
+    });
+
     // 5. Build a pool of all segment availabilities from all responses
     const segmentPool: Record<string, AvailabilityGroup[]> = {};
     for (const result of availabilityResults) {
@@ -1740,16 +1771,28 @@ export async function POST(req: NextRequest) {
 
     // EARLY FILTERING: Remove unreliable intermediate segments from availability pool
     // This requires reliability data, so fetch it first
+    const reliabilityStart = Date.now();
     const reliabilityTable = await getReliabilityTableCached();
     const reliabilityMap = getReliabilityMap(reliabilityTable);
+    performanceMetrics.reliabilityCache = Date.now() - reliabilityStart;
     
     // Filter segments: remove unreliable intermediate segments but keep origin/destination segments
+    const segmentFilterStart = Date.now();
     const filteredSegmentPool = filterUnreliableSegments(segmentPool, reliabilityMap, origin, destination, minReliabilityPercent);
+    performanceMetrics.segmentFiltering = Date.now() - segmentFilterStart;
 
     // PHASE 1 OPTIMIZATION: Pre-compute flight metadata and connection matrices from filtered pool
+    const groupConnectionStart = Date.now();
     const groupConnectionMatrix = buildGroupConnectionMatrix(filteredSegmentPool);
+    performanceMetrics.groupConnectionMatrix = Date.now() - groupConnectionStart;
+    
+    const flightMetadataStart = Date.now();
     const flightMetadata = precomputeFlightMetadata(filteredSegmentPool);
+    performanceMetrics.flightMetadata = Date.now() - flightMetadataStart;
+    
+    const flightConnectionStart = Date.now();
     const connectionMatrix = buildConnectionMatrix(flightMetadata, filteredSegmentPool, groupConnectionMatrix);
+    performanceMetrics.flightConnectionMatrix = Date.now() - flightConnectionStart;
 
     // 6. Pre-filter routes based on segment availability (fail-fast optimization)
     const preFilterStart = Date.now();
@@ -1778,11 +1821,30 @@ export async function POST(req: NextRequest) {
     });
     
     const preFilterTime = Date.now() - preFilterStart;
+    performanceMetrics.routePreFiltering = preFilterTime;
     console.log(`[build-itineraries] Route pre-filtering: ${allRoutes.length} → ${validRoutes.length} routes (eliminated ${allRoutes.length - validRoutes.length} impossible routes) in ${preFilterTime}ms`);
 
     // 7. Optimized parallel route processing
     const output: Record<string, Record<string, string[][]>> = {};
     const flightMap = new Map<string, AvailabilityFlight>();
+    
+    // Performance tracking for itinerary building phases
+    const itineraryMetrics = {
+      phases: {
+        routeProcessing: { totalMs: 0, count: 0, avgMs: 0 },
+        segmentProcessing: { totalMs: 0, count: 0, avgMs: 0 },
+        itineraryComposition: { totalMs: 0, count: 0, avgMs: 0 },
+        postProcessing: { totalMs: 0, count: 0, avgMs: 0 }
+      },
+      totals: {
+        routesProcessed: 0,
+        segmentsProcessed: 0,
+        itinerariesCreated: 0,
+        totalTimeMs: 0
+      }
+    };
+    
+    const itineraryBuildStart = Date.now();
     
     // Process routes in parallel if enabled
     if (CONCURRENCY_CONFIG.PARALLEL_ROUTE_PROCESSING && validRoutes.length > 10) {
@@ -1836,10 +1898,17 @@ export async function POST(req: NextRequest) {
         return { routeKey, itineraries, flights: localFlightMap };
       });
       
-      const routeResults = await pool(routeTasks, Math.min(10, Math.ceil(routes.length / 4)));
-      
-      // Merge results
-      for (const result of routeResults) {
+              const routeResults = await pool(routeTasks, Math.min(10, Math.ceil(routes.length / 4)));
+        
+        // Track parallel processing performance
+        const parallelProcessingTime = Date.now() - itineraryBuildStart;
+        itineraryMetrics.phases.routeProcessing.totalMs = parallelProcessingTime;
+        itineraryMetrics.phases.routeProcessing.count = validRoutes.length;
+        itineraryMetrics.phases.routeProcessing.avgMs = parallelProcessingTime / validRoutes.length;
+        itineraryMetrics.totals.routesProcessed = validRoutes.length;
+        
+        // Merge results
+        for (const result of routeResults) {
         if (!result) continue;
         const { routeKey, itineraries, flights } = result;
         
@@ -1855,9 +1924,13 @@ export async function POST(req: NextRequest) {
           output[routeKey][date].push(...itinerariesForDate);
         }
       }
-    } else {
-      // Sequential processing for smaller datasets
-      for (const route of validRoutes) {
+          } else {
+        // Sequential processing for smaller datasets
+        const sequentialStart = Date.now();
+        let segmentCount = 0;
+        let compositionCount = 0;
+        
+        for (const route of validRoutes) {
         // Decompose route into segments
         const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
         if (codes.length < 2) continue;
@@ -1897,6 +1970,15 @@ export async function POST(req: NextRequest) {
           output[routeKey][date].push(...itinerariesForDate);
         }
       }
+      
+      // Track sequential processing performance
+      const sequentialProcessingTime = Date.now() - sequentialStart;
+      itineraryMetrics.phases.routeProcessing.totalMs = sequentialProcessingTime;
+      itineraryMetrics.phases.routeProcessing.count = validRoutes.length;
+      itineraryMetrics.phases.routeProcessing.avgMs = sequentialProcessingTime / validRoutes.length;
+      itineraryMetrics.totals.routesProcessed = validRoutes.length;
+      itineraryMetrics.totals.segmentsProcessed = segmentCount;
+      itineraryMetrics.totals.itinerariesCreated = compositionCount;
     }
 
     // NOTE: Deduplication already handled in composeItineraries function (lines 302-308)
@@ -1980,6 +2062,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Track post-processing performance
+    const postProcessingStart = Date.now();
+    
     // --- SERVER-SIDE RELIABILITY FILTERING ---
     // Use previously fetched reliability data for final itinerary filtering
     const filteredOutput = filterReliableItineraries(output, flightMap, reliabilityMap, minReliabilityPercent);
@@ -2004,20 +2089,98 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Complete post-processing timing
+    const postProcessingTime = Date.now() - postProcessingStart;
+    itineraryMetrics.phases.postProcessing.totalMs = postProcessingTime;
+    itineraryMetrics.phases.postProcessing.count = 1; // Single post-processing operation
+    itineraryMetrics.phases.postProcessing.avgMs = postProcessingTime;
+    
+    // Calculate final totals
+    itineraryMetrics.totals.totalTimeMs = Date.now() - itineraryBuildStart;
+    
     // Return itineraries and flights map
     const itineraryBuildTimeMs = Date.now() - afterAvailabilityTime;
     const totalTimeMs = Date.now() - t0;
-    console.log(`[build-itineraries] Itinerary build time (ms):`, itineraryBuildTimeMs);
-    console.log(`[build-itineraries] Total running time (ms):`, totalTimeMs);
-    console.log(`[build-itineraries] Total itineraries found:`, Object.keys(filteredOutput).reduce((sum, key) => {
+    
+    // Update performance metrics
+    performanceMetrics.itineraryBuild = itineraryBuildTimeMs;
+    performanceMetrics.totalTime = totalTimeMs;
+    
+    // Calculate total itineraries count
+    const totalItineraries = Object.keys(filteredOutput).reduce((sum, key) => {
       const routeItineraries = filteredOutput[key];
       if (!routeItineraries) return sum;
       return sum + Object.keys(routeItineraries).reduce((routeSum, date) => {
         const dateItineraries = routeItineraries[date];
         return routeSum + (dateItineraries ? dateItineraries.length : 0);
       }, 0);
-    }, 0));
+    }, 0);
+    
+    console.log(`[build-itineraries] Itinerary build time (ms):`, itineraryBuildTimeMs);
+    console.log(`[build-itineraries] Total running time (ms):`, totalTimeMs);
+    console.log(`[build-itineraries] Total itineraries found:`, totalItineraries);
     console.log(`[build-itineraries] Total unique flights:`, flightMap.size);
+    
+    // Send comprehensive performance metrics to Sentry
+    Sentry.setContext('performance', {
+      route: 'build-itineraries',
+      origin: parseResult?.data?.origin || 'unknown',
+      destination: parseResult?.data?.destination || 'unknown',
+      maxStop: parseResult?.data?.maxStop || 'unknown',
+      availabilityFetchMs: performanceMetrics.availabilityFetch,
+      reliabilityCacheMs: performanceMetrics.reliabilityCache,
+      segmentFilteringMs: performanceMetrics.segmentFiltering,
+      groupConnectionMatrixMs: performanceMetrics.groupConnectionMatrix,
+      flightMetadataMs: performanceMetrics.flightMetadata,
+      flightConnectionMatrixMs: performanceMetrics.flightConnectionMatrix,
+      routePreFilteringMs: performanceMetrics.routePreFiltering,
+      itineraryBuildMs: performanceMetrics.itineraryBuild,
+      totalTimeMs: performanceMetrics.totalTime,
+      totalSeatsAeroRequests: totalSeatsAeroHttpRequests,
+      totalItineraries,
+      totalUniqueFlights: flightMap.size,
+    });
+    
+    // Send detailed itinerary building breakdown to Sentry
+    Sentry.setContext('itineraryBreakdown', {
+      phases: {
+        routeProcessing: {
+          totalMs: itineraryMetrics.phases.routeProcessing.totalMs,
+          routesProcessed: itineraryMetrics.phases.routeProcessing.count,
+          avgMsPerRoute: Math.round(itineraryMetrics.phases.routeProcessing.avgMs * 100) / 100,
+          percentageOfTotal: Math.round((itineraryMetrics.phases.routeProcessing.totalMs / itineraryMetrics.totals.totalTimeMs) * 100)
+        },
+        segmentProcessing: {
+          totalMs: itineraryMetrics.phases.segmentProcessing.totalMs,
+          segmentsProcessed: itineraryMetrics.totals.segmentsProcessed,
+          avgMsPerSegment: itineraryMetrics.totals.segmentsProcessed > 0 ? Math.round((itineraryMetrics.phases.segmentProcessing.totalMs / itineraryMetrics.totals.segmentsProcessed) * 100) / 100 : 0
+        },
+        itineraryComposition: {
+          totalMs: itineraryMetrics.phases.itineraryComposition.totalMs,
+          itinerariesCreated: itineraryMetrics.totals.itinerariesCreated,
+          avgMsPerItinerary: itineraryMetrics.totals.itinerariesCreated > 0 ? Math.round((itineraryMetrics.phases.itineraryComposition.totalMs / itineraryMetrics.totals.itinerariesCreated) * 100) / 100 : 0
+        },
+        postProcessing: {
+          totalMs: itineraryMetrics.phases.postProcessing.totalMs,
+          percentageOfTotal: Math.round((itineraryMetrics.phases.postProcessing.totalMs / itineraryMetrics.totals.totalTimeMs) * 100)
+        }
+      },
+      totals: {
+        totalItineraryBuildTimeMs: itineraryMetrics.totals.totalTimeMs,
+        routesProcessed: itineraryMetrics.totals.routesProcessed,
+        segmentsProcessed: itineraryMetrics.totals.segmentsProcessed,
+        itinerariesCreated: itineraryMetrics.totals.itinerariesCreated,
+        processingMode: CONCURRENCY_CONFIG.PARALLEL_ROUTE_PROCESSING && validRoutes.length > 10 ? 'parallel' : 'sequential'
+      }
+    });
+    
+    // Log performance metrics to Sentry for monitoring
+    Sentry.addBreadcrumb({
+      category: 'performance',
+      message: 'Build itineraries performance metrics',
+      level: 'info',
+      data: performanceMetrics,
+    });
 
     // --- RESPONSE COMPRESSION LOGIC ---
     const responseObj = {
@@ -2068,6 +2231,25 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error('[build-itineraries] Error in /api/build-itineraries:', err);
     console.error('[build-itineraries] Error stack:', (err as Error).stack);
+    
+    // Capture error in Sentry with additional context
+    Sentry.captureException(err, {
+      tags: {
+        route: 'build-itineraries',
+        origin: parseResult?.data?.origin || 'unknown',
+        destination: parseResult?.data?.destination || 'unknown',
+        maxStop: parseResult?.data?.maxStop || 'unknown',
+        startDate: parseResult?.data?.startDate || 'unknown',
+        endDate: parseResult?.data?.endDate || 'unknown',
+      },
+      extra: {
+        requestUrl: req.url,
+        userAgent: req.headers.get('user-agent'),
+        requestId: req.headers.get('x-request-id'),
+        processingTime: Date.now() - t0,
+      },
+    });
+    
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });
   }
 }
