@@ -217,7 +217,9 @@ export async function POST(request: Request) {
         FlightNumbers: flight.FlightNumbers,
         DepartsAt: flight.DepartsAt,
         ArrivesAt: flight.ArrivesAt,
-        UpdatedAt: flight.UpdatedAt
+        UpdatedAt: flight.UpdatedAt,
+        Duration: flight.TotalDuration,
+        Distance: flight.TotalSegmentDistance,
       };
 
       // Only include cabins where seats >= seatsNum
