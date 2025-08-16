@@ -171,6 +171,7 @@ export async function POST(request: Request) {
               const cabin = trip.Cabin?.toLowerCase() || 'economy';
               const newFlight: any = {
                 TotalTaxes: trip.TotalTaxes,
+                Duration: trip.TotalDuration,
                 OriginAirport: trip.OriginAirport,
                 DestinationAirport: trip.DestinationAirport,
                 Aircraft: trip.Aircraft,

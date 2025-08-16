@@ -208,18 +208,52 @@ export async function POST(request: Request) {
       return flightDeparture >= cutoffTime;
     });
 
+    // Filter cabins based on seats parameter - only show cabins with seats under the specified number
+    const filteredTripsWithSeats = filteredTrips.map((flight: any) => {
+      const filteredFlight: any = {
+        OriginAirport: flight.OriginAirport,
+        DestinationAirport: flight.DestinationAirport,
+        Aircraft: flight.Aircraft,
+        FlightNumbers: flight.FlightNumbers,
+        DepartsAt: flight.DepartsAt,
+        ArrivesAt: flight.ArrivesAt,
+        UpdatedAt: flight.UpdatedAt
+      };
+
+      // Only include cabins where seats >= seatsNum
+      if (flight.businessSeats && flight.businessSeats >= seatsNum) {
+        filteredFlight.businessSeats = flight.businessSeats;
+        filteredFlight.businessMiles = flight.businessMiles;
+        filteredFlight.businessTax = flight.businessTax;
+      }
+      
+      if (flight.firstSeats && flight.firstSeats >= seatsNum) {
+        filteredFlight.firstSeats = flight.firstSeats;
+        filteredFlight.firstMiles = flight.firstMiles;
+        filteredFlight.firstTax = flight.firstTax;
+      }
+      
+      if (flight.premiumSeats && flight.premiumSeats >= seatsNum) {
+        filteredFlight.premiumSeats = flight.premiumSeats;
+        filteredFlight.premiumMiles = flight.premiumMiles;
+        filteredFlight.premiumTax = flight.premiumTax;
+      }
+
+      return filteredFlight;
+    });
+
     // Return processed trips
     return NextResponse.json({
-      trips: filteredTrips,
+      trips: filteredTripsWithSeats,
               metadata: {
           date: date,
           startDate: startDate,
           endDate: endDate,
           seats: seatsNum,
           carriers: 'BA',
-          totalTrips: filteredTrips.length,
+          totalTrips: filteredTripsWithSeats.length,
           filterDate: format(sevenDaysAgo, 'yyyy-MM-dd'),
-          filterDescription: 'Results filtered to exclude data older than 7 days and flights departing before input date + 75 minutes',
+          filterDescription: 'Results filtered to exclude data older than 7 days, flights departing before input date + 75 minutes, and only show cabins with seats greater than or equal to the specified number',
           route: routeString,
           url: url
         }
