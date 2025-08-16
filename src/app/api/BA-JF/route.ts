@@ -171,6 +171,8 @@ export async function POST(request: Request) {
                 FlightNumbers: trip.FlightNumbers,
                 DepartsAt: trip.DepartsAt?.replace('Z', ''),
                 ArrivesAt: trip.ArrivesAt?.replace('Z', ''),
+                Duration: trip.TotalDuration,
+                Distance: trip.TotalSegmentDistance,
                 UpdatedAt: trip.UpdatedAt
               };
               
@@ -217,9 +219,9 @@ export async function POST(request: Request) {
         FlightNumbers: flight.FlightNumbers,
         DepartsAt: flight.DepartsAt,
         ArrivesAt: flight.ArrivesAt,
-        UpdatedAt: flight.UpdatedAt,
-        Duration: flight.TotalDuration,
-        Distance: flight.TotalSegmentDistance,
+        Duration: flight.Duration,
+        Distance: flight.Distance,
+        UpdatedAt: flight.UpdatedAt
       };
 
       // Only include cabins where seats >= seatsNum
