@@ -179,6 +179,7 @@ export async function POST(request: Request) {
                 DepartsAt: trip.DepartsAt?.replace('Z', ''),
                 ArrivesAt: trip.ArrivesAt?.replace('Z', ''),
                 UpdatedAt: trip.UpdatedAt,
+                Distance: trip.TotalSegmentDistance,
                 economy: false,
                 business: false
               };
