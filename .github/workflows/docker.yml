@@ -42,3 +42,26 @@ jobs:
             PROXY_PASSWORD=${{ secrets.PROXY_PASSWORD }}
             EOF
             ./deploy.sh 
+      - name: Clean up
+        run: |
+              docker stop my-app-container || true
+              docker rm my-app-container || true
+    
+      - name: Run the Docker image
+        run: |
+              docker run -d --name my-app-container \
+                --link redis-container:redis \
+                -p 8080:3000 \
+                -e NODE_ENV=production \
+                 -e NEXT_PUBLIC_BASE_URL=${{ secrets.NEXT_PUBLIC_BASE_URL }} \
+                -e NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
+                -e NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }} \
+                -e SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
+                -e REDIS_HOST=redis \
+                -e REDIS_PORT=6379 \
+                -e PROXY_HOST=${{ secrets.PROXY_HOST }} \
+                -e PROXY_PORT=${{ secrets.PROXY_PORT }} \
+                -e PROXY_USERNAME=${{ secrets.PROXY_USERNAME }} \
+                -e PROXY_PASSWORD=${{ secrets.PROXY_PASSWORD }} \
+                -e SENTRY_AUTH_TOKEN=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 \
+                binbinhihi/my-image-name:latest
