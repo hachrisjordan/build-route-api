@@ -1,0 +1,44 @@
+name: Docker Image CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the Docker image
+        run: docker build . --build-arg "NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" --build-arg "SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" --build-arg "SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" --build-arg "supabaseUrl=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" --build-arg "VALKEY_HOST=${{ secrets.VALKEY_HOST }}" --build-arg "VALKEY_PORT=${{ secrets.VALKEY_PORT }}" --build-arg "VALKEY_PASSWORD=${{ secrets.VALKEY_PASSWORD }}" --tag my-image-name:latest
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+      - name: Tag the Docker image
+        run: docker tag my-image-name:latest ${{ secrets.DOCKERHUB_USERNAME }}/my-image-name:latest
+      - name: Push the Docker image
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/my-image-name:latest
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST1 }}
+          username: ${{ secrets.VPS_USER1 }}
+          key: ${{ secrets.VPS_SSH_KEY1 }}
+          envs: NEXT_PUBLIC_SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,SUPABASE_URL,VALKEY_HOST,VALKEY_PORT,VALKEY_PASSWORD,DOCKERHUB_USERNAME,PROXY_HOST,PROXY_PORT,PROXY_USERNAME,PROXY_PASSWORD
+          script: |
+            cd /root/build-route-api
+            cat <<EOF > .env
+            DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+            NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+            SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+            SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+            VALKEY_HOST=${{ secrets.VALKEY_HOST }}
+            VALKEY_PORT=${{ secrets.VALKEY_PORT }}
+            VALKEY_PASSWORD=${{ secrets.VALKEY_PASSWORD }}
+            PROXY_HOST=${{ secrets.PROXY_HOST }}
+            PROXY_PORT=${{ secrets.PROXY_PORT }}
+            PROXY_USERNAME=${{ secrets.PROXY_USERNAME }}
+            PROXY_PASSWORD=${{ secrets.PROXY_PASSWORD }}
+            EOF
+            ./deploy.sh 
