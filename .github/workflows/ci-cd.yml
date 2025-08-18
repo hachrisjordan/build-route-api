@@ -16,7 +16,7 @@ jobs:
       - name: Log in to Docker Hub
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
       - name: Tag the Docker image
-        run: docker tag my-image-name:latest ${{ secrets.DOCKERHUB_USERNAME }}/my-image-name-arm64:latest
+        run: docker tag my-image-name-arm64:latest ${{ secrets.DOCKERHUB_USERNAME }}/my-image-name-arm64:latest
       - name: Push the Docker image
         run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/my-image-name-arm64:latest
       - name: Deploy to VPS
