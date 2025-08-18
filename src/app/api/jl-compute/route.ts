@@ -77,7 +77,7 @@ const CONNECTION_RULES = {
 
 /**
  * Fetches data from live-search-as API for a specific route and date
- * Includes retry logic for 406 and 500 errors
+ * Includes retry logic for 406 and select 5xx errors (500, 502, 503, 504)
  */
 async function fetchLiveSearchASData(
   origin: string,
@@ -113,8 +113,9 @@ async function fetchLiveSearchASData(
       console.log(`    📊 Response status: ${response.status} ${response.statusText}`);
       
       if (!response.ok) {
-        // Check if this is a retryable error (406 or 500)
-        const isRetryable = response.status === 406 || response.status === 500;
+        // Check if this is a retryable error (406 or 5xx that are safe to retry)
+        const retryableStatuses = new Set([406, 500, 502, 503, 504]);
+        const isRetryable = retryableStatuses.has(response.status);
         
         console.error(`    ❌ Live-search-as API error for ${origin}-${destination} on ${date}: ${response.status} ${response.statusText}`);
         
