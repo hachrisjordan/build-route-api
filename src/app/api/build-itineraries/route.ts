@@ -2012,8 +2012,9 @@ export async function POST(req: NextRequest) {
       itineraryMetrics.totals.itinerariesCreated = compositionCount;
     }
 
-    // NOTE: Deduplication already handled in composeItineraries function (lines 302-308)
-    // Removing redundant deduplication here for performance optimization
+    // NOTE: While composeItineraries deduplicates within its own results, 
+    // we need to deduplicate across multiple route processing calls
+    // to prevent the same itineraries from being added multiple times
     
     // Track used flights for cleanup
     const usedFlightUUIDs = new Set<string>();
@@ -2049,7 +2050,29 @@ export async function POST(req: NextRequest) {
       }
     }
     
-    // No need to replace output since we removed redundant deduplication
+    // Deduplicate itineraries across all routes and dates to prevent duplicates
+    // from multiple route processing calls
+    for (const routeKey of Object.keys(output)) {
+      const routeData = output[routeKey];
+      if (!routeData) continue;
+      
+      for (const date of Object.keys(routeData)) {
+        const dateItineraries = routeData[date];
+        if (!dateItineraries) continue;
+        
+        // Use Set to deduplicate based on itinerary hash
+        const uniqueItineraries = new Map<string, string[]>();
+        for (const itinerary of dateItineraries) {
+          const itineraryHash = itinerary.join('>');
+          if (!uniqueItineraries.has(itineraryHash)) {
+            uniqueItineraries.set(itineraryHash, itinerary);
+          }
+        }
+        
+        // Replace with deduplicated results
+        routeData[date] = Array.from(uniqueItineraries.values());
+      }
+    }
 
     // Filter itineraries to only include those whose first flight departs between startDate and endDate (inclusive), using raw UTC date math
     const startDateObj = startOfDay(parseISO(startDate));
