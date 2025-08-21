@@ -129,6 +129,30 @@ services:
     networks:
       - app-network
 
+  delta-microservice:
+    build: .
+    container_name: delta-microservice
+    restart: unless-stopped
+    ports:
+      - "4005:4005"
+    environment:
+      - NODE_ENV=production
+      - PROXY_HOST=${PROXY_HOST}
+      - PROXY_PORT=${PROXY_PORT}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    volumes:
+      - ./delta-microservice:/app/delta-microservice
+    working_dir: /app
+    command: node delta-microservice/delta-service.js
+    depends_on:
+      - redis
+    networks:
+      - app-network
+
   # Production Redis - Hardcoded for self-hosted VPS
   redis:
     image: redis:7-alpine
