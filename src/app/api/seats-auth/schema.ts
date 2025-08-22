@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Request schema for seats-auth POST endpoint
+ * Request schema for seats-auth POST endpoint - Authorization Code flow
  */
 export const SeatsAuthRequestSchema = z.object({
   code: z.string().min(1, 'Authorization code is required'),
@@ -9,6 +9,26 @@ export const SeatsAuthRequestSchema = z.object({
 });
 
 export type SeatsAuthRequest = z.infer<typeof SeatsAuthRequestSchema>;
+
+/**
+ * Request schema for seats-auth POST endpoint - Refresh Token flow
+ */
+export const SeatsAuthRefreshRequestSchema = z.object({
+  grant_type: z.literal('refresh_token'),
+  refresh_token: z.string().min(1, 'Refresh token is required')
+});
+
+export type SeatsAuthRefreshRequest = z.infer<typeof SeatsAuthRefreshRequestSchema>;
+
+/**
+ * Union type for all possible request schemas
+ */
+export const SeatsAuthRequestUnionSchema = z.union([
+  SeatsAuthRequestSchema,
+  SeatsAuthRefreshRequestSchema
+]);
+
+export type SeatsAuthRequestUnion = z.infer<typeof SeatsAuthRequestUnionSchema>;
 
 /**
  * Response schema for successful OAuth2 token exchange
@@ -19,8 +39,9 @@ export const SeatsAuthSuccessResponseSchema = z.object({
   metadata: z.object({
     timestamp: z.string().datetime(),
     endpoint: z.literal('seats-auth'),
-    scope: z.literal('openid'),
-    redirectUri: z.string().url()
+    grantType: z.enum(['authorization_code', 'refresh_token']),
+    scope: z.string().optional(),
+    redirectUri: z.string().url().optional()
   })
 });
 
@@ -71,8 +92,15 @@ export const SeatsAuthConfigResponseSchema = z.object({
   message: z.string(),
   usage: z.object({
     method: z.literal('POST'),
-    requiredBody: z.array(z.string()),
-    description: z.string()
+    supportedGrantTypes: z.array(z.enum(['authorization_code', 'refresh_token'])),
+    authorizationCode: z.object({
+      requiredBody: z.array(z.string()),
+      description: z.string()
+    }),
+    refreshToken: z.object({
+      requiredBody: z.array(z.string()),
+      description: z.string()
+    })
   })
 });
 
@@ -88,3 +116,10 @@ export const REQUIRED_ENV_VARS = [
 ] as const;
 
 export type RequiredEnvVars = typeof REQUIRED_ENV_VARS[number];
+
+/**
+ * Grant types supported by the seats-auth API
+ */
+export const SUPPORTED_GRANT_TYPES = ['authorization_code', 'refresh_token'] as const;
+
+export type SupportedGrantType = typeof SUPPORTED_GRANT_TYPES[number];
