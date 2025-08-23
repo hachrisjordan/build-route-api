@@ -243,13 +243,42 @@ class FinnairAuthManager:
             # Configure Chrome options for Docker environment
             options = uc.ChromeOptions()
             
-            # Set Chrome binary path for Docker
-            chrome_bin = os.getenv('CHROME_BIN', '/usr/bin/chromium-browser')
-            if os.path.exists(chrome_bin):
+            # Set Chrome binary path - auto-detect for different environments
+            default_chrome_paths = [
+                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',  # macOS
+                '/usr/bin/google-chrome',      # Linux
+                '/usr/bin/chromium-browser',   # Docker/Ubuntu
+            ]
+            chrome_bin = os.getenv('CHROME_BIN')
+            if not chrome_bin:
+                for path in default_chrome_paths:
+                    if os.path.exists(path):
+                        chrome_bin = path
+                        break
+            if chrome_bin and os.path.exists(chrome_bin):
                 options.binary_location = chrome_bin
             
-            # Set ChromeDriver path for Docker
-            chromedriver_path = os.getenv('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
+            # Use webdriver-manager for ChromeDriver path (fallback to manual paths for Docker)
+            chromedriver_path = os.getenv('CHROMEDRIVER_PATH')
+            if not chromedriver_path:
+                try:
+                    from webdriver_manager.chrome import ChromeDriverManager
+                    chromedriver_path = ChromeDriverManager().install()
+                    print(f"✅ Using webdriver-manager ChromeDriver: {chromedriver_path}")
+                except Exception as e:
+                    print(f"⚠️  webdriver-manager failed: {e}")
+                    # Fallback to manual paths for Docker environments
+                    default_paths = [
+                        '/opt/homebrew/bin/chromedriver',  # macOS Homebrew
+                        '/usr/local/bin/chromedriver',     # Common Linux path
+                        '/usr/bin/chromedriver',           # Docker/Ubuntu path
+                    ]
+                    for path in default_paths:
+                        if os.path.exists(path):
+                            chromedriver_path = path
+                            break
+                    else:
+                        chromedriver_path = '/usr/bin/chromedriver'  # fallback
             
             # Docker-specific Chrome options
             options.add_argument('--no-sandbox')
@@ -271,14 +300,37 @@ class FinnairAuthManager:
                 options.add_argument('--no-sandbox')
                 options.add_argument('--disable-dev-shm-usage')
             
-            # Create driver with Docker-specific configuration
-            self.driver = uc.Chrome(
-                driver_executable_path=chromedriver_path,
-                options=options,
-                version_main=None,  # Auto-detect version
-                use_subprocess=True,
-                headless=headless
-            )
+            # Create driver with fallback for macOS security issues
+            try:
+                # First try with specified driver path
+                self.driver = uc.Chrome(
+                    driver_executable_path=chromedriver_path,
+                    options=options,
+                    version_main=None,  # Auto-detect version
+                    use_subprocess=True,
+                    headless=headless
+                )
+            except Exception as e:
+                if "Status code was: -9" in str(e) or "unexpectedly exited" in str(e) or "cannot reuse" in str(e):
+                    print("⚠️  ChromeDriver blocked by security. Trying without specifying driver path...")
+                    # Create new options object for fallback
+                    fallback_options = uc.ChromeOptions()
+                    if chrome_bin and os.path.exists(chrome_bin):
+                        fallback_options.binary_location = chrome_bin
+                    fallback_options.add_argument('--no-sandbox')
+                    fallback_options.add_argument('--disable-dev-shm-usage')
+                    fallback_options.add_argument('--disable-gpu')
+                    if headless:
+                        fallback_options.add_argument('--headless=new')
+                    
+                    # Try without specifying driver path (let undetected-chromedriver handle it)
+                    self.driver = uc.Chrome(
+                        options=fallback_options,
+                        version_main=None,
+                        headless=headless
+                    )
+                else:
+                    raise e
             
             print("✅ Chrome driver initialized successfully")
             
@@ -1022,8 +1074,8 @@ class FinnairAuthManager:
     def run(self, force_manual: bool = False, max_attempts: int = 5, timeout_per_route: int = 30):
         """Main execution flow"""
         try:
-            # Setup driver (headless by default)
-            driver = self.setup_driver(headless=True)
+            # Setup driver (non-headless required for Finnair API detection)
+            driver = self.setup_driver(headless=False)
             if not driver:
                 print("❌ Failed to setup Chrome driver")
                 return
@@ -1312,6 +1364,14 @@ class FinnairAuthManager:
         
         print(f"❌ Failed to capture Bearer token after {max_attempts} attempts")
         return None
+    
+    def quit(self):
+        """Clean up the driver"""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except:
+                pass
 
 
 def main():
