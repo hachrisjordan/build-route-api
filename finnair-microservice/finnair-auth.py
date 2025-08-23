@@ -6,6 +6,7 @@ This script handles:
 1. Opening Finnair.com in non-headless mode for manual login
 2. Saving authentication cookies from auth.finnair.com
 3. Injecting saved cookies on subsequent visits to maintain login state
+4. Automatically updating Supabase database with new Bearer tokens
 """
 
 import json
@@ -14,6 +15,29 @@ import time
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    # Look for .env file in the parent directory (main project root)
+    import os
+    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env_path = os.path.join(parent_dir, '.env')
+    load_dotenv(env_path)
+    print(f"✅ Environment variables loaded from: {env_path}")
+except ImportError:
+    print("⚠️  python-dotenv not installed. Environment variables may not load properly.")
+except Exception as e:
+    print(f"⚠️  Could not load .env file: {e}")
+    print("Will try to use system environment variables instead.")
+
+# Supabase integration
+try:
+    from supabase import create_client, Client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    print("⚠️  Supabase client not installed. Database updates will be disabled.")
+    SUPABASE_AVAILABLE = False
 
 # Custom patch for Python 3.13+ compatibility with undetected-chromedriver
 def patch_distutils():
@@ -98,6 +122,90 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
 
+class SupabaseManager:
+    """Manages Supabase database operations for token updates"""
+    
+    def __init__(self):
+        self.client = None
+        self.initialized = False
+        
+        if not SUPABASE_AVAILABLE:
+            print("⚠️  Supabase client not available - database updates disabled")
+            return
+            
+        self._initialize_client()
+    
+    def _initialize_client(self):
+        """Initialize Supabase client with environment variables"""
+        try:
+            # Try both prefixed and non-prefixed environment variable names
+            supabase_url = (
+                os.getenv('SUPABASE_URL') or 
+                os.getenv('NEXT_PUBLIC_SUPABASE_URL')
+            )
+            supabase_key = (
+                os.getenv('SUPABASE_SERVICE_ROLE_KEY') or 
+                os.getenv('SUPABASE_ANON_KEY') or
+                os.getenv('NEXT_PUBLIC_SUPABASE_ANON_KEY')
+            )
+            
+            if not supabase_url or not supabase_key:
+                print("⚠️  Missing Supabase configuration. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env file")
+                print("   Or use NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY")
+                return
+            
+            self.client = create_client(supabase_url, supabase_key)
+            self.initialized = True
+            print("✅ Supabase client initialized successfully")
+            
+        except Exception as e:
+            print(f"❌ Failed to initialize Supabase client: {e}")
+    
+    def update_ay_token(self, token: str) -> bool:
+        """Update the AY (Finnair) token in the program table"""
+        if not self.initialized or not self.client:
+            print("⚠️  Supabase client not initialized - cannot update database")
+            return False
+        
+        try:
+            # Remove 'Bearer ' prefix if present for storage
+            clean_token = token.replace('Bearer ', '') if token.startswith('Bearer ') else token
+            full_token = f"Bearer {clean_token}"
+            
+            # Update the program table
+            result = self.client.table('program').update({
+                'token': full_token
+            }).eq('code', 'AY').execute()
+            
+            if result.data:
+                print(f"✅ Successfully updated AY token in Supabase database")
+                print(f"   New token: {full_token[:50]}...")
+                return True
+            else:
+                print("❌ No rows were updated in the database")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Failed to update AY token in database: {e}")
+            return False
+    
+    def get_current_ay_token(self) -> Optional[str]:
+        """Get the current AY token from the database"""
+        if not self.initialized or not self.client:
+            return None
+        
+        try:
+            result = self.client.table('program').select('token').eq('code', 'AY').execute()
+            
+            if result.data and len(result.data) > 0:
+                return result.data[0].get('token')
+            return None
+            
+        except Exception as e:
+            print(f"❌ Failed to get current AY token: {e}")
+            return None
+
+
 class FinnairAuthManager:
     """Manages Finnair authentication and cookie persistence"""
     
@@ -105,7 +213,30 @@ class FinnairAuthManager:
         self.cookies_file = Path(cookies_file)
         self.driver = None
         self.cookies_loaded = False
+        self.supabase_manager = SupabaseManager()
         
+    def auto_update_database_token(self, token: str) -> bool:
+        """Automatically update the database with the new token when captured"""
+        if not self.supabase_manager.initialized:
+            print("⚠️  Supabase not available - skipping database update")
+            return False
+        
+        # Check if this is a new/different token
+        current_token = self.supabase_manager.get_current_ay_token()
+        if current_token == token:
+            print("ℹ️  Token is already up to date in database")
+            return True
+        
+        print("🔄 New token detected - updating Supabase database...")
+        success = self.supabase_manager.update_ay_token(token)
+        
+        if success:
+            print("✅ Database updated successfully with new AY token!")
+        else:
+            print("❌ Failed to update database with new token")
+        
+        return success
+
     def setup_driver(self, headless: bool = False):
         """Initialize undetected-chromedriver with optimal settings"""
         options = uc.ChromeOptions()
@@ -499,6 +630,11 @@ class FinnairAuthManager:
                 token = self.driver.execute_script(script)
                 if token:
                     print(f"✅ REAL Bearer token captured from Finnair API: {token[:50]}...")
+                    
+                    # Automatically update the database with the new token
+                    print("🔄 Automatically updating Supabase database with new token...")
+                    self.auto_update_database_token(token)
+                    
                     return token
                 
                 time.sleep(2)
@@ -734,7 +870,8 @@ class FinnairAuthManager:
                         element.click()
                         login_clicked = True
                         break
-                except:
+                except Exception as e:
+                    print(f"Could not use selector {selector}: {e}")
                     continue
             
             if not login_clicked:
@@ -772,7 +909,7 @@ class FinnairAuthManager:
             print("This might mean the login wasn't successful or cookies weren't set properly.")
             print("Try logging in again and make sure you're actually authenticated.")
     
-    def auto_login_with_cookies(self) -> bool:
+    def auto_login_with_cookies(self, max_attempts: int = 5, timeout_per_route: int = 30) -> bool:
         """Attempt to login using the specific CASTGC authentication cookie"""
         print("Attempting auto-login with CASTGC authentication cookie...")
         
@@ -780,26 +917,27 @@ class FinnairAuthManager:
         if not self.inject_castgc_cookie():
             return False
         
-        # Wait for the real Bearer token to be captured
-        print("Waiting for Finnair API to make offerList request and capture Bearer token...")
-        bearer_token = self.wait_for_bearer_token()
+        # Try multiple routes to capture Bearer token faster
+        print("🚀 Using multi-route strategy to capture Bearer token...")
+        bearer_token = self.try_multiple_routes_for_token(max_attempts=max_attempts, timeout_per_route=timeout_per_route)
         
         if bearer_token:
             print(f"🎯 SUCCESS! Captured REAL Bearer token: {bearer_token}")
+            print("✅ Token has been automatically updated in Supabase database!")
             print("You can now use this token in your curl commands!")
             return True
         else:
-            print("❌ Failed to capture Bearer token - API call may not have been made")
+            print("❌ Failed to capture Bearer token after trying all routes")
             return False
     
-    def run(self, force_manual: bool = False):
+    def run(self, force_manual: bool = False, max_attempts: int = 5, timeout_per_route: int = 30):
         """Main execution flow"""
         try:
             # Setup driver (headless by default)
             self.driver = self.setup_driver(headless=True)
             
             # Try auto flow only in headless
-            if not self.auto_login_with_cookies():
+            if not self.auto_login_with_cookies(max_attempts, timeout_per_route):
                 print("❌ Auto-login or token capture failed in headless mode.")
                 return
             
@@ -866,7 +1004,7 @@ class FinnairAuthManager:
         except Exception as e:
             print(f"❌ Failed to install preload interceptor: {e}")
 
-    def direct_url_access(self, target_url: str) -> bool:
+    def direct_url_access(self, target_url: str, max_attempts: int = 5, timeout_per_route: int = 30) -> bool:
         """Directly access any Finnair URL with injected cookies, bypassing redirects"""
         try:
             print(f"🚀 Direct URL access to: {target_url}")
@@ -923,12 +1061,13 @@ class FinnairAuthManager:
             # Set up XHR interception for offerList requests
             self.setup_xhr_interception()
             
-            # Wait for the real Bearer token to be captured
-            print("Waiting for Finnair API to make offerList request and capture Bearer token...")
-            bearer_token = self.wait_for_bearer_token()
+            # Try multiple routes to capture Bearer token faster
+            print("🚀 Using multi-route strategy to capture Bearer token...")
+            bearer_token = self.try_multiple_routes_for_token(max_attempts=max_attempts, timeout_per_route=timeout_per_route)
             
             if bearer_token:
                 print(f"🎯 SUCCESS! Captured REAL Bearer token: {bearer_token}")
+                print("✅ Token has been automatically updated in Supabase database!")
                 print("You can now use this token in your curl commands!")
                 
                 # Check if we're still on the target URL (not redirected)
@@ -940,7 +1079,7 @@ class FinnairAuthManager:
                     print("But we still captured the Bearer token!")
                     return True
             else:
-                print("❌ Failed to capture Bearer token - API call may not have been made")
+                print("❌ Failed to capture Bearer token after trying all routes")
                 return False
             
         except Exception as e:
@@ -993,10 +1132,103 @@ class FinnairAuthManager:
         except Exception as e:
             print(f"⚠️  Failed to install error auto-refresh: {e}")
 
+    def get_airport_combinations(self) -> List[tuple]:
+        """Get airport combinations to try, ensuring HEL is always one of them"""
+        helsinki = "HEL"
+        other_airports = ["ARN", "CPH", "LHR"]
+        
+        combinations = []
+        for other in other_airports:
+            # HEL -> Other
+            combinations.append((helsinki, other))
+            # Other -> HEL
+            combinations.append((other, helsinki))
+        
+        return combinations
+    
+    def generate_flight_url(self, origin: str, destination: str, days_ahead: int = 7) -> str:
+        """Generate a Finnair flight search URL for the given route"""
+        from datetime import datetime, timedelta
+        
+        # Calculate date
+        target_date = datetime.now() + timedelta(days=days_ahead)
+        date_str = target_date.strftime("%Y-%m-%d")
+        
+        # Create the JSON payload
+        json_data = {
+            "flights": [{
+                "origin": origin,
+                "destination": destination,
+                "departureDate": date_str
+            }],
+            "cabin": "MIXED",
+            "adults": 1,
+            "c15s": 0,
+            "children": 0,
+            "infants": 0,
+            "isAward": True
+        }
+        
+        # Encode the JSON
+        import urllib.parse
+        json_param = urllib.parse.quote(json.dumps(json_data))
+        
+        return f"https://www.finnair.com/us-en/booking/flight-selection?json={json_param}"
+    
+    def try_multiple_routes_for_token(self, max_attempts: int = 5, timeout_per_route: int = 30) -> Optional[str]:
+        """Try multiple airport combinations to capture a Bearer token"""
+        print(f"🔄 Trying multiple airport routes to capture Bearer token (max {max_attempts} attempts)")
+        
+        airport_combinations = self.get_airport_combinations()
+        print(f"📍 Available routes: {', '.join([f'{orig}→{dest}' for orig, dest in airport_combinations])}")
+        
+        for attempt in range(1, max_attempts + 1):
+            # Cycle through airport combinations
+            route_index = (attempt - 1) % len(airport_combinations)
+            origin, destination = airport_combinations[route_index]
+            
+            print(f"\n🔄 Attempt {attempt}/{max_attempts}: {origin} → {destination}")
+            
+            # Generate URL for this route
+            target_url = self.generate_flight_url(origin, destination)
+            print(f"🌐 URL: {target_url}")
+            
+            try:
+                # Navigate to the new route
+                self.driver.get(target_url)
+                time.sleep(3)
+                
+                # Inject cookies for this new route
+                self.inject_castgc_cookie()
+                
+                # Set up XHR interception
+                self.setup_xhr_interception()
+                
+                # Wait for token with shorter timeout
+                print(f"⏳ Waiting up to {timeout_per_route} seconds for Bearer token...")
+                bearer_token = self.wait_for_bearer_token(timeout=timeout_per_route)
+                
+                if bearer_token:
+                    print(f"🎯 SUCCESS! Captured Bearer token on route {origin} → {destination}")
+                    return bearer_token
+                else:
+                    print(f"⏰ Timeout on route {origin} → {destination}, trying next route...")
+                    
+            except Exception as e:
+                print(f"❌ Error on route {origin} → {destination}: {e}")
+                continue
+        
+        print(f"❌ Failed to capture Bearer token after {max_attempts} attempts")
+        return None
+
 
 def main():
     """Main entry point"""
     import argparse
+    import subprocess
+    import sys
+    import time
+    from datetime import datetime, timedelta
     
     parser = argparse.ArgumentParser(description="Finnair Authentication Manager")
     parser.add_argument("--force-manual", action="store_true", 
@@ -1005,8 +1237,21 @@ def main():
                        help="Path to cookies file (default: finnair_cookies.json)")
     parser.add_argument("--direct-url", type=str,
                        help="Directly access a specific Finnair URL with injected cookies")
+    parser.add_argument("--max-attempts", type=int, default=5,
+                       help="Maximum number of route attempts (default: 5)")
+    parser.add_argument("--timeout-per-route", type=int, default=30,
+                       help="Timeout in seconds per route (default: 30)")
+    parser.add_argument("--no-restart", action="store_true",
+                       help="Disable automatic restart (run once and exit)")
+    parser.add_argument("--restart-interval", type=int, default=100,
+                       help="Restart interval in minutes (default: 100)")
     
     args = parser.parse_args()
+    
+    # If this is a restart, show the restart info
+    if len(sys.argv) > 1 and "--restart" in sys.argv:
+        restart_count = int(sys.argv[sys.argv.index("--restart") + 1]) if "--restart" in sys.argv else 1
+        print(f"🔄 Restart #{restart_count} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Create auth manager
     auth_manager = FinnairAuthManager(cookies_file=args.cookies_file)
@@ -1016,24 +1261,71 @@ def main():
             # Direct URL access mode (headless)
             print(f"🚀 Direct URL access mode for: {args.direct_url}")
             auth_manager.setup_driver(headless=True)
-            success = auth_manager.direct_url_access(args.direct_url)
+            success = auth_manager.direct_url_access(args.direct_url, args.max_attempts, args.timeout_per_route)
             
             if not success:
                 print("❌ Direct URL access failed")
         else:
             # Normal authentication flow (headless)
-            auth_manager.run(force_manual=False)
+            print(f"🚀 Multi-route strategy: {args.max_attempts} attempts, {args.timeout_per_route}s per route")
+            auth_manager.run(force_manual=False, max_attempts=args.max_attempts, timeout_per_route=args.timeout_per_route)
             
     except KeyboardInterrupt:
         print("\nScript interrupted by user")
+        return
     except Exception as e:
         print(f"Unexpected error: {e}")
     finally:
         if auth_manager.driver:
             try:
-                auth_manager.driver.quit()
+                auth_manager.quit()
             except:
                 pass
+    
+    # Auto-restart logic (unless disabled)
+    if not args.no_restart:
+        restart_interval_minutes = args.restart_interval
+        restart_interval_seconds = restart_interval_minutes * 60
+        
+        print(f"\n⏰ Auto-restart enabled: Will restart in {restart_interval_minutes} minutes ({restart_interval_seconds} seconds)")
+        print(f"🔄 Next restart at: {datetime.now() + timedelta(minutes=restart_interval_minutes)}")
+        
+        # Sleep until next restart
+        try:
+            time.sleep(restart_interval_seconds)
+        except KeyboardInterrupt:
+            print("\n⏹️  Auto-restart interrupted by user")
+            return
+        
+        # Restart the script
+        print(f"🔄 Restarting script...")
+        
+        # Build restart command with current arguments
+        restart_cmd = [sys.executable, __file__]
+        
+        # Add all original arguments except --no-restart
+        for arg in sys.argv[1:]:
+            if arg != "--no-restart":
+                restart_cmd.append(arg)
+        
+        # Add restart counter
+        restart_count = 1
+        if "--restart" in sys.argv:
+            restart_count = int(sys.argv[sys.argv.index("--restart") + 1]) + 1
+        
+        restart_cmd.extend(["--restart", str(restart_count)])
+        
+        print(f"🔄 Executing: {' '.join(restart_cmd)}")
+        
+        try:
+            # Use subprocess to restart
+            subprocess.run(restart_cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to restart script: {e}")
+        except KeyboardInterrupt:
+            print("\n⏹️  Restart interrupted by user")
+    else:
+        print("✅ Script completed (auto-restart disabled)")
 
 
 if __name__ == "__main__":

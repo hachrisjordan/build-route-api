@@ -118,14 +118,23 @@ services:
       - "4003:4003"
     environment:
       - NODE_ENV=production
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - PROXY_HOST=${PROXY_HOST}
       - PROXY_PORT=${PROXY_PORT}
       - PROXY_USERNAME=${PROXY_USERNAME}
       - PROXY_PASSWORD=${PROXY_PASSWORD}
+      - CHROME_BIN=/usr/bin/chromium-browser
+      - CHROMEDRIVER_PATH=/usr/bin/chromedriver
+      - CHROME_DATA_DIR=/app/chrome-data
+      - DISPLAY=:99
     volumes:
       - ./finnair-microservice:/app/finnair-microservice
+      - ./finnair_cookies.json:/app/finnair_cookies.json:ro
+      - chrome_data:/app/chrome-data
     working_dir: /app
-    command: node finnair-microservice/finnair-service.js
+    command: /app/finnair-microservice/docker-start.sh
     networks:
       - app-network
 
@@ -179,10 +188,34 @@ services:
     networks:
       - app-network
 
+  # Shared Chrome service for undetected-chromedriver
+  chrome-service:
+    build: .
+    container_name: chrome-service
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DISPLAY=:99
+      - CHROME_BIN=/usr/bin/chromium-browser
+      - CHROMEDRIVER_PATH=/usr/bin/chromedriver
+      - CHROME_DATA_DIR=/app/chrome-data
+    volumes:
+      - chrome_data:/app/chrome-data
+    working_dir: /app
+    command: >
+      sh -c "
+        Xvfb :99 -screen 0 1920x1080x24 &
+        export DISPLAY=:99 &&
+        tail -f /dev/null
+      "
+    networks:
+      - app-network
+
 networks:
   app-network:
     driver: bridge
 
 volumes:
   redis_data:
-  valkey_data: 
+  valkey_data:
+  chrome_data: 

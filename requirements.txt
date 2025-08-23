@@ -2,3 +2,8 @@ cloudscraper==1.2.71
 requests==2.31.0
 urllib3==2.3.0
 redis==5.0.1 
+undetected-chromedriver>=3.5.5
+packaging>=23.0
+setuptools>=68.0.0
+supabase>=2.0.0
+python-dotenv>=1.0.0
