@@ -1400,22 +1400,9 @@ def main():
     
     args = parser.parse_args()
     
-    # If this is a restart, show the restart info
+    # Simple restart indicator
     if "--restart" in sys.argv:
-        try:
-            restart_index = sys.argv.index("--restart")
-            if restart_index + 1 < len(sys.argv):
-                restart_count = int(sys.argv[restart_index + 1])
-                # Limit restarts to prevent infinite loops
-                if restart_count > 1000:
-                    print("⚠️  Maximum restart limit reached (1000), exiting to prevent infinite loop")
-                    return
-                print(f"🔄 Restart #{restart_count} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            else:
-                print("🔄 Restart initiated (count not specified)")
-        except (ValueError, IndexError) as e:
-            print(f"⚠️  Could not parse restart count: {e}")
-            print("🔄 Restart initiated (count not specified)")
+        print(f"🔄 Auto-restart at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Create auth manager
     auth_manager = FinnairAuthManager(cookies_file=args.cookies_file)
@@ -1464,27 +1451,23 @@ def main():
         # Restart the script
         print(f"🔄 Restarting script...")
         
-        # Build restart command with current arguments
+        # Build restart command with clean arguments (no accumulated --restart params)
         restart_cmd = [sys.executable, __file__]
         
-        # Add all original arguments except --no-restart
-        for arg in sys.argv[1:]:
-            if arg != "--no-restart":
-                restart_cmd.append(arg)
+        # Add only the essential arguments, excluding --no-restart and any --restart params
+        essential_args = []
+        skip_next = False
         
-        # Add restart counter
-        restart_count = 1
-        if "--restart" in sys.argv:
-            try:
-                restart_index = sys.argv.index("--restart")
-                if restart_index + 1 < len(sys.argv):
-                    restart_count = int(sys.argv[restart_index + 1]) + 1
-                else:
-                    restart_count = 2
-            except (ValueError, IndexError):
-                restart_count = 2
+        for i, arg in enumerate(sys.argv[1:]):
+            if skip_next:
+                skip_next = False
+                continue
+            if arg == "--no-restart" or arg == "--restart":
+                skip_next = True  # Skip the next argument (the restart count)
+                continue
+            essential_args.append(arg)
         
-        restart_cmd.extend(["--restart", str(restart_count)])
+        restart_cmd.extend(essential_args)
         
         print(f"🔄 Executing: {' '.join(restart_cmd)}")
         
