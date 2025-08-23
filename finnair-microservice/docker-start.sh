@@ -63,5 +63,13 @@ fi
 echo "🚀 Starting Finnair authentication script..."
 cd /app/finnair-microservice
 
-# Run with auto-restart enabled (every 100 minutes)
-python3 finnair-auth.py --restart-interval 100
+# First, test if the script runs without auto-restart
+echo "🧪 Testing script execution..."
+if python3 finnair-auth.py --no-restart --help >/dev/null 2>&1; then
+    echo "✅ Script test successful, starting with auto-restart..."
+    # Run with auto-restart enabled (every 100 minutes)
+    python3 finnair-auth.py --restart-interval 100
+else
+    echo "❌ Script test failed, running without auto-restart for debugging..."
+    python3 finnair-auth.py --no-restart
+fi

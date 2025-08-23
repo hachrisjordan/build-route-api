@@ -237,31 +237,119 @@ class FinnairAuthManager:
         
         return success
 
-    def setup_driver(self, headless: bool = False):
-        """Initialize undetected-chromedriver with optimal settings"""
-        options = uc.ChromeOptions()
-        
-        if not headless:
-            options.add_argument("--start-maximized")
-        
-        # Add common options for better compatibility
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        
-        # Initialize driver
-        self.driver = uc.Chrome(options=options)
-        
-        # Execute script to remove webdriver property
-        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
-        # Install preload capture interceptor so we catch the very first requests
+    def setup_driver(self, headless: bool = True):
+        """Set up the undetected Chrome driver"""
         try:
-            self.install_preload_capture_interceptor()
+            # Configure Chrome options for Docker environment
+            options = uc.ChromeOptions()
+            
+            # Set Chrome binary path for Docker
+            chrome_bin = os.getenv('CHROME_BIN', '/usr/bin/chromium-browser')
+            if os.path.exists(chrome_bin):
+                options.binary_location = chrome_bin
+            
+            # Set ChromeDriver path for Docker
+            chromedriver_path = os.getenv('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
+            
+            # Docker-specific Chrome options
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-gpu')
+            options.add_argument('--disable-software-rasterizer')
+            options.add_argument('--disable-extensions')
+            options.add_argument('--disable-plugins')
+            options.add_argument('--disable-images')
+            options.add_argument('--disable-javascript')
+            options.add_argument('--disable-web-security')
+            options.add_argument('--allow-running-insecure-content')
+            options.add_argument('--disable-blink-features=AutomationControlled')
+            options.add_argument('--user-data-dir=/tmp/chrome-data')
+            
+            if headless:
+                options.add_argument('--headless')
+                options.add_argument('--disable-gpu')
+                options.add_argument('--no-sandbox')
+                options.add_argument('--disable-dev-shm-usage')
+            
+            # Create driver with Docker-specific configuration
+            self.driver = uc.Chrome(
+                driver_executable_path=chromedriver_path,
+                options=options,
+                version_main=None,  # Auto-detect version
+                use_subprocess=True,
+                headless=headless
+            )
+            
+            print("✅ Chrome driver initialized successfully")
+            
+            # Execute script to remove webdriver property
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            # Install preload capture interceptor so we catch the very first requests
+            try:
+                self.install_preload_capture_interceptor()
+            except Exception as e:
+                print(f"⚠️  Failed to install preload capture interceptor: {e}")
+            
+            return self.driver
+            
         except Exception as e:
-            print(f"⚠️  Failed to install preload capture interceptor: {e}")
-        
-        return self.driver
+            print(f"❌ Failed to initialize Chrome driver: {e}")
+            return None
+
+    def install_preload_interceptor(self, bearer_token: str) -> None:
+        """Install a pre-load script so XHR and fetch to offerList always carry Authorization."""
+        try:
+            # Safely embed token into JS string
+            token_js = "Bearer " + bearer_token.replace("\\", "\\\\").replace("'", "\\'")
+            preload_js = """
+            // XHR
+            (function() {
+              const TOKEN = '%s';
+              const matchUrl = (u) => (u && (u.includes('offerList') || u.includes('offers-prod')));
+              // Hook XHR
+              const origOpen = XMLHttpRequest.prototype.open;
+              const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+              XMLHttpRequest.prototype.open = function(method, url) {
+                this.__ayOfferList = matchUrl(url);
+                return origOpen.apply(this, arguments);
+              };
+              XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+                if (this.__ayOfferList && name.toLowerCase() === 'authorization') {
+                  // drop original
+                  return;
+                }
+                return origSetHeader.apply(this, arguments);
+              };
+              const origSend = XMLHttpRequest.prototype.send;
+              XMLHttpRequest.prototype.send = function(body) {
+                if (this.__ayOfferList) {
+                  try { origSetHeader.call(this, 'Authorization', TOKEN); } catch (e) {}
+                }
+                return origSend.apply(this, arguments);
+              };
+              // Hook fetch
+              const origFetch = window.fetch;
+              window.fetch = function(input, init={}) {
+                try {
+                  const url = (typeof input === 'string') ? input : (input && input.url) || '';
+                  if (matchUrl(url)) {
+                    init = init || {};
+                    init.headers = new Headers(init.headers || {});
+                    init.headers.set('Authorization', TOKEN);
+                  }
+                } catch (e) {}
+                return origFetch(input, init);
+              };
+              console.log('AY preload interceptor active');
+            })();
+            """ % token_js
+            # Ensure Network domain is enabled then install preload
+            self.driver.execute_cdp_cmd('Network.enable', {})
+            self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', { 'source': preload_js })
+            print('✅ Preload interceptor installed')
+        except Exception as e:
+            print(f"❌ Failed to install preload interceptor: {e}")
 
     def install_preload_capture_interceptor(self) -> None:
         """Install a pre-load script that captures REAL Authorization headers from XHR/fetch before any page scripts run."""
@@ -348,6 +436,7 @@ class FinnairAuthManager:
             })();
             """
             # Ensure the script is evaluated on every new document before any page scripts
+            self.driver.execute_cdp_cmd('Network.enable', {})
             self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', { 'source': preload_js })
             print('✅ Preload capture interceptor installed')
         except Exception as e:
@@ -934,7 +1023,10 @@ class FinnairAuthManager:
         """Main execution flow"""
         try:
             # Setup driver (headless by default)
-            self.driver = self.setup_driver(headless=True)
+            driver = self.setup_driver(headless=True)
+            if not driver:
+                print("❌ Failed to setup Chrome driver")
+                return
             
             # Try auto flow only in headless
             if not self.auto_login_with_cookies(max_attempts, timeout_per_route):
@@ -946,7 +1038,7 @@ class FinnairAuthManager:
         finally:
             if self.driver:
                 try:
-                    self.driver.quit()
+                    self.quit()
                 except:
                     pass
 
@@ -1249,9 +1341,21 @@ def main():
     args = parser.parse_args()
     
     # If this is a restart, show the restart info
-    if len(sys.argv) > 1 and "--restart" in sys.argv:
-        restart_count = int(sys.argv[sys.argv.index("--restart") + 1]) if "--restart" in sys.argv else 1
-        print(f"🔄 Restart #{restart_count} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    if "--restart" in sys.argv:
+        try:
+            restart_index = sys.argv.index("--restart")
+            if restart_index + 1 < len(sys.argv):
+                restart_count = int(sys.argv[restart_index + 1])
+                # Limit restarts to prevent infinite loops
+                if restart_count > 1000:
+                    print("⚠️  Maximum restart limit reached (1000), exiting to prevent infinite loop")
+                    return
+                print(f"🔄 Restart #{restart_count} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            else:
+                print("🔄 Restart initiated (count not specified)")
+        except (ValueError, IndexError) as e:
+            print(f"⚠️  Could not parse restart count: {e}")
+            print("🔄 Restart initiated (count not specified)")
     
     # Create auth manager
     auth_manager = FinnairAuthManager(cookies_file=args.cookies_file)
@@ -1311,7 +1415,14 @@ def main():
         # Add restart counter
         restart_count = 1
         if "--restart" in sys.argv:
-            restart_count = int(sys.argv[sys.argv.index("--restart") + 1]) + 1
+            try:
+                restart_index = sys.argv.index("--restart")
+                if restart_index + 1 < len(sys.argv):
+                    restart_count = int(sys.argv[restart_index + 1]) + 1
+                else:
+                    restart_count = 2
+            except (ValueError, IndexError):
+                restart_count = 2
         
         restart_cmd.extend(["--restart", str(restart_count)])
         

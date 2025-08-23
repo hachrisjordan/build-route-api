@@ -38,3 +38,4 @@ python3 finnair-auth.py
 
 echo ""
 echo "�� Service stopped."
+
