@@ -5,11 +5,11 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const compression = require('compression'); // 1. Import compression
 
 /**
- * Required environment variables for proxy:
- * - PROXY_HOST
- * - PROXY_PORT
- * - PROXY_USERNAME
- * - PROXY_PASSWORD
+ * Required environment variables for Oxylabs proxy:
+ * - OXYLABS_USERNAME
+ * - OXYLABS_PASSWORD
+ * - OXYLABS_COUNTRY
+ * - OXYLABS_PROXY
  */
 
 const app = express();
@@ -17,22 +17,33 @@ app.use(express.json());
 app.use(compression()); // 2. Use compression middleware
 
 app.post('/alaska', async (req, res) => {
-  // Proxy config (runtime only)
+  // Oxylabs proxy config
   const USE_PROXY = true;
-  const proxy_host = process.env.PROXY_HOST;
-  const proxy_port = process.env.PROXY_PORT;
-  const proxy_username = process.env.PROXY_USERNAME;
-  const proxy_password = process.env.PROXY_PASSWORD;
-  if (USE_PROXY && (!proxy_host || !proxy_port || !proxy_username || !proxy_password)) {
-    return res.status(500).json({ error: 'Proxy configuration is missing. Please set PROXY_HOST, PROXY_PORT, PROXY_USERNAME, and PROXY_PASSWORD in your environment variables.' });
+  const username = process.env.OXYLABS_USERNAME;
+  const password = process.env.OXYLABS_PASSWORD;
+  const country = process.env.OXYLABS_COUNTRY;
+  const proxy = process.env.OXYLABS_PROXY;
+  
+  if (USE_PROXY && (!username || !password || !country || !proxy)) {
+    return res.status(500).json({ error: 'Oxylabs proxy configuration is missing. Please set OXYLABS_USERNAME, OXYLABS_PASSWORD, OXYLABS_COUNTRY, and OXYLABS_PROXY in your environment variables.' });
   }
-  const PROXY_URL = USE_PROXY
-    ? `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`
-    : undefined;
-  const proxyAgent = USE_PROXY && PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
+  
+  // Use HTTP proxy with advanced SSL handling to bypass SSL pinning
+  const proxyAgent = USE_PROXY ? new HttpsProxyAgent(`http://${username}-cc-${country}:${password}@${proxy}`, {
+    rejectUnauthorized: false, // Bypass SSL certificate validation
+    secureProxy: false, // Allow insecure proxy connections
+    keepAlive: true, // Keep connection alive
+    timeout: 30000, // 30 second timeout
+    // Additional SSL bypass options
+    ciphers: 'ALL', // Accept all ciphers
+    minVersion: 'TLSv1', // Accept older TLS versions
+    maxVersion: 'TLSv1.3', // Accept newer TLS versions
+  }) : undefined;
 
   const { from, to, depart, ADT } = req.body;
   try {
+    console.log(`Using Oxylabs proxy with SSL bypass for Alaska Airlines`);
+    
     const postData = {
       origins: [from],
       destinations: [to],
@@ -99,14 +110,18 @@ app.post('/alaska', async (req, res) => {
       body: JSON.stringify(postData),
     };
     if (USE_PROXY) fetchOptions.agent = proxyAgent;
+    
+    console.log(`Making request to Alaska Airlines through Oxylabs proxy`);
     const response = await fetch(url, fetchOptions);
     if (!response.ok) {
       const errorText = await response.text();
       return res.status(response.status).json({ error: 'Alaska API error', status: response.status, body: errorText });
     }
     const json = await response.json();
+    console.log(`✅ SUCCESS - got valid response from Alaska Airlines through Oxylabs proxy`);
     res.status(200).json(json);
   } catch (err) {
+    console.log(`❌ Network error: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
