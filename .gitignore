@@ -20,3 +20,4 @@ docker/jetblue-crontab
 
 # Sentry Config File
 .env.sentry-build-plugin
+command.sh

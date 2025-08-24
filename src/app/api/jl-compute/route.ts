@@ -5,6 +5,7 @@ import { getAvailableProKey } from '@/lib/supabase-admin';
 import { createClient } from '@supabase/supabase-js';
 import { getSupabaseConfig } from '@/lib/env-utils';
 import { addDays, subDays, format } from 'date-fns';
+import { decryptResponseAES } from '@/lib/aes-encryption';
 
 /*
  * PERFORMANCE OPTIMIZATIONS IMPLEMENTED:
@@ -144,6 +145,20 @@ async function fetchLiveSearchASData(
       console.log(`    ✅ API call successful, parsing response...`);
       const data = await response.json();
       
+      // Check if response is encrypted and decrypt if necessary
+      if (data && data.encrypted && data.token) {
+        try {
+          console.log(`    🔓 Decrypting encrypted response...`);
+          const decryptedData = decryptResponseAES(data.token);
+          console.log(`    ✅ Decryption successful, found ${decryptedData.itinerary?.length || 0} itineraries`);
+          return decryptedData;
+        } catch (decryptError) {
+          console.error(`    ❌ Failed to decrypt response:`, decryptError);
+          return null;
+        }
+      }
+      
+      // Handle unencrypted response (fallback)
       if (data && data.itinerary) {
         console.log(`    📋 Response contains ${data.itinerary.length} itineraries`);
       } else {
