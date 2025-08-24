@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { encryptResponseJWT } from '@/lib/jwt-encryption';
 
 const LiveSearchAYSchema = z.object({
   from: z.string().min(3), // Origin
@@ -136,7 +137,15 @@ export async function POST(req: NextRequest) {
     }
     const json = await microResp.json();
     const itinerary = normalizeItinerariesAY(json);
-    return NextResponse.json({ currency: json.currency, itinerary });
+    
+    // Encrypt the response data
+    const { token, expiresAt } = encryptResponseJWT({ currency: json.currency, itinerary });
+    
+    return NextResponse.json({
+      encrypted: true,
+      token,
+      expiresAt
+    });
   } catch (err) {
     console.error('Error in live-search-AY POST:', err);
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });

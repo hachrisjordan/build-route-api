@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { encryptResponseJWT } from '@/lib/jwt-encryption';
 
 const LiveSearchASSchema = z.object({
   from: z.string().min(3), // Origin
@@ -108,7 +109,15 @@ export async function POST(req: NextRequest) {
     }
     const json = await microResp.json();
     const itinerary = normalizeItineraries(json);
-    return NextResponse.json({ itinerary });
+    
+    // Encrypt the response data
+    const { token, expiresAt } = encryptResponseJWT({ itinerary });
+    
+    return NextResponse.json({
+      encrypted: true,
+      token,
+      expiresAt
+    });
   } catch (err) {
     console.error('Error in live-search-AS POST:', err);
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });

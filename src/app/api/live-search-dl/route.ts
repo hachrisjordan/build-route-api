@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { encryptResponseJWT } from '@/lib/jwt-encryption';
 
 const LiveSearchDLSchema = z.object({
   from: z.string().min(3),
@@ -118,7 +119,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Delta microservice error', status: microResp.status, body: errorText }, { status: microResp.status });
     }
     const raw = await microResp.json();
-    return NextResponse.json(raw);
+    
+    // Encrypt the response data
+    const { token, expiresAt } = encryptResponseJWT(raw);
+    
+    return NextResponse.json({
+      encrypted: true,
+      token,
+      expiresAt
+    });
   } catch (err) {
     console.error('Error in live-search-DL POST:', err);
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });

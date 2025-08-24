@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { encryptResponseJWT } from '@/lib/jwt-encryption';
 
 const AA_SEARCH_URL = 'https://www.aa.com/booking/api/search/itinerary';
 
@@ -167,7 +168,15 @@ export async function POST(req: NextRequest) {
     const data = await microResp.json();
     // Normalize the response
     const normalized = normalizeAAResponse(data);
-    return NextResponse.json(normalized);
+    
+    // Encrypt the response data
+    const { token, expiresAt } = encryptResponseJWT(normalized);
+    
+    return NextResponse.json({
+      encrypted: true,
+      token,
+      expiresAt
+    });
   } catch (err) {
     console.error('Error in live-search-AA POST:', err);
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });

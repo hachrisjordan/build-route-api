@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { encryptResponseJWT } from '@/lib/jwt-encryption';
 
 const LiveSearchUASchema = z.object({
   from: z.string().min(3), // Origin
@@ -129,7 +130,15 @@ export async function POST(req: NextRequest) {
     });
     const data = await resp.json();
     const itinerary = normalizeItinerariesUA(data);
-    return NextResponse.json({ itinerary });
+    
+    // Encrypt the response data
+    const { token, expiresAt } = encryptResponseJWT({ itinerary });
+    
+    return NextResponse.json({
+      encrypted: true,
+      token,
+      expiresAt
+    });
   } catch (error) {
     return NextResponse.json({ error: 'Internal error', details: String(error) }, { status: 500 });
   }

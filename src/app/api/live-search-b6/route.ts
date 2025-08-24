@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import { encryptResponseJWT } from '@/lib/jwt-encryption';
 
 const JETBLUE_LFS_URL = 'https://jbrest.jetblue.com/lfs-rwb/outboundLFS';
 const JETBLUE_HEADERS = {
@@ -203,7 +204,15 @@ export async function POST(req: NextRequest) {
       ? data.itinerary.map(normalizeItinerary)
       : [];
     const transformedItineraries = transformItineraries(itineraries);
-    return NextResponse.json({ itinerary: transformedItineraries });
+    
+    // Encrypt the response data
+    const { token, expiresAt } = encryptResponseJWT({ itinerary: transformedItineraries });
+    
+    return NextResponse.json({
+      encrypted: true,
+      token,
+      expiresAt
+    });
   } catch (err) {
     console.error('Error in live-search-B6 POST:', err);
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });
