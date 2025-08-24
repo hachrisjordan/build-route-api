@@ -16,6 +16,7 @@ x11vnc -display :99 -forever -shared -passwd vncpassword -rfbport 5900 -bg
 # Now start all microservices
 node alaska-microservice/alaska-service.js &
 node jetblue-microservice/jetblue-service.js &
+node american-microservice/american-service.js &
 node finnair-microservice/finnair-service.js &
 npx tsx united-microservice/united-service.ts &
 # Start the main Next.js app (foreground)
