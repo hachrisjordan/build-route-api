@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { encryptResponseJWT } from '@/lib/jwt-encryption';
+import { encryptResponseAES } from '@/lib/aes-encryption';
 
 const LiveSearchDLSchema = z.object({
   from: z.string().min(3),
@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
     const raw = await microResp.json();
     
     // Encrypt the response data
-    const { token, expiresAt } = encryptResponseJWT(raw);
+    const { token, expiresAt } = encryptResponseAES(raw);
     
     return NextResponse.json({
       encrypted: true,

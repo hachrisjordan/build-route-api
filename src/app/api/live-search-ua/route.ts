@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { encryptResponseJWT } from '@/lib/jwt-encryption';
+import { encryptResponseAES } from '@/lib/aes-encryption';
 
 const LiveSearchUASchema = z.object({
   from: z.string().min(3), // Origin
@@ -132,7 +132,7 @@ export async function POST(req: NextRequest) {
     const itinerary = normalizeItinerariesUA(data);
     
     // Encrypt the response data
-    const { token, expiresAt } = encryptResponseJWT({ itinerary });
+    const { token, expiresAt } = encryptResponseAES({ itinerary });
     
     return NextResponse.json({
       encrypted: true,

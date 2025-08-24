@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { encryptResponseJWT } from '@/lib/jwt-encryption';
+import { encryptResponseAES } from '@/lib/aes-encryption';
 
 const JETBLUE_LFS_URL = 'https://jbrest.jetblue.com/lfs-rwb/outboundLFS';
 const JETBLUE_HEADERS = {
@@ -206,7 +206,7 @@ export async function POST(req: NextRequest) {
     const transformedItineraries = transformItineraries(itineraries);
     
     // Encrypt the response data
-    const { token, expiresAt } = encryptResponseJWT({ itinerary: transformedItineraries });
+    const { token, expiresAt } = encryptResponseAES({ itinerary: transformedItineraries });
     
     return NextResponse.json({
       encrypted: true,
