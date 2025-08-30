@@ -60,6 +60,8 @@ def patch_distutils():
             class LooseVersion:
                 def __init__(self, version_string):
                     self.version_string = str(version_string)
+                    self.version = str(version_string)  # Add missing version attribute
+                    self.vstring = str(version_string)  # Add missing vstring attribute
                 
                 def __str__(self):
                     return self.version_string
@@ -516,44 +518,40 @@ class FinnairAuthManager:
             return False
     
     def inject_castgc_cookie(self):
-        """Inject the specific CASTGC authentication cookie from .AUTH.FINNAIR.COM"""
+        """Inject the hardcoded authentication cookies"""
         try:
             # Go directly to the target URL first to set the context
             target_url = "https://www.finnair.com/us-en/booking/flight-selection?json=%7B%22flights%22:%5B%7B%22origin%22:%22HEL%22,%22destination%22:%22ARN%22,%22departureDate%22:%222025-08-27%22%7D%5D,%22cabin%22:%22MIXED%22,%22adults%22:1,%22c15s%22:0,%22children%22:0,%22infants%22:0,%22isAward%22:true%7D"
             
-            print("Navigating directly to target URL to set context...")
-            self.driver.get(target_url)
+            # STEP 1: Go to main page first
+            print("1️⃣ Going to main page first...")
+            self.driver.get("https://www.finnair.com/us-en")
             time.sleep(3)
             
-            # Install error auto-refresh watcher
-            self.install_error_auto_refresh(max_reloads=2)
-            
-            print(f"Current URL: {self.driver.current_url}")
-            print(f"Page title: {self.driver.title}")
-            
-            # Inject all the authentication cookies with correct domain format
+            # STEP 2: Inject cookies to establish login
+            print("2️⃣ Injecting authentication cookies...")
             auth_cookies = [
                 {
                     'name': 'CASTGC',
-                    'value': 'eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6IjEwMDY4MDExLWJjN2QtNGJhNi1iMjhiLTViMjg5M2I2NzVlYyJ9.ZXlKNmFYQWlPaUpFUlVZaUxDSmhiR2NpT2lKa2FYSWlMQ0psYm1NaU9pSkJNVEk0UTBKRExVaFRNalUySWl3aVkzUjVJam9pU2xkVUlpd2lkSGx3SWpvaVNsZFVJaXdpYTJsa0lqb2lZekZtTXpSbE9EUXROV1poTVMwME5qSm1MV0kxTXpZdFlqUTVPR0k1TjJWbU0ySTNJbjAuLlF3OTFQbldzelFGS3VhUEVWZ2p4eGcuS1NXZ2oyV3JycnRQTk13eUhGVDlQampGZ3VLclhNRHVNOGotRlNSQ3dVWWNYMEdGd0UtRnFYY01HNnFqd25QcDRfRnBsbVgwR0pzU1VDaGI5WVBYckJpZzNHRjM5X0ZEWlFKMG9jOVFmX003dDlKdVM2OVdmWlZQMXR2a0lSdkEuWkEyMkVFZV9uYTRmbzFaWE1RRlY3Zw.veztKC9ozmo4KGNigDSMCCt4ce-W0q46GKEX7NIAGM9qUu3bvX8QXWWq-LVtRpe9sB5uTivvLqTyt645C60UEw',
+                    'value': 'eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6ImRlZGM0MTVhLTg5MWQtNDUzYi05NWU0LTA4ZDk3ZDNlNGFhYSJ9.ZXlKNmFYQWlPaUpFUlVZaUxDSmhiR2NpT2lKa2FYSWlMQ0psYm1NaU9pSkJNVEk0UTBKRExVaFRNalUySWl3aVkzUjVJam9pU2xkVUlpd2lkSGx3SWpvaVNsZFVJaXdpYTJsa0lqb2lNVGN3TlRWaU1Ua3RaR0prT1MwMFlUa3hMVGczTURVdE5qaGhZV1U1WmpRNFlXSmlJbjAuLjRpT2xfaVhTNDVJVWR5blF2cVA3RFEucWR3SUp5TVgyc0pQeXFwV2FpVERGbFBRRTBndDBDZ2QwbzgxblpPaUVxMDZIQktGUmFxUzlsU3BtYU40T3ZrUnVWemROSGs5aXczd2ZaYXJJVlBmSlllVEx2OVB6cGQ3WF8xU0N5SnFoR0FsUWlGZldNa1E2YnQ3S0N0SlVUazZ3NVRyRHZKeXROWjQ1eEl5TWdMcTFBLmdGajNqWWlqX1RsNE9WSkVVZTFhWWc.C6y68M5tqpQ7_vcv45EdQwp15jiZvP8ZTLfJYSLgWsUwuqYfS4UBAX8IyXnfFxz-57qPYS_ZdRdOlV4JnpLZ-g',
                     'domain': '.finnair.com',
                     'path': '/cas'
                 },
                 {
                     'name': 'AWSALB',
-                    'value': 'rbMHNmM8HJ3tVtvMHJC0kANZygtLR1d5CIBS4pRy9bEJllGfe/trXUJ++xysx5G3f6S+EyrChQHMpx/Ylz+mXzadw5gIpKspGRWlROX+kE7ACWv58CbhwUJ48uEg',
+                    'value': 'kL5yiAI/87MYrudnQXSPRDtnadLv518nHQEWIa25IbjAxYxh1kRNCpZD79NtPShU5Tj+Q5Bq1aN5JMwqmxaIMzbVtAVSnEJz++jjzTwOxIpBJJRTP1kY5O/DWe3R',
                     'domain': '.finnair.com',
                     'path': '/'
                 },
                 {
                     'name': 'AWSALBCORS', 
-                    'value': 'rbMHNmM8HJ3tVtvMHJC0kANZygtLR1d5CIBS4pRy9bEJllGfe/trXUJ++xysx5G3f6S+EyrChQHMpx/Ylz+mXzadw5gIpKspGRWlROX+kE7ACWv58CbhwUJ48uEg',
+                    'value': 'kL5yiAI/87MYrudnQXSPRDtnadLv518nHQEWIa25IbjAxYxh1kRNCpZD79NtPShU5Tj+Q5Bq1aN5JMwqmxaIMzbVtAVSnEJz++jjzTwOxIpBJJRTP1kY5O/DWe3R',
                     'domain': '.finnair.com',
                     'path': '/'
                 },
                 {
                     'name': 'CASJSESSIONID',
-                    'value': '84913EBA3DEA6371F23958B3F8BFF6E9',
+                    'value': '5ED0998E774DCA83CE0812EE5513B352',
                     'domain': '.finnair.com',
                     'path': '/cas'
                 }
@@ -568,7 +566,23 @@ class FinnairAuthManager:
                     print(f"❌ Failed to inject {cookie['name']}: {e}")
             
             print("✅ All authentication cookies injected")
-            print("Cookies applied immediately - no refresh needed!")
+            
+            # STEP 3: Wait 10 seconds for cookies to take effect
+            print("3️⃣ Waiting 10 seconds for cookies to take effect...")
+            time.sleep(10)
+            
+            # STEP 4: Now navigate to flight page
+            print("4️⃣ Now navigating to flight search page...")
+            self.driver.get(target_url)
+            time.sleep(5)
+            
+            # Check if navigation was successful
+            current_url = self.driver.current_url
+            print(f"Current URL: {current_url}")
+            print(f"Page title: {self.driver.title}")
+            
+            # Install error auto-refresh watcher
+            self.install_error_auto_refresh(max_reloads=2)
             
             # Change the date to 7 days after today
             self.change_flight_date()
@@ -579,7 +593,7 @@ class FinnairAuthManager:
             return True
             
         except Exception as e:
-            print(f"❌ Error: {e}")
+            print(f"❌ Error injecting cookies: {e}")
             return False
     
     def change_flight_date(self):
@@ -858,14 +872,18 @@ class FinnairAuthManager:
                 if any(pattern.lower() in name for pattern in excluded_patterns):
                     continue
                 
-                # Only include cookies that look like they could be authentication-related
+                # Include cookies that look like they could be authentication-related
                 if any(auth_indicator in name for auth_indicator in [
                     'session', 'token', 'auth', 'login', 'user', 'member', 'customer',
-                    'access', 'jwt', 'bearer', 'identity', 'credential', 'sid', 'id'
+                    'access', 'jwt', 'bearer', 'identity', 'credential', 'sid', 'id',
+                    'castgc', 'jsessionid', 'finnair', 'cas', 'saml', 'oauth'
                 ]):
                     auth_cookies.append(cookie)
-                elif 'auth.finnair.com' in domain and name not in excluded_patterns:
-                    # Include cookies from auth.finnair.com that aren't explicitly excluded
+                elif 'auth.finnair.com' in domain:
+                    # Include ALL cookies from auth.finnair.com (they're likely auth-related)
+                    auth_cookies.append(cookie)
+                elif '.finnair.com' in domain and name not in excluded_patterns:
+                    # Include other Finnair cookies that might be auth-related
                     auth_cookies.append(cookie)
             
             if not auth_cookies:
@@ -1080,9 +1098,18 @@ class FinnairAuthManager:
                 print("❌ Failed to setup Chrome driver")
                 return
             
-            # Try auto flow only in headless
+            # Check if we should force manual login or try cookies first
+            if force_manual:
+                print("🔐 Force manual login mode - starting manual login flow...")
+                self.manual_login_flow()
+                return
+            
+            # Try auto flow with cookies first
+            print("🔄 Attempting auto-login with saved cookies...")
             if not self.auto_login_with_cookies(max_attempts, timeout_per_route):
-                print("❌ Auto-login or token capture failed in headless mode.")
+                print("❌ Auto-login failed - cookies may be expired or invalid")
+                print("🔄 Falling back to manual login...")
+                self.manual_login_flow()
                 return
             
         except Exception as e:
@@ -1167,19 +1194,19 @@ class FinnairAuthManager:
             auth_cookies = [
                 {
                     'name': 'CASTGC',
-                    'value': 'eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6IjAzNDFmMjA5LTQwMjctNDc2ZS1iZDk2LTQ2NWM5Y2IxMjRmZSJ9.ZXlKNmFYQWlPaUpFUlVZaUxDSmhiR2NpT2lKa2FYSWlMQ0psYm1NaU9pSkJNVEk0UTBKRExVaFRNalUySWl3aVkzUjVJam9pU2xkVUlpd2lkSGx3SWpvaVNsZFVJaXdpYTJsa0lqb2lOakkxWmpFMll6RXROREkzWkMwMFl6WmtMVGs0TVRrdFpqUTJaV1l6TmpWbE5tVmtJbjAuLjhqbFJqWmZjRWx6OFAzXzNjYTNpX0EuUVFrQmlIeW5wRFhwT2dRbmxjYmRqdWZFNzAtY21nak9EbG00dVpjOFcyZDh0T2otWXhwckxXQ3dOY3U4S3hPaDN1WmVVRUN5R1JxUm4xNnFpWTJqRlBVX2NJaXdZZ1hEbDkwckstVXpCN2N5dEw3OE93cm81VzZhNXgxbDd6UjBhMGdIRkVSQVRJVGI2eXZJVlpPZGh3LkgwTEtWMkZFYXV3YXVEQ3FNQ3ZJZFE.47O7LXtcHHKTLv4xMDPlwhKko10thMZK0keuQjlIMhbljvQyYKTjSdbGx9NAO_OV9K5a0OP59nRtbcZBKazCIQ',
+                    'value': 'eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6ImRlZGM0MTVhLTg5MWQtNDUzYi05NWU0LTA4ZDk3ZDNlNGFhYSJ9.ZXlKNmFYQWlPaUpFUlVZaUxDSmhiR2NpT2lKa2FYSWlMQ0psYm1NaU9pSkJNVEk0UTBKRExVaFRNalUySWl3aVkzUjVJam9pU2xkVUlpd2lkSGx3SWpvaVNsZFVJaXdpYTJsa0lqb2lNVGN3TlRWaU1Ua3RaR0prT1MwMFlUa3hMVGczTURVdE5qaGhZV1U1WmpRNFlXSmlJbjAuLjRpT2xfaVhTNDVJVWR5blF2cVA3RFEucWR3SUp5TVgyc0pQeXFwV2FpVERGbFBRRTBndDBDZ2QwbzgxblpPaUVxMDZIQktGUmFxUzlsU3BtYU40T3ZrUnVWemROSGs5aXczd2ZaYXJJVlBmSlllVEx2OVB6cGQ3WF8xU0N5SnFoR0FsUWlGZldNa1E2YnQ3S0N0SlVUazZ3NVRyRHZKeXROWjQ1eEl5TWdMcTFBLmdGajNqWWlqX1RsNE9WSkVVZTFhWWc.C6y68M5tqpQ7_vcv45EdQwp15jiZvP8ZTLfJYSLgWsUwuqYfS4UBAX8IyXnfFxz-57qPYS_ZdRdOlV4JnpLZ-g',
                     'domain': '.finnair.com',
                     'path': '/cas'
                 },
                 {
                     'name': 'AWSALB',
-                    'value': 'LYwohEla4wBDBJEv5PN22m7QOYziDr63pTBhQB1b4CppLn2MOp7CPxrmQxR0UklWO3uuvzxFUDqKzMhSdJF50nr70pW6fu2R63i/vul8I/b55u//vCQo3PQQkCfK',
+                    'value': 'kL5yiAI/87MYrudnQXSPRDtnadLv518nHQEWIa25IbjAxYxh1kRNCpZD79NtPShU5Tj+Q5Bq1aN5JMwqmxaIMzbVtAVSnEJz++jjzTwOxIpBJJRTP1kY5O/DWe3R',
                     'domain': '.finnair.com',
                     'path': '/'
                 },
                 {
                     'name': 'AWSALBCORS', 
-                    'value': 'LYwohEla4wBDBJEv5PN22m7QOYziDr63pTBhQB1b4CppLn2MOp7CPxrmQxR0UklWO3uuvzxFUDqKzMhSdJF50nr70pW6fu2R63i/vul8I/b55u//vCQo3PQQkCfK',
+                    'value': 'kL5yiAI/87MYrudnQXSPRDtnadLv518nHQEWIa25IbjAxYxh1kRNCpZD79NtPShU5Tj+Q5Bq1aN5JMwqmxaIMzbVtAVSnEJz++jjzTwOxIpBJJRTP1kY5O/DWe3R',
                     'domain': '.finnair.com',
                     'path': '/'
                 },
@@ -1342,9 +1369,6 @@ class FinnairAuthManager:
                 self.driver.get(target_url)
                 time.sleep(3)
                 
-                # Inject cookies for this new route
-                self.inject_castgc_cookie()
-                
                 # Set up XHR interception
                 self.setup_xhr_interception()
                 
@@ -1419,7 +1443,7 @@ def main():
         else:
             # Normal authentication flow (headless)
             print(f"🚀 Multi-route strategy: {args.max_attempts} attempts, {args.timeout_per_route}s per route")
-            auth_manager.run(force_manual=False, max_attempts=args.max_attempts, timeout_per_route=args.timeout_per_route)
+            auth_manager.run(force_manual=args.force_manual, max_attempts=args.max_attempts, timeout_per_route=args.timeout_per_route)
             
     except KeyboardInterrupt:
         print("\nScript interrupted by user")

@@ -1,201 +1,22 @@
 [
   {
     "domain": ".finnair.com",
-    "expiry": 1755763056,
+    "expiry": 1756598032,
     "httpOnly": false,
-    "name": "bm_sv",
+    "name": "bm_mi",
     "path": "/",
     "sameSite": "Lax",
     "secure": true,
-    "value": "6513F3B2BF72FEA192E78701E7832154~YAAQEhchFyoiVLiYAQAA6P00yxxzp8vSoo/QMQY+PSb3te/kcNqD2haNE0NlHvsR10qZwQ3SEkzfD0WOugACSkmoqV8XxqBOhHhRmR+VonwesyPufXJuFJHzlVDewCl99lquUNzBEw/wtGIvfAY08WdCsD586qYuUG3vEHtU3/MuR6WrKubD//iw9q08s0cHVVOX7zCoITCs9hdL8zUN6eoBz/cykiC4N2pa1GUGX1nX9MBqAqxbYVaqGM+M1QzIqKY=~1"
+    "value": "0D406D10A5EC37C23F8EC960D8D6E106~YAAQ6NbXFxVhgPKYAQAAuMH5/ByVAH4CxepnJmVXUZyAgWdv35ver9/v6QTFUC8aVwTbrmaIkJml5/ZIBdci3+21t/nR30m7PuhKJqW8qtj/M+zK7LBA2fcoyrMRlwawj9OpQuzoRZHRZZ4vqr/0viwL41OSMOAa3hFR9tjMPdgcotAaCZ74+Snj+0daqdhvv58uft6GYiEStZ94ssV9UeRBM4O0ZSTaCx+25lbkaldBNFwSs8T2IBLLHnWY8QrNKVLUjBHOuUVlRw2nKhfqTkpf9fPU9Gvqz/nF9APfYE+jqhZbJBBOgC+Dr6uc9g==~1"
   },
   {
     "domain": ".finnair.com",
-    "expiry": 1756360702,
-    "httpOnly": false,
-    "name": "RT",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": false,
-    "value": "\"z=1&dm=finnair.com&si=8863355b-a8f0-4e0f-be8f-697c037e4e7d&ss=mekzpcwr&sl=1&tt=1ha&rl=1\""
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1790315902,
-    "httpOnly": false,
-    "name": "_ga_FZXKMEMZNH",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": false,
-    "value": "GS2.1.s1755755866$o1$g1$t1755755902$j24$l0$h0"
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1755770256,
-    "httpOnly": false,
-    "name": "bm_sz",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": false,
-    "value": "F05913F70ED91F33D17545EB503D28F3~YAAQEhchF8IhVLiYAQAAIfc0yxxYNJcKlsqP0JC1IMKhnuEQ5WkY0ggMPWuDso3pFXencV5svRF1R6d57D1DPR30Eug8y8me1QqwNX1bPUVB5ChBO3i+kdVUD1Y8huMh2ytgQNMM3CL7KNWu7/XT1XSzyLTmD0qZlp5+bFunZfcweTu5WsbeeIsIQAf1gkq223kgWBQf4B2g46BplyIG0R5h6U2yquj4SOIeYifC4xVU5HW8wzPc8NAyB9JLhfUhaVhwtvyc2rhIsyuIVDUMO2UwdNn5O07Sf8NYzqBQC5dqb6RMTtuEzartvnZsq3BlUISLgPwrZakCe1zm/X4j5Sbdz9hFSEaZoCsHVN0rEafOI9Ybidrf97xk84RdbMwZr0zNVes0fvVsV5jZTJdYYweSLKEainl8tLzZZTXZxJAGvLTphuNKsI15DSs5Rl8FCvMBt4BJyLkp3iLbAA==~4535362~4405554"
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1755759479,
+    "expiry": 1756594469,
     "httpOnly": true,
     "name": "AKA_A2",
     "path": "/",
     "sameSite": "Lax",
     "secure": true,
     "value": "A"
-  },
-  {
-    "domain": ".finnair.com",
-    "httpOnly": false,
-    "name": "analytics-token",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": true,
-    "value": "61591671-fc28-4f99-8182-a14724932faf"
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1789451892,
-    "httpOnly": false,
-    "name": "_uetvid",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": false,
-    "value": "c2d6e1607e5311f0bf89c3e772a432d9"
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1755842292,
-    "httpOnly": false,
-    "name": "_uetsid",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": false,
-    "value": "c2d6b4207e5311f0b56f4b268b2ecd67"
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1755757696,
-    "httpOnly": false,
-    "name": "_hjSession_3506893",
-    "path": "/",
-    "sameSite": "None",
-    "secure": true,
-    "value": "eyJpZCI6IjliNjYxMWIxLWNkZmUtNGMzZC04YWZjLWIyNTc1ZmZhNWJmMCIsImMiOjE3NTU3NTU4NjY2NTEsInMiOjEsInIiOjAsInNiIjowLCJzciI6MCwic2UiOjAsImZzIjoxLCJzcCI6MX0="
-  },
-  {
-    "domain": ".www.finnair.com",
-    "expiry": 1790315902,
-    "httpOnly": false,
-    "name": "_sfid_0b77",
-    "path": "/",
-    "sameSite": "Strict",
-    "secure": true,
-    "value": "{%22anonymousId%22:%2236d5d9153b72f8c3%22%2C%22consents%22:[{%22consent%22:{%22purpose%22:%22Tracking%22%2C%22provider%22:%22Finnair%22%2C%22status%22:%22Opt%20In%22}%2C%22lastUpdateTime%22:%222025-08-21T05:57:37.943Z%22%2C%22lastSentTime%22:%222025-08-21T05:58:00.290Z%22}]}"
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1787291866,
-    "httpOnly": false,
-    "name": "_hjSessionUser_3506893",
-    "path": "/",
-    "sameSite": "None",
-    "secure": true,
-    "value": "eyJpZCI6IjUxZTJkZjVlLTQxOTktNWRhZC05YTc1LTVhOWIxNzEyZjI1MyIsImNyZWF0ZWQiOjE3NTU3NTU4NjY2NTAsImV4aXN0aW5nIjp0cnVlfQ=="
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1787291904,
-    "httpOnly": false,
-    "name": "_abck",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": true,
-    "value": "584FE8ECEEB6FD4336A70E83C57085C0~0~YAAQEhchFxgiVLiYAQAAYfw0yw4sYmmpft8UiwMpWmvJjNRMs5Kb4OMeruu3Hl1yp9rHD1XsGbJWWPox0OFOgMs6vgrjwsyv4KIg1/n1rH15PQm8vBV/IN0aiuqwS8mpcvzOU/3kiuR0Sq4K+VTtB3g9deNAl4OJOOO/agjpBD2kYVEGCqgJpIbPnWDVKrZo6spaUiddSSnC+YzhjWXeot1uCsO8idecH64EHl1RsP/gVKw6tAFsxDWLpPsBv6I1gVtIvvcCFL9rNCZPJwgQiuLkHTRxenTAi67YaZ6JysvLoveWSc2b9lNWlg1T5oBNtw196Yhcjdj9f5ebGoDiJpZ/saIoGq2y1pGx33quZCJsr4QOgbzWZnKFbebiFsthDJ12610G0S3BiCN/4roDsvL/x2Ziq9FHkJphhcsye2sgL1OKJ519umCGjzLnXluqWE1G7eykmSWECDb3eX3GGBZsrpuNJDbrul6NPFnd+dEfDQslzpp780IQmZkKb9CUGV7QyAp1isbPRDXtRz6LgErMkSRHnC4ZiKzRXFruf0kSenNYQxPUJGlUImDoFK6ggB+sHDmibbmfL8Gy9Kur++/b6niwszwDt8n2dnkTyHvJpPB930a2PCEXKe1d91lbfoYEwYvXu1tWPctJXzV5UJ+NyK6/glFVZpLPvBOLsR7Raba3e0EFmXbYzeuOb/wMa9SqTpKGba9kWlN2TpoxrxlafXdSImHZlCxHyUZ03EkPOa5XsBOJQa1uJJ3V9bMQjbVofzpiD/SzVBNG+g3vlxUjB/4ceCxWOlE9RhwQ4gpnTd9buIEO4b3enfbBrRQiBaltvHC1pSWKx+q6uHwaROn0~-1~-1~1755759456"
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1763531866,
-    "httpOnly": false,
-    "name": "_gcl_au",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": false,
-    "value": "1.1.958744644.1755755866"
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1790315861,
-    "httpOnly": false,
-    "name": "FINNAIR_COOKIE_ID",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": true,
-    "value": "l-ff5d2054-ec0b-4f16-b209-716271ef1e6d"
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1763531892,
-    "httpOnly": false,
-    "name": "_fbp",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": false,
-    "value": "fb.1.1755755866503.798386467429183771"
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1755763055,
-    "httpOnly": false,
-    "name": "ak_bmsc",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": false,
-    "value": "32071B569DF0FF001270797DD4BDC504~000000000000000000000000000000~YAAQEhchF84XVLiYAQAAuUQ0yxyW+kRTuAYb2ezE0cUa8W0okUzqReVFLu9Bs9YrAT6ztFtSk3rcPK8KLldJ0XdLDBaf+PmViIRya+dOKts6roujTP13x7vGFm5eZbWh0MoVAikxZBU6yc+mI/Cveo3C+/UMJ7eZHxC7M2MKuTcOqUapqg3LhCUB/u1Y7eIMQmZJY6M91YhUSjAxYPC+7miM1y7ZxYO9S1uDeXEAZpRoTos66r7NFG9lhAdis2b+RhP2iDApZc0IkdFhVoqAGyEzGoUHEn1y5mTYSswQzw+JPw0/gY0U32NVIjC/c5BG1Sh7TtZZ/KG0LFUOMc4JTisJCCaZTm/90ZduSf3yqC4y4EuL5RlD/O3hJv+C/On9LuK/VhWL0pwOqA5wO7sAuYwLJ0tWxCwRCF2tBRPIWzT4dpfT7sERmi5eyReLdhx5eG7v+VQ+FkjBUblFQiIf"
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1763531866,
-    "httpOnly": false,
-    "name": "FINNAIR_COOKIE_CONSENTS",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": false,
-    "value": "W3siY29uc2VudFRleHRJZCI6ImYtY29va2llcy1hbmFseXRpY3MiLCJlZmZlY3RpdmVGcm9tIjoxNzAxNjQwODAwMDAwLCJjb25zZW50U3RhdHVzIjoiYWNjZXB0ZWQifSx7ImNvbnNlbnRUZXh0SWQiOiJmLWNvb2tpZXMtcGVyc29uYWxpemF0aW9uIiwiZWZmZWN0aXZlRnJvbSI6MTUyMjUzMDAwMDAwMCwiY29uc2VudFN0YXR1cyI6ImFjY2VwdGVkIn0seyJjb25zZW50VGV4dElkIjoiZi1jb29raWVzLWFkdmVydGlzaW5nIiwiZWZmZWN0aXZlRnJvbSI6MTcwODYzOTIwMDAwMCwiY29uc2VudFN0YXR1cyI6ImFjY2VwdGVkIn1d"
-  },
-  {
-    "domain": "www.finnair.com",
-    "expiry": 1756360661,
-    "httpOnly": false,
-    "name": "FinnairComLanguagePreference",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": false,
-    "value": "us-en"
-  },
-  {
-    "domain": ".finnair.com",
-    "expiry": 1790315866,
-    "httpOnly": false,
-    "name": "_ga",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": false,
-    "value": "GA1.1.646566794.1755755867"
-  },
-  {
-    "domain": "www.finnair.com",
-    "expiry": 1790315856,
-    "httpOnly": false,
-    "name": "akaas_AB-Test",
-    "path": "/",
-    "sameSite": "None",
-    "secure": true,
-    "value": "2147483647~rv=5~id=0afeb280783b8338ede9c9cb5616ac47~rn=Segment%200"
   }
 ]
