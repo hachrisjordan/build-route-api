@@ -1167,25 +1167,25 @@ class FinnairAuthManager:
             auth_cookies = [
                 {
                     'name': 'CASTGC',
-                    'value': 'eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6IjEwMDY4MDExLWJjN2QtNGJhNi1iMjhiLTViMjg5M2I2NzVlYyJ9.ZXlKNmFYQWlPaUpFUlVZaUxDSmhiR2NpT2lKa2FYSWlMQ0psYm1NaU9pSkJNVEk0UTBKRExVaFRNalUySWl3aVkzUjVJam9pU2xkVUlpd2lkSGx3SWpvaVNsZFVJaXdpYTJsa0lqb2lZekZtTXpSbE9EUXROV1poTVMwME5qSm1MV0kxTXpZdFlqUTVPR0k1TjJWbU0ySTNJbjAuLlF3OTFQbldzelFGS3VhUEVWZ2p4eGcuS1NXZ2oyV3JycnRQTk13eUhGVDlQampGZ3VLclhNRHVNOGotRlNSQ3dVWWNYMEdGd0UtRnFYY01HNnFqd25QcDRfRnBsbVgwR0pzU1VDaGI5WVBYckJpZzNHRjM5X0ZEWlFKMG9jOVFmX003dDlKdVM2OVdmWlZQMXR2a0lSdkEuWkEyMkVFZV9uYTRmbzFaWE1RRlY3Zw.veztKC9ozmo4KGNigDSMCCt4ce-W0q46GKEX7NIAGM9qUu3bvX8QXWWq-LVtRpe9sB5uTivvLqTyt645C60UEw',
+                    'value': 'eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6IjAzNDFmMjA5LTQwMjctNDc2ZS1iZDk2LTQ2NWM5Y2IxMjRmZSJ9.ZXlKNmFYQWlPaUpFUlVZaUxDSmhiR2NpT2lKa2FYSWlMQ0psYm1NaU9pSkJNVEk0UTBKRExVaFRNalUySWl3aVkzUjVJam9pU2xkVUlpd2lkSGx3SWpvaVNsZFVJaXdpYTJsa0lqb2lOakkxWmpFMll6RXROREkzWkMwMFl6WmtMVGs0TVRrdFpqUTJaV1l6TmpWbE5tVmtJbjAuLjhqbFJqWmZjRWx6OFAzXzNjYTNpX0EuUVFrQmlIeW5wRFhwT2dRbmxjYmRqdWZFNzAtY21nak9EbG00dVpjOFcyZDh0T2otWXhwckxXQ3dOY3U4S3hPaDN1WmVVRUN5R1JxUm4xNnFpWTJqRlBVX2NJaXdZZ1hEbDkwckstVXpCN2N5dEw3OE93cm81VzZhNXgxbDd6UjBhMGdIRkVSQVRJVGI2eXZJVlpPZGh3LkgwTEtWMkZFYXV3YXVEQ3FNQ3ZJZFE.47O7LXtcHHKTLv4xMDPlwhKko10thMZK0keuQjlIMhbljvQyYKTjSdbGx9NAO_OV9K5a0OP59nRtbcZBKazCIQ',
                     'domain': '.finnair.com',
                     'path': '/cas'
                 },
                 {
                     'name': 'AWSALB',
-                    'value': 'rbMHNmM8HJ3tVtvMHJC0kANZygtLR1d5CIBS4pRy9bEJllGfe/trXUJ++xysx5G3f6S+EyrChQHMpx/Ylz+mXzadw5gIpKspGRWlROX+kE7ACWv58CbhwUJ48uEg',
+                    'value': 'LYwohEla4wBDBJEv5PN22m7QOYziDr63pTBhQB1b4CppLn2MOp7CPxrmQxR0UklWO3uuvzxFUDqKzMhSdJF50nr70pW6fu2R63i/vul8I/b55u//vCQo3PQQkCfK',
                     'domain': '.finnair.com',
                     'path': '/'
                 },
                 {
                     'name': 'AWSALBCORS', 
-                    'value': 'rbMHNmM8HJ3tVtvMHJC0kANZygtLR1d5CIBS4pRy9bEJllGfe/trXUJ++xysx5G3f6S+EyrChQHMpx/Ylz+mXzadw5gIpKspGRWlROX+kE7ACWv58CbhwUJ48uEg',
+                    'value': 'LYwohEla4wBDBJEv5PN22m7QOYziDr63pTBhQB1b4CppLn2MOp7CPxrmQxR0UklWO3uuvzxFUDqKzMhSdJF50nr70pW6fu2R63i/vul8I/b55u//vCQo3PQQkCfK',
                     'domain': '.finnair.com',
                     'path': '/'
                 },
                 {
                     'name': 'CASJSESSIONID',
-                    'value': '84913EBA3DEA6371F23958B3F8BFF6E9',
+                    'value': '5ED0998E774DCA83CE0812EE5513B352',
                     'domain': '.finnair.com',
                     'path': '/cas'
                 }
