@@ -619,6 +619,44 @@ export async function POST(req: NextRequest) {
         });
       }
     }
+    
+    // Third level: Merge identical flights within each group to eliminate duplicates
+    const deduplicationStartTime = Date.now();
+    for (const group of finalGroupedMap.values()) {
+      const flightMap = new Map<string, any>();
+      
+      for (const flight of group.flights) {
+        // Create unique key for each flight based on flight details
+        // Completely ignore aircraft field for deduplication to catch all duplicates
+        const flightKey = `${flight.FlightNumbers}|${flight.DepartsAt}|${flight.ArrivesAt}|${flight.TotalDuration}`;
+        
+        const existingFlight = flightMap.get(flightKey);
+        if (!existingFlight) {
+          flightMap.set(flightKey, { ...flight });
+        } else {
+          // Merge seat counts for identical flights
+          existingFlight.YCount += flight.YCount;
+          existingFlight.WCount += flight.WCount;
+          existingFlight.JCount += flight.JCount;
+          existingFlight.FCount += flight.FCount;
+          
+          // Prefer non-empty aircraft information
+          if (!existingFlight.Aircraft || existingFlight.Aircraft.trim() === '') {
+            existingFlight.Aircraft = flight.Aircraft;
+          }
+          
+          // Prefer the more accurate distance (usually the non-zero one)
+          if (flight.distance > 0 && (existingFlight.distance === 0 || flight.distance < existingFlight.distance)) {
+            existingFlight.distance = flight.distance;
+          }
+        }
+      }
+      
+      // Replace flights array with deduplicated flights
+      group.flights = Array.from(flightMap.values());
+    }
+    console.log(`[PERF] Flight deduplication completed in ${Date.now() - deduplicationStartTime}ms`);
+    
     const groupedResults = Array.from(finalGroupedMap.values());
     console.log(`[PERF] Consolidated grouping and alliance assignment completed in ${Date.now() - groupingStartTime}ms. Final groups: ${groupedResults.length}`);
     // Forward rate limit headers from the last fetch response if present
