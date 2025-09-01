@@ -124,6 +124,8 @@ const buildItinerariesSchema = z.object({
   cabin: z.string().optional(),
   carriers: z.string().optional(),
   minReliabilityPercent: z.number().min(0).max(100).optional(),
+  seats: z.coerce.number().int().min(1).default(1).optional(),
+  united: z.coerce.boolean().default(false).optional(),
 });
 
 // Types for availability response
@@ -882,8 +884,8 @@ function getRedisClient(): Redis | null {
 const CACHE_TTL_SECONDS = 1800; // 30 minutes
 
 function getCacheKey(params: any) {
-  const { origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent } = params;
-  const hash = createHash('sha256').update(JSON.stringify({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent })).digest('hex');
+  const { origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united } = params;
+  const hash = createHash('sha256').update(JSON.stringify({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united })).digest('hex');
   return `build-itins:${origin}:${destination}:${hash}`;
 }
 
@@ -1137,8 +1139,8 @@ function filterSortSearchPaginate(
 
 // --- Optimized caching with filter parameters ---
 function getOptimizedCacheKey(params: any, filterParams: any) {
-  const { origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent } = params;
-  const baseHash = createHash('sha256').update(JSON.stringify({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent })).digest('hex');
+  const { origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united } = params;
+  const baseHash = createHash('sha256').update(JSON.stringify({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united })).digest('hex');
   
   // Include filter parameters in cache key for smart caching
   const filterHash = createHash('sha256').update(JSON.stringify(filterParams)).digest('hex');
@@ -1444,6 +1446,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid input', details: parseResult.error.errors }, { status: 400 });
     }
     let { origin, destination, maxStop, startDate, endDate, apiKey, cabin, carriers, minReliabilityPercent } = parseResult.data;
+    const seats = typeof parseResult.data.seats === 'number' && parseResult.data.seats > 0 ? parseResult.data.seats : 1;
+    const united = parseResult.data.united || false;
+    
+    if (united) {
+      console.log(`[UNITED] United parameter enabled - will adjust seat counts for UA flights based on pz table data`);
+    }
 
     // 2. Apply smart rate limiting and null API key restrictions
     const rateLimitResult = await smartRateLimit(req, parseResult.data);
@@ -1526,7 +1534,7 @@ export async function POST(req: NextRequest) {
     };
 
     // --- Try optimized cache first (includes filter parameters) ---
-    const optimizedCacheKey = getOptimizedCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent }, filterParams);
+    const optimizedCacheKey = getOptimizedCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united }, filterParams);
     let cachedOptimized = await getCachedOptimizedItineraries(optimizedCacheKey);
     if (cachedOptimized) {
       console.log('[build-itineraries] Cache HIT - optimized result found');
@@ -1535,7 +1543,7 @@ export async function POST(req: NextRequest) {
     console.log('[build-itineraries] Cache MISS - optimized result not found, checking raw cache...');
 
     // --- Fallback to original cache for raw data ---
-    const cacheKey = getCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent });
+    const cacheKey = getCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united });
     let cached = await getCachedItineraries(cacheKey);
     if (cached) {
       console.log('[build-itineraries] Cache HIT - raw data found, processing with optimized logic...');
@@ -1666,6 +1674,7 @@ export async function POST(req: NextRequest) {
         ...(cabin ? { cabin } : {}),
         ...(carriers ? { carriers } : {}),
         ...(body.seats ? { seats: body.seats } : {}),
+        ...(united ? { united } : {}),
       };
       // Try Redis cache first
       const cached = await getCachedAvailabilityV2Response(params);

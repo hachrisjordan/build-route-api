@@ -41,6 +41,7 @@ const availabilityV2Schema = z.object({
   cabin: z.string().optional(),
   carriers: z.string().optional(),
   seats: z.coerce.number().int().min(1).default(1).optional(),
+  united: z.coerce.boolean().default(false).optional(),
 });
 
 const SEATS_SEARCH_URL = "https://seats.aero/partnerapi/search?";
@@ -244,9 +245,12 @@ export async function POST(req: NextRequest) {
     if (!parseResult.success) {
       return NextResponse.json({ error: 'Invalid input', details: parseResult.error.errors }, { status: 400 });
     }
-    const { routeId, startDate, endDate, cabin, carriers, seats: seatsRaw } = parseResult.data;
+    const { routeId, startDate, endDate, cabin, carriers, seats: seatsRaw, united } = parseResult.data;
     const seats = typeof seatsRaw === 'number' && seatsRaw > 0 ? seatsRaw : 1;
     console.log(`[PERF] Validation completed in ${Date.now() - validationStartTime}ms`);
+    if (united) {
+      console.log(`[UNITED] United parameter enabled - will adjust seat counts for UA flights based on pz table data`);
+    }
 
     // Compute seatsAeroEndDate as +3 days after user input endDate
     let seatsAeroEndDate: string;
@@ -280,6 +284,65 @@ export async function POST(req: NextRequest) {
     const reliabilityStartTime = Date.now();
     const reliabilityTable = await getReliabilityTableCached();
     console.log(`[PERF] Reliability table fetch completed in ${Date.now() - reliabilityStartTime}ms`);
+
+    // Fetch pz table data for UA flights if united parameter is true
+    let pzData: any[] = [];
+    if (united) {
+      const pzStartTime = Date.now();
+      try {
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        const { data, error } = await supabase
+          .from('pz')
+          .select('flight_number, origin_airport, destination_airport, departure_date, in, xn')
+          .like('flight_number', 'UA%')
+          .gte('departure_date', startDate)
+          .lte('departure_date', endDate);
+        
+        if (error) {
+          console.error('Error fetching pz data:', error);
+        } else {
+          pzData = data || [];
+        }
+        console.log(`[PERF] PZ data fetch completed in ${Date.now() - pzStartTime}ms. Found ${pzData.length} records`);
+      } catch (error) {
+        console.error('Error fetching pz data:', error);
+      }
+    }
+
+    /**
+     * Adjust seat counts for UA flights based on pz table data
+     */
+    function adjustSeatCountsForUA(flightNumber: string, originAirport: string, destinationAirport: string, date: string, yCount: number, jCount: number, seats: number): { yCount: number, jCount: number } {
+      if (!united || !flightNumber.startsWith('UA')) {
+        return { yCount, jCount };
+      }
+
+      const pzRecord = pzData.find(record => 
+        record.flight_number === flightNumber &&
+        record.origin_airport === originAirport &&
+        record.destination_airport === destinationAirport &&
+        record.departure_date === date
+      );
+
+      if (!pzRecord) {
+        return { yCount, jCount };
+      }
+
+      let adjustedYCount = yCount;
+      let adjustedJCount = jCount;
+
+      // Adjust business class seats (in field)
+      if (pzRecord.in > seats) {
+        adjustedJCount += 2.5;
+      }
+
+      // Adjust economy class seats (xn field)
+      if (pzRecord.xn > seats) {
+        adjustedYCount += 2.5;
+      }
+
+      return { yCount: adjustedYCount, jCount: adjustedJCount };
+    }
 
     // --- Parallelized Paginated Fetches ---
     // Fetch first page to get hasMore and cursor
@@ -657,6 +720,31 @@ export async function POST(req: NextRequest) {
     }
     console.log(`[PERF] Flight deduplication completed in ${Date.now() - deduplicationStartTime}ms`);
     
+    // Apply seat count adjustments for UA flights if united parameter is true
+    if (united) {
+      const adjustmentStartTime = Date.now();
+      let uaAdjustedCount = 0;
+      for (const group of finalGroupedMap.values()) {
+        for (const flight of group.flights) {
+          if (flight.FlightNumbers.startsWith('UA')) {
+            const adjusted = adjustSeatCountsForUA(
+              flight.FlightNumbers,
+              group.originAirport,
+              group.destinationAirport,
+              group.date,
+              flight.YCount,
+              flight.JCount,
+              seats
+            );
+            flight.YCount = adjusted.yCount;
+            flight.JCount = adjusted.jCount;
+            uaAdjustedCount++;
+          }
+        }
+      }
+      console.log(`[PERF] Seat count adjustments completed in ${Date.now() - adjustmentStartTime}ms. Adjusted UA flights: ${uaAdjustedCount}`);
+    }
+    
     const groupedResults = Array.from(finalGroupedMap.values());
     console.log(`[PERF] Consolidated grouping and alliance assignment completed in ${Date.now() - groupingStartTime}ms. Final groups: ${groupedResults.length}`);
     // Forward rate limit headers from the last fetch response if present
@@ -670,7 +758,7 @@ export async function POST(req: NextRequest) {
     
     // Save compressed response to Redis (async, non-blocking)
     const redisStartTime = Date.now();
-    const hash = createHash('sha256').update(JSON.stringify({ routeId, startDate, endDate, cabin, carriers, seats })).digest('hex');
+    const hash = createHash('sha256').update(JSON.stringify({ routeId, startDate, endDate, cabin, carriers, seats, united })).digest('hex');
     const redisKey = `availability-v2-response:${hash}`;
     const redisPromise = saveCompressedResponseToRedis(redisKey, responsePayload);
     // Don't await Redis save to avoid blocking response
