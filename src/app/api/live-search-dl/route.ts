@@ -29,62 +29,80 @@ function normalizeDeltaItineraries(data: any): any[] {
                                   (totalTripTime.hourCnt || 0) * 60 + 
                                   (totalTripTime.minuteCnt || 0);
       
-              // Extract pricing information from offers
-        let bundles: any[] = [];
-        if (offers.length > 0) {
-          bundles = offers.map((offer: any, index: number) => {
-            // Navigate through the nested structure to get pricing
-            const retailItems = offer.offerItems?.[0]?.retailItems || [];
-            if (retailItems.length === 0) {
-              return null;
-            }
-            
-            const fareInformation = retailItems[0]?.retailItemMetaData?.fareInformation || [];
-            if (fareInformation.length === 0) {
-              return null;
-            }
-            
-            const fareInfo = fareInformation[0];
-            const totalFarePrice = fareInfo?.farePrice?.[0]?.totalFarePrice;
-            const brandByFlightLegs = fareInfo?.brandByFlightLegs || [];
-            
-            // Map brandId to cabin class - use dominantSegmentBrandId for the overall cabin class
-            const dominantBrandId = offer.additionalOfferProperties?.dominantSegmentBrandId || 'MAIN';
-            let cabinClass = 'Y'; // Default to Economy
-            
-            if (dominantBrandId === 'D1' || dominantBrandId === 'BU' || dominantBrandId === 'KEPC') {
-              cabinClass = 'J'; // Business/First
-            } else if (dominantBrandId === 'DPPS' || dominantBrandId === 'PE') {
-              cabinClass = 'W'; // Premium
-            } else if (dominantBrandId === 'MAIN' || dominantBrandId === 'DCP' || dominantBrandId === 'KEEC' || dominantBrandId === 'E') {
-              cabinClass = 'Y'; // Economy (including Comfort+)
-            }
-            
-            const bundle = {
-              class: cabinClass,
-              points: totalFarePrice?.milesEquivalentPrice?.mileCnt || "0",
-              fareTax: totalFarePrice?.currencyEquivalentPrice?.formattedCurrencyAmt || "0"
-            };
-            
-            // Only return bundles with valid pricing data
-            if (bundle.points === "0" || bundle.fareTax === "0") {
-              return null;
-            }
-            
-            return bundle;
-          }).filter(Boolean); // Remove null entries
+      // Extract pricing information from offers
+      let bundles: any[] = [];
+      if (offers.length > 0) {
+        console.log('DEBUG: Number of offers:', offers.length);
+        console.log('DEBUG: First offer structure:', JSON.stringify(offers[0], null, 2));
+        
+        bundles = offers.map((offer: any, index: number) => {
+          // Navigate through the nested structure to get pricing
+          const retailItems = offer.offerItems?.[0]?.retailItems || [];
+          if (retailItems.length === 0) {
+            console.log(`DEBUG: No retail items for offer ${index}`);
+            return null;
+          }
           
-          // Filter to only return the cheapest option for each cabin class
-          const cheapestByClass: { [key: string]: any } = {};
-          bundles.forEach(bundle => {
-            const points = parseInt(bundle.points);
-            if (!cheapestByClass[bundle.class] || points < parseInt(cheapestByClass[bundle.class].points)) {
-              cheapestByClass[bundle.class] = bundle;
-            }
-          });
+          const fareInformation = retailItems[0]?.retailItemMetaData?.fareInformation || [];
+          if (fareInformation.length === 0) {
+            console.log(`DEBUG: No fare information for offer ${index}`);
+            return null;
+          }
           
-          bundles = Object.values(cheapestByClass);
-        }
+          const fareInfo = fareInformation[0];
+          const totalFarePrice = fareInfo?.farePrice?.[0]?.totalFarePrice;
+          const brandByFlightLegs = fareInfo?.brandByFlightLegs || [];
+          
+          console.log(`DEBUG: Offer ${index} - totalFarePrice:`, totalFarePrice);
+          console.log(`DEBUG: Offer ${index} - brandByFlightLegs:`, brandByFlightLegs);
+          console.log(`DEBUG: Offer ${index} - First brandId:`, brandByFlightLegs[0]?.brandId);
+          console.log(`DEBUG: Offer ${index} - dominantSegmentBrandId:`, offer.additionalOfferProperties?.dominantSegmentBrandId);
+          
+          // Map brandId to cabin class - use dominantSegmentBrandId for the overall cabin class
+          const dominantBrandId = offer.additionalOfferProperties?.dominantSegmentBrandId || 'MAIN';
+          let cabinClass = 'Y'; // Default to Economy
+          
+          if (dominantBrandId === 'D1' || dominantBrandId === 'BU' || dominantBrandId === 'KEPC') {
+            cabinClass = 'J'; // Business/First
+          } else if (dominantBrandId === 'DPPS' || dominantBrandId === 'PE') {
+            cabinClass = 'W'; // Premium
+          } else if (dominantBrandId === 'MAIN' || dominantBrandId === 'DCP' || dominantBrandId === 'KEEC' || dominantBrandId === 'E') {
+            cabinClass = 'Y'; // Economy (including Comfort+)
+          }
+          
+          console.log(`DEBUG: Dominant Brand ID ${dominantBrandId} mapped to cabin class ${cabinClass}`);
+          
+          const bundle = {
+            class: cabinClass,
+            points: totalFarePrice?.milesEquivalentPrice?.mileCnt || "0",
+            fareTax: totalFarePrice?.currencyEquivalentPrice?.formattedCurrencyAmt || "0"
+          };
+          
+          console.log(`DEBUG: Created bundle for offer ${index}:`, bundle);
+          
+          // Only return bundles with valid pricing data
+          if (bundle.points === "0" || bundle.fareTax === "0") {
+            console.log(`DEBUG: Skipping bundle ${index} due to invalid pricing`);
+            return null;
+          }
+          
+          return bundle;
+        }).filter(Boolean); // Remove null entries
+        
+        console.log('DEBUG: Final bundles:', bundles);
+        
+        // Filter to only return the cheapest option for each cabin class
+        const cheapestByClass: { [key: string]: any } = {};
+        bundles.forEach(bundle => {
+          const points = parseInt(bundle.points);
+          if (!cheapestByClass[bundle.class] || points < parseInt(cheapestByClass[bundle.class].points)) {
+            cheapestByClass[bundle.class] = bundle;
+          }
+        });
+        
+        bundles = Object.values(cheapestByClass);
+        console.log('DEBUG: Filtered bundles (cheapest per class):', bundles);
+      }
       
       // Create segments with detailed flight info
       const segments = flightSegments.map((segment: any, segmentIndex: number) => {

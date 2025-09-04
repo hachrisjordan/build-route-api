@@ -87,12 +87,16 @@ RUN chmod 0644 /etc/cron.d/combined-crontab
 # Apply cron job
 RUN crontab /etc/cron.d/combined-crontab
 
-# Create log file for cron output
-RUN touch /app/batch.log /var/log/cron.log
+# Create log files for cron output
+RUN touch /app/batch.log /app/cx_scraper.log /var/log/cron.log
 
-# Make sure any shell scripts are executable
+# Make sure any shell scripts and Python scripts are executable
 RUN chmod +x /app/scripts/start-all.sh
+RUN chmod +x /app/scripts/run-cx-scraper.sh
+RUN chmod +x /app/scripts/verify-cx-setup.sh
+RUN chmod +x /app/scripts/test-cx-deployment.sh
 RUN chmod +x /app/finnair-microservice/start-continuous-service.sh
+RUN chmod +x /app/cx_availability_scraper.py
 
 # Create shared Chrome data directory
 RUN mkdir -p /app/chrome-data && chmod 777 /app/chrome-data

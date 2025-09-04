@@ -40,11 +40,15 @@ export async function GET(
     if (originIata) args.push(originIata);
     if (destinationIata) args.push(destinationIata);
     
+    console.log(`[FlightRadar24] Executing script with args: ${args.join(' ')}`);
+    
     // Execute the Python script
     const result = await executePythonScript(args);
     
     // Parse the CSV output from Python script
     const flights = parseFlightData(result);
+    
+    console.log(`[FlightRadar24] Retrieved ${flights.length} flights for ${flightNumber}`);
     
     // Return the data directly without the success wrapper to match existing API
     return NextResponse.json(flights);
@@ -87,11 +91,19 @@ function executePythonScript(args: string[]): Promise<string> {
     pythonProcess.stdout.on('data', (data) => {
       const output = data.toString();
       stdout += output;
+      
+      // Log cache-related messages from Python script
+      if (output.includes('[OK]') || output.includes('[WARNING]') || output.includes('[INFO]')) {
+        console.log(`[FlightRadar24] ${output.trim()}`);
+      }
     });
     
     pythonProcess.stderr.on('data', (data) => {
       const errorOutput = data.toString();
       stderr += errorOutput;
+      
+      // Log error messages from Python script
+      console.error(`[FlightRadar24 Error] ${errorOutput.trim()}`);
     });
     
     pythonProcess.on('close', (code) => {
