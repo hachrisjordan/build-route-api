@@ -163,6 +163,55 @@ class SupabaseManager:
         except Exception as e:
             print(f"❌ Failed to initialize Supabase client: {e}")
     
+    def get_ay_cookies(self) -> List[Dict[str, str]]:
+        """Fetch AY (Finnair) authentication cookies from Supabase database"""
+        if not self.initialized or not self.client:
+            print("⚠️  Supabase client not initialized - cannot fetch cookies from database")
+            return []
+        
+        try:
+            # Fetch cookies from the program table
+            result = self.client.table('program').select('cookies').eq('code', 'AY').execute()
+            
+            if result.data and len(result.data) > 0:
+                cookies_data = result.data[0].get('cookies')
+                if cookies_data:
+                    print("✅ Successfully fetched authentication cookies from database")
+                    return cookies_data
+                else:
+                    print("⚠️  No cookies found in database for AY program")
+                    return []
+            else:
+                print("⚠️  No AY record found in program table")
+                return []
+                
+        except Exception as e:
+            print(f"❌ Failed to fetch cookies from database: {e}")
+            return []
+    
+    def update_ay_cookies(self, cookies: List[Dict[str, str]]) -> bool:
+        """Update the AY (Finnair) cookies in the program table"""
+        if not self.initialized or not self.client:
+            print("⚠️  Supabase client not initialized - cannot update database")
+            return False
+        
+        try:
+            # Update the program table with new cookies
+            result = self.client.table('program').update({
+                'cookies': cookies
+            }).eq('code', 'AY').execute()
+            
+            if result.data:
+                print("✅ Successfully updated authentication cookies in database")
+                return True
+            else:
+                print("❌ Failed to update cookies in database")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Failed to update cookies in database: {e}")
+            return False
+
     def update_ay_token(self, token: str) -> bool:
         """Update the AY (Finnair) token in the program table"""
         if not self.initialized or not self.client:
@@ -518,7 +567,7 @@ class FinnairAuthManager:
             return False
     
     def inject_castgc_cookie(self):
-        """Inject the hardcoded authentication cookies"""
+        """Inject authentication cookies from Supabase database"""
         try:
             # Go directly to the target URL first to set the context
             target_url = "https://www.finnair.com/us-en/booking/flight-selection?json=%7B%22flights%22:%5B%7B%22origin%22:%22HEL%22,%22destination%22:%22ARN%22,%22departureDate%22:%222025-08-27%22%7D%5D,%22cabin%22:%22MIXED%22,%22adults%22:1,%22c15s%22:0,%22children%22:0,%22infants%22:0,%22isAward%22:true%7D"
@@ -528,34 +577,14 @@ class FinnairAuthManager:
             self.driver.get("https://www.finnair.com/us-en")
             time.sleep(3)
             
-            # STEP 2: Inject cookies to establish login
-            print("2️⃣ Injecting authentication cookies...")
-            auth_cookies = [
-                {
-                    'name': 'CASTGC',
-                    'value': 'eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6ImRlZGM0MTVhLTg5MWQtNDUzYi05NWU0LTA4ZDk3ZDNlNGFhYSJ9.ZXlKNmFYQWlPaUpFUlVZaUxDSmhiR2NpT2lKa2FYSWlMQ0psYm1NaU9pSkJNVEk0UTBKRExVaFRNalUySWl3aVkzUjVJam9pU2xkVUlpd2lkSGx3SWpvaVNsZFVJaXdpYTJsa0lqb2lNVGN3TlRWaU1Ua3RaR0prT1MwMFlUa3hMVGczTURVdE5qaGhZV1U1WmpRNFlXSmlJbjAuLjRpT2xfaVhTNDVJVWR5blF2cVA3RFEucWR3SUp5TVgyc0pQeXFwV2FpVERGbFBRRTBndDBDZ2QwbzgxblpPaUVxMDZIQktGUmFxUzlsU3BtYU40T3ZrUnVWemROSGs5aXczd2ZaYXJJVlBmSlllVEx2OVB6cGQ3WF8xU0N5SnFoR0FsUWlGZldNa1E2YnQ3S0N0SlVUazZ3NVRyRHZKeXROWjQ1eEl5TWdMcTFBLmdGajNqWWlqX1RsNE9WSkVVZTFhWWc.C6y68M5tqpQ7_vcv45EdQwp15jiZvP8ZTLfJYSLgWsUwuqYfS4UBAX8IyXnfFxz-57qPYS_ZdRdOlV4JnpLZ-g',
-                    'domain': '.finnair.com',
-                    'path': '/cas'
-                },
-                {
-                    'name': 'AWSALB',
-                    'value': 'kL5yiAI/87MYrudnQXSPRDtnadLv518nHQEWIa25IbjAxYxh1kRNCpZD79NtPShU5Tj+Q5Bq1aN5JMwqmxaIMzbVtAVSnEJz++jjzTwOxIpBJJRTP1kY5O/DWe3R',
-                    'domain': '.finnair.com',
-                    'path': '/'
-                },
-                {
-                    'name': 'AWSALBCORS', 
-                    'value': 'kL5yiAI/87MYrudnQXSPRDtnadLv518nHQEWIa25IbjAxYxh1kRNCpZD79NtPShU5Tj+Q5Bq1aN5JMwqmxaIMzbVtAVSnEJz++jjzTwOxIpBJJRTP1kY5O/DWe3R',
-                    'domain': '.finnair.com',
-                    'path': '/'
-                },
-                {
-                    'name': 'CASJSESSIONID',
-                    'value': '5ED0998E774DCA83CE0812EE5513B352',
-                    'domain': '.finnair.com',
-                    'path': '/cas'
-                }
-            ]
+            # STEP 2: Fetch and inject cookies from database
+            print("2️⃣ Fetching authentication cookies from database...")
+            auth_cookies = self.get_ay_cookies()
+            
+            if not auth_cookies:
+                print("❌ No authentication cookies found in database. Please update the cookies manually.")
+                print("   You can update them by running the script in manual mode first.")
+                return False
             
             # Inject each cookie
             for cookie in auth_cookies:
@@ -898,6 +927,12 @@ class FinnairAuthManager:
                 
             print(f"Saved {len(auth_cookies)} authentication cookies to {self.cookies_file}")
             
+            # Also update the database
+            if self.update_ay_cookies(auth_cookies):
+                print("✅ Authentication cookies also updated in Supabase database")
+            else:
+                print("⚠️  Failed to update cookies in database, but file save was successful")
+            
             # Show what we captured
             print("Captured authentication cookies:")
             for cookie in auth_cookies:
@@ -911,14 +946,29 @@ class FinnairAuthManager:
     
     def inject_cookies(self) -> bool:
         """Inject saved cookies into the current session"""
-        if not self.cookies_file.exists():
-            print("No cookies file to inject")
-            return False
+        cookies = []
+        
+        # Try to load from file first
+        if self.cookies_file.exists():
+            try:
+                with open(self.cookies_file, 'r') as f:
+                    cookies = json.load(f)
+                print(f"Loaded {len(cookies)} cookies from file")
+            except Exception as e:
+                print(f"Error loading cookies from file: {e}")
+                cookies = []
+        
+        # If no cookies from file, try to fetch from database
+        if not cookies:
+            print("No cookies file found, trying to fetch from database...")
+            cookies = self.get_ay_cookies()
+            if cookies:
+                print(f"Loaded {len(cookies)} cookies from database")
+            else:
+                print("No cookies found in database either")
+                return False
             
         try:
-            with open(self.cookies_file, 'r') as f:
-                cookies = json.load(f)
-            
             # First navigate to auth.finnair.com to set those cookies
             print("Setting cookies on auth.finnair.com...")
             self.driver.get("https://auth.finnair.com")
@@ -1194,19 +1244,19 @@ class FinnairAuthManager:
             auth_cookies = [
                 {
                     'name': 'CASTGC',
-                    'value': 'eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6ImRlZGM0MTVhLTg5MWQtNDUzYi05NWU0LTA4ZDk3ZDNlNGFhYSJ9.ZXlKNmFYQWlPaUpFUlVZaUxDSmhiR2NpT2lKa2FYSWlMQ0psYm1NaU9pSkJNVEk0UTBKRExVaFRNalUySWl3aVkzUjVJam9pU2xkVUlpd2lkSGx3SWpvaVNsZFVJaXdpYTJsa0lqb2lNVGN3TlRWaU1Ua3RaR0prT1MwMFlUa3hMVGczTURVdE5qaGhZV1U1WmpRNFlXSmlJbjAuLjRpT2xfaVhTNDVJVWR5blF2cVA3RFEucWR3SUp5TVgyc0pQeXFwV2FpVERGbFBRRTBndDBDZ2QwbzgxblpPaUVxMDZIQktGUmFxUzlsU3BtYU40T3ZrUnVWemROSGs5aXczd2ZaYXJJVlBmSlllVEx2OVB6cGQ3WF8xU0N5SnFoR0FsUWlGZldNa1E2YnQ3S0N0SlVUazZ3NVRyRHZKeXROWjQ1eEl5TWdMcTFBLmdGajNqWWlqX1RsNE9WSkVVZTFhWWc.C6y68M5tqpQ7_vcv45EdQwp15jiZvP8ZTLfJYSLgWsUwuqYfS4UBAX8IyXnfFxz-57qPYS_ZdRdOlV4JnpLZ-g',
+                    'value': 'eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6ImQzNDVkYmIwLWNjOTItNDlmYS04Nzk3LWM4MDhkM2JmMjBlZiJ9.ZXlKNmFYQWlPaUpFUlVZaUxDSmhiR2NpT2lKa2FYSWlMQ0psYm1NaU9pSkJNVEk0UTBKRExVaFRNalUySWl3aVkzUjVJam9pU2xkVUlpd2lkSGx3SWpvaVNsZFVJaXdpYTJsa0lqb2lORGs0TW1Wa016Y3RORGxqWmkwME5EZG1MVGhqWkdJdE1HUmhPVGxoTW1GaVpEZGtJbjAuLmExNm42T1hGS1RRUURGekpHQmotRFEuR0lWTkEteFdOMTZ2X0RZTUV1Q0daNVJRY2dwc2loZm9zXy0zRjhCaS1JbExJTTJOQnlhcXBMb3BCSE1Sb3lhUnhjeTUycEc3bGNjb3EyMmRwVGxWRDNRS0ZuRFJoUlpyOXJPX2U2VUlHMkFHV1lsYXI1WmRCVHlIS3hnSE9kMkouNDNJdXpmSlBQQS1ZS0w4QkFIZ3d5QQ.oU4t5bMtQ3UJEeVae0-ATWSe4vH2A92mIcghVcuBoTnpDI4TvoL3qp45v2I1ZIfbsQbv9R-WlJLlmHcZKplabQ',
                     'domain': '.finnair.com',
                     'path': '/cas'
                 },
                 {
                     'name': 'AWSALB',
-                    'value': 'kL5yiAI/87MYrudnQXSPRDtnadLv518nHQEWIa25IbjAxYxh1kRNCpZD79NtPShU5Tj+Q5Bq1aN5JMwqmxaIMzbVtAVSnEJz++jjzTwOxIpBJJRTP1kY5O/DWe3R',
+                    'value': '8XYn5sNnSwO4PHg5V9/7vQ7AJCvjAAu1WrQTrs7matciPSCoMLQs0VB9vuqsGwC6XK4PZSUCRaQzDTO72cHlKPDNeJVneF+cHWmcwHcva9yZuaGx5HxqRjkXNLoY',
                     'domain': '.finnair.com',
                     'path': '/'
                 },
                 {
                     'name': 'AWSALBCORS', 
-                    'value': 'kL5yiAI/87MYrudnQXSPRDtnadLv518nHQEWIa25IbjAxYxh1kRNCpZD79NtPShU5Tj+Q5Bq1aN5JMwqmxaIMzbVtAVSnEJz++jjzTwOxIpBJJRTP1kY5O/DWe3R',
+                    'value': '8XYn5sNnSwO4PHg5V9/7vQ7AJCvjAAu1WrQTrs7matciPSCoMLQs0VB9vuqsGwC6XK4PZSUCRaQzDTO72cHlKPDNeJVneF+cHWmcwHcva9yZuaGx5HxqRjkXNLoY',
                     'domain': '.finnair.com',
                     'path': '/'
                 },
