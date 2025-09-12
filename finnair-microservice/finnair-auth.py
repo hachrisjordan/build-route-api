@@ -266,6 +266,14 @@ class FinnairAuthManager:
         self.cookies_loaded = False
         self.supabase_manager = SupabaseManager()
         
+    def get_ay_cookies(self) -> List[Dict[str, str]]:
+        """Fetch AY (Finnair) authentication cookies from Supabase database"""
+        return self.supabase_manager.get_ay_cookies()
+    
+    def update_ay_cookies(self, cookies: List[Dict[str, str]]) -> bool:
+        """Update the AY (Finnair) cookies in the program table"""
+        return self.supabase_manager.update_ay_cookies(cookies)
+    
     def auto_update_database_token(self, token: str) -> bool:
         """Automatically update the database with the new token when captured"""
         if not self.supabase_manager.initialized:
