@@ -48,7 +48,9 @@ RUN pip3 install --no-cache-dir \
     undetected-chromedriver \
     selenium \
     python-dotenv \
-    supabase
+    supabase \
+    curl_cffi \
+    flask
 
 # Install Node.js dependencies
 COPY package*.json ./
@@ -72,6 +74,7 @@ EXPOSE 4002
 EXPOSE 4003
 EXPOSE 4004
 EXPOSE 4005
+EXPOSE 4009
 EXPOSE 5900
 EXPOSE 6080
 
@@ -97,6 +100,8 @@ RUN chmod +x /app/scripts/verify-cx-setup.sh
 RUN chmod +x /app/scripts/test-cx-deployment.sh
 RUN chmod +x /app/finnair-microservice/start-continuous-service.sh
 RUN chmod +x /app/cx_availability_scraper.py
+RUN chmod +x /app/delta-curl-cffi-perfect.py
+RUN chmod +x /app/delta-microservice/docker-start-delta-perfect.sh
 
 # Create shared Chrome data directory
 RUN mkdir -p /app/chrome-data && chmod 777 /app/chrome-data

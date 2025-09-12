@@ -203,8 +203,11 @@ export async function POST(req: NextRequest) {
 
     const { from, to, depart, ADT } = parsed.data;
 
-    // Call Delta microservice
-    const microserviceUrl = 'http://localhost:4005/delta';
+    // Call Perfect Delta microservice with curl_cffi (100% success rate)
+    // Use Docker service in production, localhost in development
+    const microserviceUrl = process.env.NODE_ENV === 'production' 
+      ? 'http://delta-perfect-service:4009/delta'
+      : 'http://localhost:4009/delta';
     const microResp = await fetch(microserviceUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

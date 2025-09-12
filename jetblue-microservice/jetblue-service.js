@@ -10,12 +10,28 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
  * - PROXY_PASSWORD
  */
 
+// Add error handling for unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Add error handling for uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+});
+
 const app = express();
 app.use(express.json());
 
+// Add error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Express error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
 app.post('/jetblue', async (req, res) => {
   // Proxy config (runtime only)
-  const USE_PROXY = true;
+  const USE_PROXY = false;
   const proxy_host = process.env.PROXY_HOST;
   const proxy_port = process.env.PROXY_PORT;
   const proxy_username = process.env.PROXY_USERNAME;
@@ -70,7 +86,29 @@ app.post('/jetblue', async (req, res) => {
   }
 });
 
+// Add a simple health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 const PORT = 4000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`JetBlue microservice running on port ${PORT}`);
-}); 
+  console.log(`Health check available at: http://localhost:${PORT}/health`);
+});
+
+// Add server error handling
+server.on('error', (error) => {
+  console.error('Server error:', error);
+});
+
+// Keep the process alive
+process.on('SIGINT', () => {
+  console.log('Shutting down gracefully...');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
+
+console.log('Service starting up...'); 
