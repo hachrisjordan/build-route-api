@@ -25,26 +25,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-JETBLUE_LFS_URL = 'https://jbrest.jetblue.com/lfs-rwb/outboundLFS'
+# Use the microservice instead of direct API call
+JETBLUE_LFS_URL = 'http://localhost:4000/jetblue'
 
-HEADERS = {
-    'accept': 'application/json, text/plain, */*',
-    'accept-language': 'en-US,en;q=0.9',
-    'api-version': 'v3',
-    'application-channel': 'Desktop_Web',
-    'booking-application-type': 'NGB',
-    'content-type': 'application/json',
-    'origin': 'https://www.jetblue.com',
-    'priority': 'u=1, i',
-    'referer': 'https://www.jetblue.com/booking/flights',
-    'sec-ch-ua': '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"macOS"',
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'same-site',
-    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
-}
+def get_headers(from_airport, to_airport, depart_date):
+    return {
+        'Content-Type': 'application/json',
+    }
 
 def iso_duration_to_minutes(duration_str):
     try:
@@ -144,26 +131,83 @@ def main():
     args = parser.parse_args()
 
     payload = {
-        "tripType": "oneWay",
         "from": args.from_airport,
         "to": args.to_airport,
         "depart": args.depart_date,
-        "cabin": "economy",
-        "refundable": False,
-        "dates": {"before": "3", "after": "3"},
-        "pax": {"ADT": 1, "CHD": 0, "INF": 0, "UNN": 0},
-        "redempoint": True,
-        "pointsBreakup": {"option": "", "value": 0},
-        "isMultiCity": False,
-        "isDomestic": False,
-        "outbound-source": "fare-setSearchParameters"
+        "ADT": 1
     }
 
     try:
-        response = requests.post(JETBLUE_LFS_URL, headers=HEADERS, json=payload)
+        headers = get_headers(args.from_airport, args.to_airport, args.depart_date)
+        response = requests.post(JETBLUE_LFS_URL, headers=headers, json=payload)
         response.raise_for_status()
         data = response.json()
-        itineraries = data.get("itinerary", [])
+        
+        # Handle new API response format
+        itineraries = []
+        if data.get("status", {}).get("transactionStatus") == "success" and data.get("data", {}).get("searchResults"):
+            # New API format - extract from searchResults
+            for result in data["data"]["searchResults"]:
+                for offer in result.get("productOffers", []):
+                    for route in offer.get("originAndDestination", []):
+                        firstSegment = route.get("flightSegments", [{}])[0]
+                        lastSegment = route.get("flightSegments", [{}])[-1]
+                        price = offer.get("offers", [{}])[0].get("price", [])
+                        
+                        # Map to old format structure
+                        connections = []
+                        if route.get("flightSegments") and len(route["flightSegments"]) > 1:
+                            for i in range(len(route["flightSegments"]) - 1):
+                                currSeg = route["flightSegments"][i]
+                                nextSeg = route["flightSegments"][i + 1]
+                                if currSeg.get("arrival", {}).get("airport") and nextSeg.get("departure", {}).get("airport"):
+                                    if currSeg["arrival"]["airport"] != nextSeg["departure"]["airport"]:
+                                        connections.append(f"{currSeg['arrival']['airport']}/{nextSeg['departure']['airport']}")
+                                    else:
+                                        connections.append(currSeg["arrival"]["airport"])
+                        
+                        # Only include business class results for LFS
+                        cabin_class = offer.get("offers", [{}])[0].get("cabinClass")
+                        if cabin_class not in ["Business", "First"]:
+                            continue  # Skip non-business class results
+
+                        itinerary = {
+                            "from": firstSegment.get("departure", {}).get("airport") or route.get("departure", {}).get("airport"),
+                            "to": lastSegment.get("arrival", {}).get("airport") or route.get("arrival", {}).get("airport"),
+                            "connections": connections,
+                            "depart": route.get("departure", {}).get("date") or firstSegment.get("departure", {}).get("date"),
+                            "arrive": route.get("arrival", {}).get("date") or lastSegment.get("arrival", {}).get("date"),
+                            "duration": route.get("totalDuration", 0),
+                            "bundles": [{
+                                "class": "F" if cabin_class == "First" else "C",  # Map to airline codes
+                                "points": next((p.get("amount") for p in price if p.get("currency") == "FFCURRENCY"), 0),
+                                "fareTax": next((p.get("amount") for p in price if p.get("currency") == "USD"), 0),
+                            }] if price else [],
+                            "segments": [
+                                {
+                                    "id": segment.get("@id"),
+                                    "from": segment.get("departure", {}).get("airport"),
+                                    "to": segment.get("arrival", {}).get("airport"),
+                                    "aircraft": segment.get("aircraft"),
+                                    "stops": len(segment.get("stopAirport", [])),
+                                    "depart": segment.get("departure", {}).get("date"),
+                                    "arrive": segment.get("arrival", {}).get("date"),
+                                    "flightno": f"{segment.get('flightInfo', {}).get('marketingAirlineCode', '')}{segment.get('flightInfo', {}).get('marketingFlightNumber', '')}",
+                                    "duration": segment.get("duration", 0),
+                                    "layover": segment.get("layoverDuration"),
+                                    "distance": segment.get("distance", 0),
+                                }
+                                for segment in route.get("flightSegments", [])
+                            ],
+                        }
+                        itineraries.append(itinerary)
+        elif data.get("itinerary"):
+            # Old API format fallback
+            itineraries = data.get("itinerary", [])
+        else:
+            # No itineraries found
+            itineraries = []
+        
         parsed = [parse_itinerary(itin) for itin in itineraries]
         print(json.dumps({"itinerary": parsed}, indent=2))
     except requests.RequestException as e:

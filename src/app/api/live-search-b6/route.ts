@@ -138,20 +138,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid input', details: parsed.error.errors }, { status: 400 });
     }
     const { from, to, depart, ADT } = parsed.data;
+    // Updated payload format for new JetBlue API
     const payload = {
-      tripType: 'oneWay',
-      from,
-      to,
-      depart,
-      cabin: 'economy',
-      refundable: false,
-      dates: { before: '3', after: '3' },
-      pax: { ADT, CHD: 0, INF: 0, UNN: 0 },
-      redempoint: true,
-      pointsBreakup: { option: '', value: 0 },
-      isMultiCity: false,
-      isDomestic: false,
-      'outbound-source': 'fare-setSearchParameters',
+      awardBooking: true,
+      travelerTypes: [{ type: "ADULT", quantity: ADT }],
+      searchComponents: [{ from, to, date: depart }]
     };
 
     // Proxy config (runtime only)
@@ -200,12 +191,77 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'JetBlue microservice error', status: microResp.status, body: errorText }, { status: microResp.status });
     }
     const data = await microResp.json();
-    const itineraries = Array.isArray(data.itinerary)
-      ? data.itinerary.map(normalizeItinerary)
-      : [];
+    
+    // Handle new JetBlue API response format
+    let itineraries = [];
+    if (data.status?.transactionStatus === 'success' && data.data?.searchResults) {
+      // New API format - map to old format structure
+      itineraries = data.data.searchResults.flatMap(result => 
+        result.productOffers?.flatMap(offer => 
+          offer.originAndDestination?.map(route => {
+            const firstSegment = route.flightSegments?.[0];
+            const lastSegment = route.flightSegments?.[route.flightSegments.length - 1];
+            const price = offer.offers?.[0]?.price || [];
+            
+            // Map to old format
+            const connections = [];
+            if (route.flightSegments && route.flightSegments.length > 1) {
+              for (let i = 0; i < route.flightSegments.length - 1; i++) {
+                const currSeg = route.flightSegments[i];
+                const nextSeg = route.flightSegments[i + 1];
+                if (currSeg?.arrival?.airport && nextSeg?.departure?.airport) {
+                  if (currSeg.arrival.airport !== nextSeg.departure.airport) {
+                    connections.push(`${currSeg.arrival.airport}/${nextSeg.departure.airport}`);
+                  } else {
+                    connections.push(currSeg.arrival.airport);
+                  }
+                }
+              }
+            }
+            
+            return {
+              from: firstSegment?.departure?.airport || route.departure?.airport,
+              to: lastSegment?.arrival?.airport || route.arrival?.airport,
+              connections,
+              depart: route.departure?.date || firstSegment?.departure?.date,
+              arrive: route.arrival?.date || lastSegment?.arrival?.date,
+              duration: route.totalDuration || 0,
+              bundles: price.length > 0 ? [{
+                class: 'Y', // Default class
+                points: price.find(p => p.currency === 'FFCURRENCY')?.amount || 0,
+                fareTax: price.find(p => p.currency === 'USD')?.amount || 0,
+              }] : [],
+              segments: route.flightSegments?.map(segment => ({
+                from: segment.departure?.airport,
+                to: segment.arrival?.airport,
+                aircraft: segment.aircraft,
+                stops: segment.stopAirport?.length || 0,
+                depart: segment.departure?.date,
+                arrive: segment.arrival?.date,
+                flightnumber: segment.flightInfo ? `${segment.flightInfo.marketingAirlineCode}${segment.flightInfo.marketingFlightNumber}` : '',
+                duration: segment.duration || 0,
+                layover: segment.layoverDuration,
+                distance: segment.distance || 0,
+              })) || [],
+            };
+          }) || []
+        ) || []
+      );
+    } else if (Array.isArray(data.itinerary)) {
+      // Old API format
+      itineraries = data.itinerary.map(normalizeItinerary);
+    }
+    
     const transformedItineraries = transformItineraries(itineraries);
     
-    // Encrypt the response data
+    // Encrypt the response data (can be disabled with DISABLE_ENCRYPTION=true)
+    if (process.env.DISABLE_ENCRYPTION === 'true') {
+      return NextResponse.json({
+        encrypted: false,
+        itinerary: transformedItineraries
+      });
+    }
+    
     const { token, expiresAt } = encryptResponseAES({ itinerary: transformedItineraries });
     
     return NextResponse.json({

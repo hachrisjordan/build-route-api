@@ -46,36 +46,28 @@ app.post('/jetblue', async (req, res) => {
 
   const { from, to, depart, ADT } = req.body;
   try {
-    const response = await fetch('https://jbrest.jetblue.com/lfs-rwb/outboundLFS', {
+    const traceId = Math.random().toString(16).substring(2, 18);
+    const spanId = Date.now().toString();
+    
+    const response = await fetch(`https://cb-api.jetblue.com/cb-flight-search/v1/search/NGB?digb_enable_cb_profile=true&crystal_blue_price_summary=true&crystal_blue_seats_extras=true&digb_acfp_previewseatmap=true&digb_acfp_opsseatmap=true&is_cb_flow=true`, {
       method: 'POST',
       headers: {
-        'accept': 'application/json, text/plain, */*',
-        'content-type': 'application/json',
-        'API-Version': 'v3',
-        'Application-Channel': 'Desktop_Web',
-        'Booking-Application-Type': 'NGB',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-ch-ua': '"Google Chrome";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
+        'X-B3-SpanId': spanId,
+        'sec-ch-ua-platform': '"macOS"',
+        'Referer': `https://www.jetblue.com/booking/cb-flights?from=${from}&to=${to}&depart=${depart}&isMultiCity=false&noOfRoute=1&adults=${ADT}&children=0&infants=0&sharedMarket=false&roundTripFaresFlag=false&usePoints=true`,
+        'sec-ch-ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
         'sec-ch-ua-mobile': '?0',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
-        'Referer': `https://www.jetblue.com/booking/flights?from=${from}&to=${to}&depart=${depart}&isMultiCity=false&noOfRoute=1&adults=${ADT}&children=0&infants=0&sharedMarket=false&roundTripFaresFlag=false&usePoints=true`,
-        'X-B3-TraceId': '6aaca3c26c23f81c',
-        'X-B3-SpanId': '1749578192171',
+        'X-B3-TraceId': traceId,
+        'ocp-apim-subscription-key': 'a5ee654e981b4577a58264fed9b1669c',
+        'Accept': 'application/json, text/plain, */*',
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+        'Cookie': 'ADRUM_BT=R:195|i:285972|g:02e1b4ee-f370-4c74-ad8e-14ef5c42bc30486290|e:1786|n:jetblue_05da9771-4dd4-4420-bf5f-6b666ab2c532',
       },
       body: JSON.stringify({
-        tripType: 'oneWay',
-        from,
-        to,
-        depart,
-        cabin: 'economy',
-        refundable: false,
-        dates: { before: '3', after: '3' },
-        pax: { ADT, CHD: 0, INF: 0, UNN: 0 },
-        redempoint: true,
-        pointsBreakup: { option: '', value: 0 },
-        isMultiCity: false,
-        isDomestic: false,
-        'outbound-source': 'fare-setSearchParameters',
+        awardBooking: true,
+        travelerTypes: [{ type: "ADULT", quantity: ADT }],
+        searchComponents: [{ from, to, date: depart }]
       }),
       agent: proxyAgent,
     });

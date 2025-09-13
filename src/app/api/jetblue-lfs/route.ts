@@ -17,29 +17,35 @@ const JetBlueSchema = z.object({
   depart: z.string().min(8),
 });
 
-const JETBLUE_LFS_URL = 'https://jbrest.jetblue.com/lfs-rwb/outboundLFS';
-const JETBLUE_HEADERS = {
-  'accept': 'application/json, text/plain, */*',
-  'accept-language': 'en-US,en;q=0.9',
-  'api-version': 'v3',
-  'application-channel': 'Desktop_Web',
-  'booking-application-type': 'NGB',
-  'content-type': 'application/json',
-  'origin': 'https://www.jetblue.com',
-  'priority': 'u=1, i',
-  'referer': 'https://www.jetblue.com/booking/flights',
-  'sec-ch-ua': '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
-  'sec-ch-ua-mobile': '?0',
-  'sec-ch-ua-platform': '"macOS"',
-  'sec-fetch-dest': 'empty',
-  'sec-fetch-mode': 'cors',
-  'sec-fetch-site': 'same-site',
-  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
-};
+const JETBLUE_LFS_URL = 'https://cb-api.jetblue.com/cb-flight-search/v1/search/NGB?digb_enable_cb_profile=true&crystal_blue_price_summary=true&crystal_blue_seats_extras=true&digb_acfp_previewseatmap=true&digb_acfp_opsseatmap=true&is_cb_flow=true';
+
+function getJetBlueHeaders(from: string, to: string, depart: string) {
+  const traceId = Math.random().toString(16).substring(2, 18);
+  const spanId = Date.now().toString();
+  
+  return {
+    'X-B3-SpanId': spanId,
+    'sec-ch-ua-platform': '"macOS"',
+    'Referer': `https://www.jetblue.com/booking/cb-flights?from=${from}&to=${to}&depart=${depart}&isMultiCity=false&noOfRoute=1&adults=1&children=0&infants=0&sharedMarket=false&roundTripFaresFlag=false&usePoints=true`,
+    'sec-ch-ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
+    'sec-ch-ua-mobile': '?0',
+    'X-B3-TraceId': traceId,
+    'ocp-apim-subscription-key': 'a5ee654e981b4577a58264fed9b1669c',
+    'Accept': 'application/json, text/plain, */*',
+    'Content-Type': 'application/json',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+    'Cookie': 'ADRUM_BT=R:195|i:285972|g:02e1b4ee-f370-4c74-ad8e-14ef5c42bc30486290|e:1786|n:jetblue_05da9771-4dd4-4420-bf5f-6b666ab2c532',
+  };
+}
 
 // Helper to parse ISO 8601 durations (PTxxHxxM, PTxxM, etc.) to minutes
-function isoDurationToMinutes(duration: string | null | undefined): number | null {
+function isoDurationToMinutes(duration: string | number | null | undefined): number | null {
   if (!duration) return null;
+  
+  // If it's already a number (from new API), return it
+  if (typeof duration === 'number') return duration;
+  
+  // If it's a string, parse it as ISO duration
   const match = duration.match(/^P(?:([0-9]+)D)?T?(?:(\d+)H)?(?:(\d+)M)?$/);
   if (!match) return null;
   const days = match[1] ? parseInt(match[1], 10) : 0;
@@ -141,32 +147,92 @@ export async function POST(req: NextRequest) {
       .eq('to_airport', to)
       .gte('depart', `${departDate} 00:00:00`)
       .lt('depart', `${departDate} 23:59:59.999`);
-    // Now fetch from JetBlue API
+    // Now fetch from JetBlue API with new format
     const payload = {
-      tripType: 'oneWay',
-      from,
-      to,
-      depart,
-      cabin: 'business',
-      refundable: false,
-      dates: { before: '3', after: '3' },
-      pax: { ADT: 1, CHD: 0, INF: 0, UNN: 0 },
-      redempoint: true,
-      pointsBreakup: { option: '', value: 0 },
-      isMultiCity: false,
-      isDomestic: false,
-      'outbound-source': 'fare-setSearchParameters',
+      awardBooking: true,
+      travelerTypes: [{ type: "ADULT", quantity: 1 }],
+      searchComponents: [{ from, to, date: depart.slice(0, 10) }]
     };
+    const headers = getJetBlueHeaders(from, to, depart.slice(0, 10));
     const resp = await fetch(JETBLUE_LFS_URL, {
       method: 'POST',
-      headers: JETBLUE_HEADERS,
+      headers,
       body: JSON.stringify(payload),
     });
     if (!resp.ok) {
       return NextResponse.json({ error: 'JetBlue API error', status: resp.status }, { status: resp.status });
     }
     const data = await resp.json();
-    const itineraries = (data.itinerary || []).map(parseItinerary);
+    
+    // Handle new API response format
+    let itineraries = [];
+    if (data.status?.transactionStatus === 'success' && data.data?.searchResults) {
+      // New API format - extract from searchResults
+      for (const result of data.data.searchResults) {
+        for (const offer of result.productOffers || []) {
+          for (const route of offer.originAndDestination || []) {
+            const firstSegment = route.flightSegments?.[0];
+            const lastSegment = route.flightSegments?.[route.flightSegments.length - 1];
+            const price = offer.offers?.[0]?.price || [];
+            
+            // Map to old format structure
+            const connections = [];
+            if (route.flightSegments && route.flightSegments.length > 1) {
+              for (let i = 0; i < route.flightSegments.length - 1; i++) {
+                const currSeg = route.flightSegments[i];
+                const nextSeg = route.flightSegments[i + 1];
+                if (currSeg?.arrival?.airport && nextSeg?.departure?.airport) {
+                  if (currSeg.arrival.airport !== nextSeg.departure.airport) {
+                    connections.push(`${currSeg.arrival.airport}/${nextSeg.departure.airport}`);
+                  } else {
+                    connections.push(currSeg.arrival.airport);
+                  }
+                }
+              }
+            }
+            
+            // Only include business class results for LFS
+            const cabinClass = offer.offers?.[0]?.cabinClass;
+            if (cabinClass !== 'Business' && cabinClass !== 'First') {
+              continue; // Skip non-business class results
+            }
+
+            const itinerary = {
+              from: firstSegment?.departure?.airport || route.departure?.airport,
+              to: lastSegment?.arrival?.airport || route.arrival?.airport,
+              connections,
+              depart: route.departure?.date || firstSegment?.departure?.date,
+              arrive: route.arrival?.date || lastSegment?.arrival?.date,
+              duration: route.totalDuration || 0,
+              bundles: price.length > 0 ? [{
+                class: cabinClass === 'First' ? 'F' : 'C', // Map to airline codes
+                points: price.find(p => p.currency === 'FFCURRENCY')?.amount || 0,
+                fareTax: price.find(p => p.currency === 'USD')?.amount || 0,
+              }] : [],
+              segments: route.flightSegments?.map(segment => ({
+                id: segment['@id'],
+                from: segment.departure?.airport,
+                to: segment.arrival?.airport,
+                aircraft: segment.aircraft,
+                stops: segment.stopAirport?.length || 0,
+                depart: segment.departure?.date,
+                arrive: segment.arrival?.date,
+                flightno: segment.flightInfo ? `${segment.flightInfo.marketingAirlineCode}${segment.flightInfo.marketingFlightNumber}` : '',
+                duration: segment.duration || 0,
+                layover: segment.layoverDuration,
+                distance: segment.distance || 0,
+              })) || [],
+            };
+            itineraries.push(itinerary);
+          }
+        }
+      }
+    } else {
+      // Old API format fallback
+      itineraries = data.itinerary || [];
+    }
+    
+    const parsedItineraries = itineraries.map(parseItinerary);
     // Build dategroup from the raw JetBlue API data
     let dategroup = [];
     if (Array.isArray(data.dategroup)) {
@@ -182,9 +248,17 @@ export async function POST(req: NextRequest) {
         fareTax: Array.isArray(itin.bundles) && itin.bundles[0]?.fareTax ? itin.bundles[0].fareTax : 'N/A',
       }));
       dategroup = [{ from, to, group }];
+    } else if (parsedItineraries.length > 0) {
+      // New API format: build dategroup from parsed itineraries
+      const group = parsedItineraries.map((itin: any) => ({
+        date: itin.depart,
+        points: Array.isArray(itin.price) && itin.price[0]?.points ? itin.price[0].points : 'N/A',
+        fareTax: Array.isArray(itin.price) && itin.price[0]?.fareTax ? itin.price[0].fareTax : 'N/A',
+      }));
+      dategroup = [{ from, to, group }];
     }
     let totalSegments = 0;
-    for (const itin of itineraries) {
+    for (const itin of parsedItineraries) {
       await upsertSegments(itin.segments, supabase);
       // Build upsert payload with only valid columns and correct types, no undefined, no extra fields
       const { segments, price, ...itinDb } = itin;
@@ -218,7 +292,7 @@ export async function POST(req: NextRequest) {
         totalSegments += Array.isArray(segments) ? segments.length : 0;
       }
     }
-    return NextResponse.json({ itineraries, totalSegments, dategroup });
+    return NextResponse.json({ itineraries: parsedItineraries, totalSegments, dategroup });
   } catch (err) {
     console.error('Error in JetBlue LFS POST:', err);
     return NextResponse.json({ error: 'Internal server error', details: (err as Error).message }, { status: 500 });
