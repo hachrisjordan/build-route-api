@@ -171,10 +171,6 @@ services:
     environment:
       - NODE_ENV=production
       - PYTHONUNBUFFERED=1
-    volumes:
-      - ./delta-curl-cffi-perfect.py:/app/delta-curl-cffi-perfect.py
-      - ./requirements-delta.txt:/app/requirements-delta.txt
-      - ./delta-microservice/docker-start-delta-perfect.sh:/app/delta-microservice/docker-start-delta-perfect.sh
     working_dir: /app
     command: /app/delta-microservice/docker-start-delta-perfect.sh
     networks:

@@ -31,7 +31,7 @@ app.use((err, req, res, next) => {
 
 app.post('/jetblue', async (req, res) => {
   // Proxy config (runtime only)
-  const USE_PROXY = false;
+  const USE_PROXY = true;
   const proxy_host = process.env.PROXY_HOST;
   const proxy_port = process.env.PROXY_PORT;
   const proxy_username = process.env.PROXY_USERNAME;
