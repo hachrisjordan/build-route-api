@@ -147,16 +147,16 @@ export async function POST(req: NextRequest) {
       .eq('to_airport', to)
       .gte('depart', `${departDate} 00:00:00`)
       .lt('depart', `${departDate} 23:59:59.999`);
-    // Now fetch from JetBlue API with new format
+    // Now fetch from JetBlue microservice
     const payload = {
-      awardBooking: true,
-      travelerTypes: [{ type: "ADULT", quantity: 1 }],
-      searchComponents: [{ from, to, date: depart.slice(0, 10) }]
+      from,
+      to,
+      depart: depart.slice(0, 10),
+      ADT: 1
     };
-    const headers = getJetBlueHeaders(from, to, depart.slice(0, 10));
-    const resp = await fetch(JETBLUE_LFS_URL, {
+    const resp = await fetch('http://localhost:4000/jetblue', {
       method: 'POST',
-      headers,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     if (!resp.ok) {
@@ -171,44 +171,46 @@ export async function POST(req: NextRequest) {
       for (const result of data.data.searchResults) {
         for (const offer of result.productOffers || []) {
           for (const route of offer.originAndDestination || []) {
-            const firstSegment = route.flightSegments?.[0];
-            const lastSegment = route.flightSegments?.[route.flightSegments.length - 1];
-            const price = offer.offers?.[0]?.price || [];
-            
-            // Map to old format structure
-            const connections = [];
-            if (route.flightSegments && route.flightSegments.length > 1) {
-              for (let i = 0; i < route.flightSegments.length - 1; i++) {
-                const currSeg = route.flightSegments[i];
-                const nextSeg = route.flightSegments[i + 1];
-                if (currSeg?.arrival?.airport && nextSeg?.departure?.airport) {
-                  if (currSeg.arrival.airport !== nextSeg.departure.airport) {
-                    connections.push(`${currSeg.arrival.airport}/${nextSeg.departure.airport}`);
-                  } else {
-                    connections.push(currSeg.arrival.airport);
+            // Process each offer (Economy, Business, etc.)
+            for (const offerItem of offer.offers || []) {
+              const firstSegment = route.flightSegments?.[0];
+              const lastSegment = route.flightSegments?.[route.flightSegments.length - 1];
+              const price = offerItem?.price || [];
+              
+              // Map to old format structure
+              const connections = [];
+              if (route.flightSegments && route.flightSegments.length > 1) {
+                for (let i = 0; i < route.flightSegments.length - 1; i++) {
+                  const currSeg = route.flightSegments[i];
+                  const nextSeg = route.flightSegments[i + 1];
+                  if (currSeg?.arrival?.airport && nextSeg?.departure?.airport) {
+                    if (currSeg.arrival.airport !== nextSeg.departure.airport) {
+                      connections.push(`${currSeg.arrival.airport}/${nextSeg.departure.airport}`);
+                    } else {
+                      connections.push(currSeg.arrival.airport);
+                    }
                   }
                 }
               }
-            }
-            
-            // Only include business class results for LFS
-            const cabinClass = offer.offers?.[0]?.cabinClass;
-            if (cabinClass !== 'Business' && cabinClass !== 'First') {
-              continue; // Skip non-business class results
-            }
+              
+              // Only include business class results for LFS
+              const cabinClass = offerItem?.cabinClass;
+              if (cabinClass !== 'Business' && cabinClass !== 'First') {
+                continue; // Skip non-business class results
+              }
 
-            const itinerary = {
-              from: firstSegment?.departure?.airport || route.departure?.airport,
-              to: lastSegment?.arrival?.airport || route.arrival?.airport,
-              connections,
-              depart: route.departure?.date || firstSegment?.departure?.date,
-              arrive: route.arrival?.date || lastSegment?.arrival?.date,
-              duration: route.totalDuration || 0,
-              bundles: price.length > 0 ? [{
-                class: cabinClass === 'First' ? 'F' : 'C', // Map to airline codes
-                points: price.find(p => p.currency === 'FFCURRENCY')?.amount || 0,
-                fareTax: price.find(p => p.currency === 'USD')?.amount || 0,
-              }] : [],
+              const itinerary = {
+                from: firstSegment?.departure?.airport || route.departure?.airport,
+                to: lastSegment?.arrival?.airport || route.arrival?.airport,
+                connections,
+                depart: route.departure?.date || firstSegment?.departure?.date,
+                arrive: route.arrival?.date || lastSegment?.arrival?.date,
+                duration: route.totalDuration || 0,
+                bundles: price.length > 0 ? [{
+                  class: cabinClass === 'First' ? 'F' : 'C', // Map to airline codes
+                  points: price.find(p => p.currency === 'FFCURRENCY')?.amount || 0,
+                  fareTax: price.find(p => p.currency === 'USD')?.amount || 0,
+                }] : [],
               segments: route.flightSegments?.map(segment => ({
                 id: segment['@id'],
                 from: segment.departure?.airport,
@@ -224,6 +226,7 @@ export async function POST(req: NextRequest) {
               })) || [],
             };
             itineraries.push(itinerary);
+            }
           }
         }
       }

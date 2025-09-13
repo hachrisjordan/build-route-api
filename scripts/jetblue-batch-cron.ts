@@ -3,9 +3,9 @@ const nodeFetch = (url: string, options?: any) => import('node-fetch').then(mod 
 const { format } = require('date-fns');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
-const FROM_AIRPORTS = ['ORD','JFK','BOS','YYZ','ATL','IAD'];
+const FROM_AIRPORTS = ['JFK','ORD','BOS','YYZ','ATL','IAD'];
 const TO_AIRPORTS = [
-  'BKK','CAI','BLR','DEL','JAI','COK','BOM','DPS','MCT','MNL','IST'
+  'TPE','PNH','KNO','BKK','CAI','BLR','DEL','JAI','COK','BOM','DPS','MCT','MNL','IST'
 ];
 const API_URL = process.env.BATCH_API_URL || 'http://localhost:3000/api/jetblue-lfs-batch';
 const DAYS = 16;

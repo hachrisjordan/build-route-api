@@ -201,7 +201,6 @@ export async function POST(req: NextRequest) {
           offer.originAndDestination?.map(route => {
             const firstSegment = route.flightSegments?.[0];
             const lastSegment = route.flightSegments?.[route.flightSegments.length - 1];
-            const price = offer.offers?.[0]?.price || [];
             
             // Map to old format
             const connections = [];
@@ -219,6 +218,23 @@ export async function POST(req: NextRequest) {
               }
             }
             
+            // Map cabin class to airline codes
+            const cabinClassMap: Record<string, string> = {
+              'Economy': 'Y',
+              'Business': 'J',
+              'First': 'F'
+            };
+            
+            // Combine all cabin classes into one itinerary
+            const bundles = offer.offers?.map(offerItem => {
+              const price = offerItem?.price || [];
+              return {
+                class: cabinClassMap[offerItem.cabinClass] || 'Y',
+                points: price.find(p => p.currency === 'FFCURRENCY')?.amount || 0,
+                fareTax: price.find(p => p.currency === 'USD')?.amount || 0,
+              };
+            }).filter(bundle => bundle.points > 0) || [];
+            
             return {
               from: firstSegment?.departure?.airport || route.departure?.airport,
               to: lastSegment?.arrival?.airport || route.arrival?.airport,
@@ -226,11 +242,7 @@ export async function POST(req: NextRequest) {
               depart: route.departure?.date || firstSegment?.departure?.date,
               arrive: route.arrival?.date || lastSegment?.arrival?.date,
               duration: route.totalDuration || 0,
-              bundles: price.length > 0 ? [{
-                class: 'Y', // Default class
-                points: price.find(p => p.currency === 'FFCURRENCY')?.amount || 0,
-                fareTax: price.find(p => p.currency === 'USD')?.amount || 0,
-              }] : [],
+              bundles,
               segments: route.flightSegments?.map(segment => ({
                 from: segment.departure?.airport,
                 to: segment.arrival?.airport,
