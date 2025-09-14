@@ -28,7 +28,12 @@ const ALLIANCE_MAP = new Map<string, string>([
   ['IB', 'OW'], ['JL', 'OW'], ['QF', 'OW'], ['QR', 'OW'], ['RJ', 'OW'], ['AT', 'OW'], 
   ['UL', 'OW'], ['MH', 'OW'], ['WY', 'OW'],
   // Individual carriers
-  ['EY', 'EY'], ['EK', 'EK'], ['JX', 'JX'], ['B6', 'B6'], ['GF', 'GF'], ['DE', 'DE']
+  ['EY', 'EY'], ['EK', 'EK'], ['JX', 'JX'], ['B6', 'B6'], ['GF', 'GF'], ['DE', 'DE'], ['GF', 'GF'], ['LY', 'LY'],
+  ['LA', 'LA'],
+  ['HA', 'HA'],
+  ['VA', 'VA'],
+  ['G3', 'G3'],
+  ['AD', 'AD']
 ]);
 
 const flightNumberCache = new Map<string, string>();
@@ -88,11 +93,12 @@ const DISTANCE_THRESHOLDS = {
 
 /**
  * Checks if a DE or JX flight meets the distance-based mileage cost requirements
+ * Returns count value: 2 if meets threshold (reasonably priced), 1 if exceeds threshold (overpriced), 0 if invalid
  */
-function meetsDistanceThresholds(flightPrefix: string, distance: number, mileageCost: number, cabin: string): boolean {
-  // Only apply filtering to DE and JX flights
+function getDistanceThresholdCount(flightPrefix: string, distance: number, mileageCost: number, cabin: string): number {
+  // Only apply filtering to DE and JX flights - other airlines get default count of 2
   if (flightPrefix !== 'DE' && flightPrefix !== 'JX') {
-    return true;
+    return 2;
   }
 
   // Determine which cabin thresholds to use
@@ -122,14 +128,14 @@ function meetsDistanceThresholds(flightPrefix: string, distance: number, mileage
   // Find the appropriate threshold based on distance
   const threshold = thresholds.find(t => distance <= t.maxDistance);
   if (!threshold) {
-    // Removed logging to reduce noise
-    return false;
+    // Invalid distance - return 0 (exclude from results)
+    return 0;
   }
 
   // Check if mileage cost is within the threshold
-  const isValid = mileageCost <= threshold.maxMileage;
-  // Removed logging to reduce noise
-  return isValid;
+  const meetsThreshold = mileageCost <= threshold.maxMileage;
+  // Return 2 if meets threshold (reasonably priced), 1 if exceeds threshold (overpriced)
+  return meetsThreshold ? 2 : 1;
 }
 
 // --- Redis setup ---
@@ -361,7 +367,7 @@ export async function POST(req: NextRequest) {
       include_trips: 'true',
       only_direct_flights: 'true',
       include_filtered: 'true',
-      carriers: 'A3%2CEY%2CAC%2CCA%2CAI%2CNZ%2CNH%2COZ%2COS%2CAV%2CSN%2CCM%2COU%2CMS%2CET%2CBR%2CLO%2CLH%2CCL%2CZH%2CSQ%2CSA%2CLX%2CTP%2CTG%2CTK%2CUA%2CAR%2CAM%2CUX%2CAF%2CCI%2CMU%2CDL%2CGA%2CKQ%2CME%2CKL%2CKE%2CSV%2CSK%2CRO%2CMH%2CVN%2CVS%2CMF%2CAS%2CAA%2CBA%2CCX%2CFJ%2CAY%2CIB%2CJL%2CMS%2CQF%2CQR%2CRJ%2CAT%2CUL%2CWY%2CJX%2CEK%2CB6%2CDE%2CGF',
+      carriers: 'A3%2CEY%2CAC%2CCA%2CAI%2CNZ%2CNH%2COZ%2COS%2CAV%2CSN%2CCM%2COU%2CMS%2CET%2CBR%2CLO%2CLH%2CCL%2CZH%2CSQ%2CSA%2CLX%2CTP%2CTG%2CTK%2CUA%2CAR%2CAM%2CUX%2CAF%2CCI%2CMU%2CDL%2CGA%2CKQ%2CME%2CKL%2CKE%2CSV%2CSK%2CRO%2CMH%2CVN%2CVS%2CMF%2CAS%2CAA%2CBA%2CCX%2CFJ%2CAY%2CIB%2CJL%2CMS%2CQF%2CQR%2CRJ%2CAT%2CUL%2CWY%2CJX%2CEK%2CB6%2CDE%2CGF%2CLY%2CLA%2CHA%2CVA%2CG3%2CAD',
       disable_live_filtering: 'true'
     };
     if (cabin) baseParams.cabin = cabin;
@@ -508,7 +514,8 @@ export async function POST(req: NextRequest) {
               const normalizedFlightNumber = normalizeFlightNumber(flightNumber);
               const flightPrefix = normalizedFlightNumber.slice(0, 2);
               
-              if (!meetsDistanceThresholds(flightPrefix, distance, mileageCost, tripCabin)) continue;
+              const thresholdCount = getDistanceThresholdCount(flightPrefix, distance, mileageCost, tripCabin);
+              if (thresholdCount === 0) continue;
               
               results.push({
                 originAirport,
@@ -526,6 +533,7 @@ export async function POST(req: NextRequest) {
                 FMile: tripCabin === 'first' ? mileageCost : 0,
                 Source: source,
                 Cabin: tripCabin,
+                ThresholdCount: thresholdCount,
               });
             }
           } else {
@@ -533,7 +541,8 @@ export async function POST(req: NextRequest) {
             const normalizedFlightNumber = normalizeFlightNumber(flightNumbers);
             const flightPrefix = normalizedFlightNumber.slice(0, 2);
             
-            if (meetsDistanceThresholds(flightPrefix, distance, mileageCost, tripCabin)) {
+            const thresholdCount = getDistanceThresholdCount(flightPrefix, distance, mileageCost, tripCabin);
+            if (thresholdCount > 0) {
               results.push({
                 originAirport,
                 destinationAirport,
@@ -550,6 +559,7 @@ export async function POST(req: NextRequest) {
                 FMile: tripCabin === 'first' ? mileageCost : 0,
                 Source: source,
                 Cabin: tripCabin,
+                ThresholdCount: thresholdCount,
               });
             }
           }
@@ -570,13 +580,15 @@ export async function POST(req: NextRequest) {
       const cabin = entry.Cabin;
       const cabinChar = cabin[0]?.toUpperCase();
       
-      // Single cabin count calculation based on actual cabin
+      // Single cabin count calculation based on actual cabin and threshold
       let cabinCount = 0;
       if ((cabin === 'economy' && entry.YMile > 0) || 
           (cabin === 'premium' && entry.WMile > 0) || 
           (cabin === 'business' && entry.JMile > 0) || 
           (cabin === 'first' && entry.FMile > 0)) {
-        cabinCount = getCountMultiplier({ code: flightPrefix, source: entry.Source, cabin: cabinChar, reliabilityTable });
+        const baseMultiplier = getCountMultiplier({ code: flightPrefix, source: entry.Source, cabin: cabinChar, reliabilityTable });
+        const thresholdCount = entry.ThresholdCount || 2; // Default to 2 if not set
+        cabinCount = baseMultiplier * thresholdCount;
       }
       
       const existing = mergedMap.get(key);
