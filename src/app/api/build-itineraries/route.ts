@@ -1855,6 +1855,38 @@ export async function POST(req: NextRequest) {
     
     const itineraryBuildStart = Date.now();
     
+    // Special handling for direct flights (maxStop=0)
+    if (maxStop === 0) {
+      console.log('[build-itineraries] Processing direct flights (maxStop=0)');
+      
+      // For direct flights, simply convert availability groups to itineraries
+      for (const [segKey, groups] of Object.entries(filteredSegmentPool)) {
+        const [segOrigin, segDestination] = segKey.split('-');
+        
+        // Only process segments that match our origin-destination
+        if (segOrigin !== origin || segDestination !== destination) continue;
+        
+        const routeKey = segKey;
+        if (!output[routeKey]) output[routeKey] = {};
+        
+        for (const group of groups) {
+          const date = group.date;
+          if (!output[routeKey][date]) output[routeKey][date] = [];
+          
+          // Convert each flight to a single-flight itinerary
+          for (const flight of group.flights) {
+            const uuid = getFlightUUID(flight);
+            flightMap.set(uuid, flight);
+            
+            // Create single-flight itinerary
+            output[routeKey][date].push([uuid]);
+          }
+        }
+      }
+      
+      console.log(`[build-itineraries] Direct flight processing completed: ${Object.keys(output).length} routes`);
+    } else {
+    
     // Process routes in parallel if enabled
     if (CONCURRENCY_CONFIG.PARALLEL_ROUTE_PROCESSING && validRoutes.length > 10) {
       const routeTasks = validRoutes.map(route => async () => {
@@ -2020,6 +2052,7 @@ export async function POST(req: NextRequest) {
       itineraryMetrics.totals.segmentsProcessed = segmentCount;
       itineraryMetrics.totals.itinerariesCreated = compositionCount;
     }
+    } // End of else block for maxStop > 0
 
     // NOTE: While composeItineraries deduplicates within its own results, 
     // we need to deduplicate across multiple route processing calls
