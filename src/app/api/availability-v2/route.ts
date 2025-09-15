@@ -96,9 +96,9 @@ const DISTANCE_THRESHOLDS = {
  * Returns count value: 2 if meets threshold (reasonably priced), 1 if exceeds threshold (overpriced), 0 if invalid
  */
 function getDistanceThresholdCount(flightPrefix: string, distance: number, mileageCost: number, cabin: string): number {
-  // Only apply filtering to DE and JX flights - other airlines get default count of 2
-  if (flightPrefix !== 'DE' && flightPrefix !== 'JX') {
-    return 2;
+  // Only apply filtering to DE and JX flights - other airlines get default count of 1
+  if (flightPrefix !== 'DE' && flightPrefix !== 'JX' && flightPrefix !== 'HA') {
+    return 1;
   }
 
   // Determine which cabin thresholds to use
