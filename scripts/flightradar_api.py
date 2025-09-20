@@ -6,7 +6,8 @@ import time
 import sys
 import hashlib
 import os
-from typing import Optional
+import random
+from typing import Optional, List
 
 # Redis imports with graceful fallback
 try:
@@ -17,9 +18,10 @@ except ImportError:
     print("Warning: redis package not available. Install with: pip install redis")
     print("Continuing without Redis caching...")
 
+# No direct Supabase imports needed - tokens fetched via API
+
 class FlightRadar24API:
     BASE_URL = "https://api.flightradar24.com/common/v1/flight/list.json"
-    TOKEN = "CvAG-3bJsFrhaQDaqCc9hC5bO3JWXUYMNkL7PCPgmXU"
     
     def __init__(self):
         self.scraper = cloudscraper.create_scraper()
@@ -41,6 +43,10 @@ class FlightRadar24API:
         
         # Initialize Redis client
         self.redis_client = self._init_redis_client()
+        
+        # Initialize token list from API
+        self.available_tokens = self._load_tokens()
+        self.current_token_index = 0
         
     def _init_redis_client(self):
         """Initialize Redis client with graceful error handling."""
@@ -128,6 +134,42 @@ class FlightRadar24API:
             print(f"[WARNING] Redis set error: {e}")
             return False
 
+    def _load_tokens(self) -> List[str]:
+        """Load available tokens from Next.js API."""
+        try:
+            # Get API URL from environment or use localhost default
+            api_url = os.getenv('API_URL', 'http://localhost:3000')
+            token_endpoint = f"{api_url}/api/tokens"
+            
+            print(f"🔄 Fetching tokens from API: {token_endpoint}")
+            
+            response = self.scraper.get(token_endpoint, headers={
+                'Accept': 'application/json',
+                'User-Agent': 'FlightRadar24-Scraper/1.0'
+            })
+            response.raise_for_status()
+            
+            data = response.json()
+            if 'tokens' in data and data['tokens']:
+                tokens = data['tokens']
+                print(f"✅ Loaded {len(tokens)} tokens from API")
+                return tokens
+            else:
+                raise Exception("No tokens returned from API")
+                
+        except Exception as e:
+            print(f"Error: Failed to load tokens from API: {e}")
+            raise Exception("Cannot proceed without valid tokens")
+
+    def _get_next_token(self) -> str:
+        """Get the next token in rotation."""
+        if not self.available_tokens:
+            raise Exception("No tokens available for rotation")
+            
+        token = self.available_tokens[self.current_token_index]
+        self.current_token_index = (self.current_token_index + 1) % len(self.available_tokens)
+        return token
+
     def _get_current_timestamp(self):
         """Get current timestamp in seconds."""
         return int(time.time())
@@ -145,7 +187,7 @@ class FlightRadar24API:
         local_time = datetime.fromtimestamp(departure_timestamp + timezone_offset, timezone.utc)
         return local_time.strftime('%Y-%m-%d')
 
-    def get_flights(self, query, debug=True, origin_iata: Optional[str] = None, destination_iata: Optional[str] = None):
+    def get_flights(self, query, debug=True, origin_iata: Optional[str] = None, destination_iata: Optional[str] = None, stop_date: Optional[str] = None):
         """Fetch flights data for the given query.
         Optionally filter by origin and/or destination IATA code.
         Args:
@@ -153,6 +195,7 @@ class FlightRadar24API:
             debug (bool): Enable debug output.
             origin_iata (Optional[str]): Origin airport IATA code to filter (case-insensitive).
             destination_iata (Optional[str]): Destination airport IATA code to filter (case-insensitive).
+            start_date (Optional[str]): Start date in YYYY-MM-DD format. If provided, start scraping from this date instead of today.
         Returns:
             List[str]: List of unique flights in CSV format (flight_number,date,registration,origin_iata,destination_iata,ontime).
         """
@@ -180,8 +223,25 @@ class FlightRadar24API:
         last_response_data = None
         duplicate_count = 0
         
-        # Start with current timestamp
+        # Always start from today's timestamp
         current_timestamp = self._get_current_timestamp()
+        
+        if stop_date:
+            try:
+                # Parse stop_date for validation
+                stop_datetime = datetime.strptime(stop_date, '%Y-%m-%d')
+                print(f"🗓️  Latest date in database: {stop_date}")
+                print(f"🎯 Starting from today, stopping when reaching {stop_date}")
+                print(f"📅 Today's date: {self.today.strftime('%Y-%m-%d')}")
+                print(f"📊 Target: Find flight data from today back to {stop_date}")
+            except ValueError:
+                print(f"❌ Invalid stop_date format: {stop_date}. Using 360-day limit instead.")
+                stop_date = None
+                print(f"📅 Today's date: {self.today.strftime('%Y-%m-%d')}")
+                print(f"📊 Target: Find flight data going back 330-360 days from today")
+        else:
+            print(f"📅 Today's date: {self.today.strftime('%Y-%m-%d')}")
+            print(f"📊 Target: Find flight data going back 330-360 days from today")
         
         # Counter for debug logging
         batch_count = 0
@@ -189,9 +249,6 @@ class FlightRadar24API:
         # Retry counter for 402 errors
         retry_count = 0
         max_retries = 3
-        
-        print(f"Today's date: {self.today.strftime('%Y-%m-%d')}")
-        print(f"Target: Find flight data going back 330-360 days from today")
         
         # Continue fetching until we have about a year of data (330-360 days)
         # or we detect the same data multiple times
@@ -202,22 +259,31 @@ class FlightRadar24API:
                 print(f"Current timestamp is more than 360 days ago (>{days_ago} days). Stopping.")
                 break
             batch_count += 1
-            print(f"\n==== Batch {batch_count} ====")
-            print(f"Current timestamp: {current_timestamp} ({datetime.fromtimestamp(current_timestamp).strftime('%Y-%m-%d %H:%M:%S')})")
+            current_date = datetime.fromtimestamp(current_timestamp).strftime('%Y-%m-%d')
+            days_back = (self.today - datetime.fromtimestamp(current_timestamp).date()).days
+            
+            print(f"\n==== Scraping Page {batch_count} ====")
+            print(f"📅 Date: {current_date} ({days_back} days ago)")
+            print(f"⏰ Timestamp: {current_timestamp}")
+            print(f"🔍 Query: {query.upper()}")
             
             try:
+                # Get next token in rotation
+                current_token = self._get_next_token()
+                print(f"🔑 Using token: {current_token[:20]}...")
+                
                 params = {
                     'query': query.upper(),
                     'fetchBy': 'flight',
                     'page': 1,  # Always use page 1
                     'pk': '',
                     'limit': 100,
-                    'token': self.TOKEN,
+                    'token': current_token,
                     'timestamp': current_timestamp
                 }
                 
                 url = f"{self.BASE_URL}?{'&'.join(f'{k}={v}' for k, v in params.items())}"
-                print(f"Request URL: {url}")
+                print(f"🌐 Requesting: {url}")
                 
                 response = self.scraper.get(url, headers=self.headers)
                 response.raise_for_status()
@@ -227,12 +293,12 @@ class FlightRadar24API:
                 
                 # Check if we got valid flight data
                 if not data.get('result', {}).get('response', {}).get('data'):
-                    print("No flight data found in this batch.")
+                    print("❌ No flight data found in this page.")
                     current_timestamp -= 45 * 86400  # Go back 1 day (in seconds)
                     continue
                 
                 flights = data['result']['response']['data']
-                print(f"Found {len(flights)} flights in this batch")
+                print(f"✅ Found {len(flights)} flights on page {batch_count}")
                 
                 # Process the flights
                 batch_results = []
@@ -304,6 +370,7 @@ class FlightRadar24API:
                 if batch_earliest_date:
                     if not earliest_date or batch_earliest_date < earliest_date:
                         earliest_date = batch_earliest_date
+                        print(f"📅 New earliest date found: {earliest_date.strftime('%Y-%m-%d')}")
                 
                 # Add batch results to overall results (only if we have new data)
                 new_flights = 0
@@ -311,7 +378,7 @@ class FlightRadar24API:
                     if result not in all_results:
                         all_results.append(result)
                         new_flights += 1
-                print(f"Added {new_flights} new flights. Total so far: {len(all_results)}")
+                print(f"✅ Added {new_flights} new flights. Total so far: {len(all_results)}")
 
                 if new_flights > 0:
                     # Update latest date for next timestamp calculation
@@ -329,11 +396,17 @@ class FlightRadar24API:
                     current_timestamp -= 45 * 86400
                     print(f"All flights in this batch are duplicates. Jumping back 45 days to: {datetime.fromtimestamp(current_timestamp).strftime('%Y-%m-%d')}")
                 
-                # Check if we've reached more than 360 days
+                # Check if we've reached the latest date from database or 360 days
                 if earliest_date:
                     days_covered = (self.today - earliest_date).days
                     print(f"Currently covering {days_covered} days from {earliest_date.strftime('%Y-%m-%d')} to {self.today.strftime('%Y-%m-%d')}")
-                    if days_covered > 360:
+                    
+                    # If we have a stop_date (latest date from database), stop when we reach it
+                    if stop_date and earliest_date.strftime('%Y-%m-%d') <= stop_date:
+                        print(f"✅ Reached existing data date {stop_date}. Stopping.")
+                        break
+                    # Otherwise, stop when we reach 360 days (default behavior)
+                    elif not stop_date and days_covered > 360:
                         print(f"Reached target of more than 360 days of data ({days_covered} days). Stopping.")
                         break
                 
@@ -367,10 +440,12 @@ class FlightRadar24API:
                 unique_results.append(result)
         
         print(f"\n==== Summary ====")
-        print(f"Total flights found: {len(all_results)}")
-        print(f"Unique flights: {len(unique_results)}")
+        print(f"📊 Pages scraped: {batch_count}")
+        print(f"📈 Total flights found: {len(all_results)}")
+        print(f"🔍 Unique flights: {len(unique_results)}")
         if earliest_date:
-            print(f"Date range: {earliest_date.strftime('%Y-%m-%d')} to {self.today.strftime('%Y-%m-%d')} ({(self.today - earliest_date).days} days)")
+            print(f"📅 Date range: {earliest_date.strftime('%Y-%m-%d')} to {self.today.strftime('%Y-%m-%d')} ({(self.today - earliest_date).days} days)")
+            print(f"🗓️  Latest date in database will be: {self.today.strftime('%Y-%m-%d')}")
         
         # Cache the results
         if unique_results:
@@ -385,21 +460,51 @@ class FlightRadar24API:
         return unique_results
 
 def main():
-    # Accept 1, 2, or 3 arguments: flight_number [origin_iata] [destination_iata]
-    if len(sys.argv) < 2 or len(sys.argv) > 4:
-        print("Usage: python flightradar_api.py <flight_number> [origin_iata] [destination_iata]")
+    # Parse command line arguments with support for --stop-date
+    flight_number = None
+    origin_iata = None
+    destination_iata = None
+    stop_date = None
+    
+    # Parse arguments
+    i = 1
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        
+        if arg == '--stop-date':
+            if i + 1 < len(sys.argv):
+                stop_date = sys.argv[i + 1]
+                i += 2
+            else:
+                print("Error: --stop-date requires a date value")
+                sys.exit(1)
+        elif flight_number is None:
+            flight_number = arg
+            i += 1
+        elif origin_iata is None:
+            origin_iata = arg
+            i += 1
+        elif destination_iata is None:
+            destination_iata = arg
+            i += 1
+        else:
+            print(f"Error: Unknown argument: {arg}")
+            sys.exit(1)
+    
+    if not flight_number:
+        print("Usage: python flightradar_api.py <flight_number> [origin_iata] [destination_iata] [--stop-date YYYY-MM-DD]")
         sys.exit(1)
     
-    flight_number = sys.argv[1]
-    origin_iata = sys.argv[2] if len(sys.argv) > 2 else None
-    destination_iata = sys.argv[3] if len(sys.argv) > 3 else None
     print(f"Searching for flight: {flight_number}")
     if origin_iata:
         print(f"Filtering by origin IATA: {origin_iata}")
     if destination_iata:
         print(f"Filtering by destination IATA: {destination_iata}")
+    if stop_date:
+        print(f"Stopping at date: {stop_date}")
+    
     api = FlightRadar24API()
-    results = api.get_flights(flight_number, origin_iata=origin_iata, destination_iata=destination_iata)
+    results = api.get_flights(flight_number, origin_iata=origin_iata, destination_iata=destination_iata, stop_date=stop_date)
     
     # Print results one per line for easy parsing
     for result in results:
