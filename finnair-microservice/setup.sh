@@ -38,13 +38,13 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "🔧 Creating .env file in main project directory..."
     cat > "$ENV_FILE" << EOF
 # Supabase Configuration (using Next.js naming convention)
-NEXT_PUBLIC_SUPABASE_URL=https://dbaixrvzmfwhhbgyoebt.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key_here
+NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
 
 # Alternative Supabase Configuration (if you prefer)
-# SUPABASE_URL=https://dbaixrvzmfwhhbgyoebt.supabase.co
-# SUPABASE_ANON_KEY=your_anon_key_here
-# SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
+# SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+# SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+# SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
 
 # Finnair Configuration
 FINNAIR_COOKIES_FILE=finnair_cookies.json
