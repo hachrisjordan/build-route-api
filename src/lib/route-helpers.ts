@@ -67,6 +67,32 @@ export async function batchFetchAirportsByIata(
   return result;
 }
 
+export async function buildAirportMapAndDirectDistance(
+  origin: string,
+  destination: string,
+  segmentPool: Record<string, any[]>,
+  supabaseUrl: string,
+  supabaseAnonKey: string
+): Promise<{ airportMap: Record<string, Airport | null>; directDistanceMiles: number }> {
+  const codes = new Set<string>();
+  Object.keys(segmentPool).forEach(key => {
+    const [so, sd] = key.split('-');
+    if (so) codes.add(so);
+    if (sd) codes.add(sd);
+  });
+  if (origin) codes.add(origin);
+  if (destination) codes.add(destination);
+  const supabase = createClient(supabaseUrl, supabaseAnonKey) as unknown as SupabaseClient;
+  const airportMap = await batchFetchAirportsByIata(supabase, Array.from(codes));
+  let directDistanceMiles = 0;
+  const oAp = airportMap[origin];
+  const dAp = airportMap[destination];
+  if (oAp && dAp && typeof oAp.latitude === 'number' && typeof oAp.longitude === 'number' && typeof dAp.latitude === 'number' && typeof dAp.longitude === 'number') {
+    directDistanceMiles = getHaversineDistance(oAp.latitude, oAp.longitude, dAp.latitude, dAp.longitude);
+  }
+  return { airportMap, directDistanceMiles };
+}
+
 // Helper function to fetch paths in batches
 async function fetchPathsBatch(
   supabase: SupabaseClient,
