@@ -52,8 +52,16 @@ function decryptData(encryptedData: string, iv: string, authTag: string): any {
 
 /**
  * Create an encrypted response with embedded metadata
+ * Can be disabled temporarily by setting DISABLE_ENCRYPTION=true
  */
 export function encryptResponseAES(data: any): { token: string; expiresAt: number } {
+  // Temporary disable encryption if environment variable is set
+  if (process.env.DISABLE_ENCRYPTION === 'true') {
+    return {
+      token: JSON.stringify(data),
+      expiresAt: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
+    };
+  }
   const payload = {
     data,
     timestamp: Date.now(),
@@ -78,6 +86,11 @@ export function encryptResponseAES(data: any): { token: string; expiresAt: numbe
  */
 export function decryptResponseAES(token: string): any {
   try {
+    // Check if encryption is disabled - if so, just parse the JSON directly
+    if (process.env.DISABLE_ENCRYPTION === 'true') {
+      return JSON.parse(token);
+    }
+    
     const parts = token.split('.');
     if (parts.length !== 3) {
       throw new Error('Invalid token format');
