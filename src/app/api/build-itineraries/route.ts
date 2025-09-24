@@ -14,6 +14,8 @@ import { getSanitizedEnv, getRedisConfig } from '@/lib/env-utils';
 import { smartRateLimit } from '@/lib/smart-rate-limiter';
 import { getAvailableProKey, updateProKeyRemaining } from '@/lib/supabase-admin';
 import { getReliabilityTableCached, getReliabilityMap } from '@/lib/reliability-cache';
+import { getHaversineDistance, batchFetchAirportsByIata } from '@/lib/route-helpers';
+import type { Airport } from '@/types/route';
 
 function getClassPercentages(
   flights: any[],
@@ -232,7 +234,9 @@ function filterUnreliableSegments(
   reliability: Record<string, { min_count: number; exemption?: string }>,
   origin: string,
   destination: string,
-  minReliabilityPercent: number
+  minReliabilityPercent: number,
+  airportByIata: Record<string, Airport | null>,
+  directDistanceMiles: number
 ): Record<string, AvailabilityGroup[]> {
   console.log('[build-itineraries] Filtering unreliable segments from availability pool...');
   const startTime = Date.now();
@@ -259,8 +263,43 @@ function filterUnreliableSegments(
       totalFlightsBefore += group.flights.length;
       
       for (const flight of group.flights) {
-        // For origin/destination segments, allow all flights (they'll be filtered later in reliability filtering)
+        // For origin/destination segments, allow but prune excessively long unreliable segments
         if (isOriginOrDestinationSegment) {
+          // Compute maxUnreliableAllowed = (1 - minReliability) * directDistance * 2
+          const minReliability = Math.max(0, Math.min(100, minReliabilityPercent)) / 100;
+          const maxUnreliableAllowed = (1 - minReliability) * directDistanceMiles * 2;
+
+          // Determine if flight is unreliable for airline
+          const airlineCodeOD = flight.FlightNumbers.slice(0, 2).toUpperCase();
+          const relOD = reliability[airlineCodeOD];
+          const minCountOD = relOD?.min_count ?? 1;
+          const exemptionOD = relOD?.exemption || '';
+          const minYOD = exemptionOD.includes('Y') ? 1 : minCountOD;
+          const minWOD = exemptionOD.includes('W') ? 1 : minCountOD;
+          const minJOD = exemptionOD.includes('J') ? 1 : minCountOD;
+          const minFOD = exemptionOD.includes('F') ? 1 : minCountOD;
+          const isReliableOD = (
+            flight.YCount >= minYOD ||
+            flight.WCount >= minWOD ||
+            flight.JCount >= minJOD ||
+            flight.FCount >= minFOD
+          );
+
+          if (!isReliableOD) {
+            // Estimate segment distance using airport coordinates
+            if (typeof segOrigin === 'string' && typeof segDestination === 'string') {
+              const oAp = airportByIata[segOrigin];
+              const dAp = airportByIata[segDestination];
+              if (oAp && dAp && typeof oAp.latitude === 'number' && typeof oAp.longitude === 'number' && typeof dAp.latitude === 'number' && typeof dAp.longitude === 'number') {
+                const segDistance = getHaversineDistance(oAp.latitude, oAp.longitude, dAp.latitude, dAp.longitude);
+                if (segDistance > maxUnreliableAllowed) {
+                  // Skip this flight as it's an unreliable segment longer than allowed
+                  continue;
+                }
+              }
+            }
+          }
+
           filteredFlights.push(flight);
           continue;
         }
@@ -1785,9 +1824,34 @@ export async function POST(req: NextRequest) {
     const reliabilityMap = getReliabilityMap(reliabilityTable);
     performanceMetrics.reliabilityCache = Date.now() - reliabilityStart;
     
-    // Filter segments: remove unreliable intermediate segments but keep origin/destination segments
+    // Compute direct distance for O/D threshold and prepare airport cache
+    const airportCodesNeeded = new Set<string>();
+    Object.keys(segmentPool).forEach(key => {
+      const [so, sd] = key.split('-');
+      if (so) airportCodesNeeded.add(so);
+      if (sd) airportCodesNeeded.add(sd);
+    });
+    if (origin) airportCodesNeeded.add(origin);
+    if (destination) airportCodesNeeded.add(destination);
+    const airportMap = await batchFetchAirportsByIata(createClient(getSanitizedEnv('NEXT_PUBLIC_SUPABASE_URL')!, getSanitizedEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY')!), Array.from(airportCodesNeeded));
+    let directDistanceMiles = 0;
+    const oAp = airportMap[origin];
+    const dAp = airportMap[destination];
+    if (oAp && dAp && typeof oAp.latitude === 'number' && typeof oAp.longitude === 'number' && typeof dAp.latitude === 'number' && typeof dAp.longitude === 'number') {
+      directDistanceMiles = getHaversineDistance(oAp.latitude, oAp.longitude, dAp.latitude, dAp.longitude);
+    }
+
+    // Filter segments: remove unreliable intermediate segments but prune long unreliable O/D segments
     const segmentFilterStart = Date.now();
-    const filteredSegmentPool = filterUnreliableSegments(segmentPool, reliabilityMap, origin, destination, minReliabilityPercent);
+    const filteredSegmentPool = filterUnreliableSegments(
+      segmentPool,
+      reliabilityMap,
+      origin,
+      destination,
+      minReliabilityPercent,
+      airportMap,
+      directDistanceMiles
+    );
     performanceMetrics.segmentFiltering = Date.now() - segmentFilterStart;
 
     // PHASE 1 OPTIMIZATION: Pre-compute flight metadata and connection matrices from filtered pool
