@@ -1,4 +1,4 @@
-import type { AvailabilityFlight, AvailabilityGroup } from '@/types/availability';
+import type { AvailabilityGroup, AvailabilityFlight } from '@/types/availability';
 import { getFlightUUID } from '@/lib/itineraries/ids';
 
 export interface FlightMetadata {
@@ -115,7 +115,7 @@ export function buildGroupConnectionMatrix(
 }
 
 export function buildConnectionMatrix(
-  getFlightUUID: (flight: AvailabilityFlight) => string,
+  metadata: Map<string, FlightMetadata>,
   segmentPool: Record<string, AvailabilityGroup[]>,
   groupConnections: Map<string, Set<string>>,
   minConnectionMinutes = 45
@@ -123,6 +123,7 @@ export function buildConnectionMatrix(
   const connections = new Map<string, Set<string>>();
   const flightToGroup = new Map<string, string>();
   const groupToFlights = new Map<string, string[]>();
+
   let groupIndex = 0;
   for (const [segmentKey, groups] of Object.entries(segmentPool)) {
     for (const group of groups) {
@@ -137,27 +138,31 @@ export function buildConnectionMatrix(
       groupIndex++;
     }
   }
-  const canConnect = (aArrivesAt: string, bDepartsAt: string) => {
-    const arrive = new Date(aArrivesAt).getTime();
-    const depart = new Date(bDepartsAt).getTime();
-    const minutes = Math.round((depart - arrive) / 60000);
-    return minutes >= minConnectionMinutes && minutes <= 24 * 60;
-  };
-  for (const [groupKeyA, nextGroups] of groupConnections.entries()) {
-    const flightsA = groupToFlights.get(groupKeyA) || [];
-    for (const groupKeyB of nextGroups) {
-      const flightsB = groupToFlights.get(groupKeyB) || [];
-      for (const uuidA of flightsA) {
-        const flightSet = connections.get(uuidA) || new Set<string>();
-        for (const uuidB of flightsB) {
-          // We don't have original flights here; the caller will ensure UUID mapping
-          // This matrix expresses potential connections; strict validation occurs later
-          flightSet.add(uuidB);
+
+  for (const [flightUuid, flightMeta] of metadata) {
+    const fromGroupKey = flightToGroup.get(flightUuid);
+    if (!fromGroupKey) continue;
+
+    const validConnections = new Set<string>();
+    const connectedGroups = groupConnections.get(fromGroupKey);
+    if (!connectedGroups) continue;
+
+    for (const toGroupKey of connectedGroups) {
+      const groupFlights = groupToFlights.get(toGroupKey);
+      if (!groupFlights) continue;
+      for (const toFlightUuid of groupFlights) {
+        if (flightUuid === toFlightUuid) continue;
+        const toFlightMeta = metadata.get(toFlightUuid);
+        if (!toFlightMeta) continue;
+        const diffMinutes = (toFlightMeta.departureTime - flightMeta.arrivalTime) / 60000;
+        if (diffMinutes >= minConnectionMinutes && diffMinutes <= 24 * 60) {
+          validConnections.add(toFlightUuid);
         }
-        connections.set(uuidA, flightSet);
       }
     }
+    connections.set(flightUuid, validConnections);
   }
+
   return connections;
 }
 
