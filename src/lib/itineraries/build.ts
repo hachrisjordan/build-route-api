@@ -53,8 +53,18 @@ export async function buildItinerariesAcrossRoutes(
         const segKey = `${from}-${to}`;
         const avail = segmentAvailability[segKey] || [];
         segmentAvail.push(avail);
-        const allowedAlliances = Array.from(new Set(avail.map(g => g.alliance)));
-        alliances.push(allowedAlliances.length ? allowedAlliances : null);
+        
+        // Alliance validation: use route.all1/all2/all3 based on segment position
+        if (route.O && route.A && from === route.O && to === route.A) {
+          // O-A segment
+          alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
+        } else if (route.B && route.D && from === route.B && to === route.D) {
+          // B-D segment
+          alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
+        } else {
+          // All other segments (A-H1, H1-H2, H2-B, etc.)
+          alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
+        }
       }
       const t0 = Date.now();
       const routeResults = composeItineraries(segments, segmentAvail, alliances, flightMap, connectionMatrix);
@@ -104,8 +114,18 @@ export async function buildItinerariesAcrossRoutes(
         const segKey = `${from}-${to}`;
         const avail = segmentAvailability[segKey] || [];
         segmentAvail.push(avail);
-        const allowedAlliances = Array.from(new Set(avail.map(g => g.alliance)));
-        alliances.push(allowedAlliances.length ? allowedAlliances : null);
+        
+        // Alliance validation: use route.all1/all2/all3 based on segment position
+        if (route.O && route.A && from === route.O && to === route.A) {
+          // O-A segment
+          alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
+        } else if (route.B && route.D && from === route.B && to === route.D) {
+          // B-D segment
+          alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
+        } else {
+          // All other segments (A-H1, H1-H2, H2-B, etc.)
+          alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
+        }
       }
       const routeResults = composeItineraries(segments, segmentAvail, alliances, flightMap, connectionMatrix);
       const routeKey = codes.join('-');
