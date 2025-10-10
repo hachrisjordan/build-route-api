@@ -2,6 +2,10 @@
 0 2 * * * /app/node_modules/.bin/tsx /app/scripts/jetblue-batch-cron.ts >> /app/batch.log 2>&1
 0 14 * * * /app/node_modules/.bin/tsx /app/scripts/jetblue-batch-cron.ts --reverse >> /app/batch.log 2>&1
 
+# AmEx Hotel Offers Update - runs daily at midnight UTC
+0 0 * * * /app/node_modules/.bin/tsx /app/scripts/amex-hotel-offers-cron.ts >> /app/batch.log 2>&1
+
+
 # Virgin Atlantic API cron job - runs every hour
 0 * * * * curl -X GET "http://localhost:3000/api/seats-aero-virginatlantic" > /dev/null 2>&1
 0 * * * * curl -X GET "http://localhost:3000/api/seats-aero-lufthansa" > /dev/null 2>&1
@@ -9,3 +13,6 @@
 
 # CX Availability Scraper - runs every hour at :00
 0 * * * * /app/scripts/run-cx-scraper.sh 
+
+# AmEx Hotel Offers Update - runs daily at midnight UTC
+0 0 * * * /app/node_modules/.bin/tsx /app/scripts/amex-hotel-offers-cron.ts >> /app/batch.log 2>&1

@@ -19,7 +19,6 @@ async function calculateMileageCost(supabase: any, originAirport: string, destin
       .in('iata', [originAirport, destinationAirport]);
 
     if (airportError || !airports || airports.length !== 2) {
-      console.error('Error fetching airport data:', airportError);
       return null;
     }
 
@@ -27,7 +26,6 @@ async function calculateMileageCost(supabase: any, originAirport: string, destin
     const destinationAirportData = airports.find((a: any) => a.iata === destinationAirport);
 
     if (!originAirportData?.iso || !destinationAirportData?.iso) {
-      console.error('Missing ISO codes for airports:', { originAirport, destinationAirport });
       return null;
     }
 
@@ -38,7 +36,6 @@ async function calculateMileageCost(supabase: any, originAirport: string, destin
       .in('code', [originAirportData.iso, destinationAirportData.iso]);
 
     if (zoneError || !zones || zones.length !== 2) {
-      console.error('Error fetching zone data:', zoneError);
       return null;
     }
 
@@ -46,7 +43,6 @@ async function calculateMileageCost(supabase: any, originAirport: string, destin
     const destinationZone = zones.find((z: any) => z.code === destinationAirportData.iso)?.zone;
 
     if (!originZone || !destinationZone) {
-      console.error('Missing zones for airports:', { originZone, destinationZone });
       return null;
     }
 
@@ -59,13 +55,11 @@ async function calculateMileageCost(supabase: any, originAirport: string, destin
       .single();
 
     if (pricingError || !pricing) {
-      console.error('Error fetching pricing data:', pricingError);
       return null;
     }
 
     return pricing.first;
   } catch (error) {
-    console.error('Error calculating mileage cost:', error);
     return null;
   }
 }
@@ -134,8 +128,6 @@ export async function GET(req: NextRequest) {
       const sp = new URLSearchParams(params as any);
       const url = `https://seats.aero/partnerapi/search?${sp.toString()}`;
 
-      // Log the URL
-      console.log('Seats.aero API URL:', url);
 
       // Make API call
       const response = await fetch(url, {
@@ -179,11 +171,8 @@ export async function GET(req: NextRequest) {
               
               // Filter to only include NH flights
               if (trip.FlightNumbers && !trip.FlightNumbers.startsWith('NH')) {
-                console.log('Skipping non-NH flight:', trip.FlightNumbers);
                 continue;
               }
-              
-              console.log('Including NH flight:', trip.FlightNumbers);
               
               // Create unique key for this flight
               const flightKey = `${trip.FlightNumbers}-${trip.DepartsAt}`;
@@ -194,7 +183,6 @@ export async function GET(req: NextRequest) {
                 
                 if (existingTrip.RemainingSeats === 0 && trip.RemainingSeats > 0) {
                   // Replace with non-zero seats version
-                  console.log(`Replacing ${flightKey} with non-zero seats version: ${trip.RemainingSeats} seats`);
                   tripMap.set(flightKey, {
                     TotalDuration: trip.TotalDuration,
                     RemainingSeats: trip.RemainingSeats,
@@ -210,11 +198,9 @@ export async function GET(req: NextRequest) {
                   });
                 } else if (existingTrip.RemainingSeats > 0 && trip.RemainingSeats === 0) {
                   // Keep existing non-zero seats version
-                  console.log(`Keeping existing non-zero seats version for ${flightKey}: ${existingTrip.RemainingSeats} seats`);
                                  } else if (existingTrip.RemainingSeats === 0 && trip.RemainingSeats === 0) {
                    // Both have zero seats, keep the one with higher Distance (longer flight = better availability)
                    if (trip.Distance > existingTrip.Distance) {
-                     console.log(`Replacing ${flightKey} with higher Distance version: ${trip.Distance} vs ${existingTrip.Distance}`);
                     tripMap.set(flightKey, {
                       TotalDuration: trip.TotalDuration,
                       RemainingSeats: trip.RemainingSeats,
@@ -232,7 +218,6 @@ export async function GET(req: NextRequest) {
                 } else {
                   // Both have non-zero seats, keep the one with more seats
                   if (trip.RemainingSeats > existingTrip.RemainingSeats) {
-                    console.log(`Replacing ${flightKey} with more seats version: ${trip.RemainingSeats} vs ${existingTrip.RemainingSeats} seats`);
                     tripMap.set(flightKey, {
                       TotalDuration: trip.TotalDuration,
                       RemainingSeats: trip.RemainingSeats,
@@ -308,10 +293,8 @@ export async function GET(req: NextRequest) {
         .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all rows
 
       if (truncateError) {
-        console.error('Error truncating table:', truncateError);
         saveResult = { error: `Truncate failed: ${truncateError.message}` };
       } else {
-        console.log('Table truncated successfully');
         
         // Now insert the new data
         const { data: savedData, error: saveError } = await supabase
@@ -320,7 +303,6 @@ export async function GET(req: NextRequest) {
           .select();
 
         if (saveError) {
-          console.error('Error saving to database:', saveError);
           saveResult = { error: saveError.message };
         } else {
           saveResult = { 
@@ -347,7 +329,6 @@ export async function GET(req: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('Error in /api/seats-aero-ana:', error);
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: 500 }

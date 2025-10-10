@@ -72,8 +72,6 @@ export async function GET(req: NextRequest) {
       const sp = new URLSearchParams(params as any);
       const url = `https://seats.aero/partnerapi/search?${sp.toString()}`;
 
-      // Log the URL
-      console.log('Seats.aero API URL:', url);
 
       // Make API call
       const response = await fetch(url, {
@@ -117,11 +115,8 @@ export async function GET(req: NextRequest) {
               
               // Filter to only include DL, AF, or KL flights
               if (trip.FlightNumbers && !trip.FlightNumbers.match(/^(DL|AF|KL)/)) {
-                console.log('Skipping non-DL/AF/KL flight:', trip.FlightNumbers);
                 continue;
               }
-              
-              console.log('Including DL/AF/KL flight:', trip.FlightNumbers);
               
               // Prepare trip data for response
               const tripData = {
@@ -173,10 +168,8 @@ export async function GET(req: NextRequest) {
         .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all rows
 
       if (truncateError) {
-        console.error('Error truncating table:', truncateError);
         saveResult = { error: `Truncate failed: ${truncateError.message}` };
       } else {
-        console.log('Table truncated successfully');
         
         // Now insert the new data
         const { data: savedData, error: saveError } = await supabase
@@ -185,7 +178,6 @@ export async function GET(req: NextRequest) {
           .select();
 
         if (saveError) {
-          console.error('Error saving to database:', saveError);
           saveResult = { error: saveError.message };
         } else {
           saveResult = { 
@@ -213,7 +205,6 @@ export async function GET(req: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('Error in /api/seats-aero-virginatlantic:', error);
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: 500 }
