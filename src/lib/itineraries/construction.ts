@@ -94,47 +94,56 @@ export async function composeItineraries(
     
     const dateResults: string[][] = [];
     
-    // For a 2-segment route like HAN-TYO-CHI, we need to connect:
-    // Any HAN-TYO flight to any TYO-CHI flight
+    // Build itineraries by connecting flights across ALL segments
+    // For routes like HAN-TYO-CHI-LAX, we need to connect:
+    // HAN-TYO flights → TYO-CHI flights → CHI-LAX flights
+    const numSegments = segmentFlightsForDate.length;
+    
+    if (numSegments === 0) continue;
+    
+    // Start with all flights from the first segment
     const firstSegmentFlights = segmentFlightsForDate[0] || [];
-    const secondSegmentFlights = segmentFlightsForDate[1] || [];
     
-    
-    // Debug: Track VN310 and UA882 specifically
-    const vn310Flights = firstSegmentFlights.filter(f => f.FlightNumbers === 'VN310');
-    const ua882Flights = secondSegmentFlights.filter(f => f.FlightNumbers === 'UA882');
-    
-    
-    // Try every first segment flight with every second segment flight
-    for (const firstFlight of firstSegmentFlights) {
-      const firstUuid = getFlightUUID(firstFlight);
-      if (!flightMap.has(firstUuid)) {
-        flightMap.set(firstUuid, firstFlight);
+    // Build itineraries recursively through all segments
+    function buildItinerariesFromSegment(
+      currentItinerary: string[], 
+      segmentIndex: number
+    ): void {
+      if (segmentIndex >= numSegments) {
+        // We've built a complete itinerary
+        if (currentItinerary.length === numSegments) {
+          dateResults.push([...currentItinerary]);
+        }
+        return;
       }
       
-      const isVN310 = firstFlight.FlightNumbers === 'VN310';
+      const segmentFlights = segmentFlightsForDate[segmentIndex] || [];
       
-      for (const secondFlight of secondSegmentFlights) {
-        const secondUuid = getFlightUUID(secondFlight);
-        if (!flightMap.has(secondUuid)) {
-          flightMap.set(secondUuid, secondFlight);
+      for (const flight of segmentFlights) {
+        const flightUuid = getFlightUUID(flight);
+        if (!flightMap.has(flightUuid)) {
+          flightMap.set(flightUuid, flight);
         }
         
-        const isUA882 = secondFlight.FlightNumbers === 'UA882';
-        
-        if (isVN310 && isUA882) {
-        }
-        
-        // Check if connection is valid using connection matrix
-        const validConnections = connectionMatrix.get(firstUuid);
-        if (validConnections && validConnections.has(secondUuid)) {
-          // Valid connection - add to results
-          dateResults.push([firstUuid, secondUuid]);
-          if (isVN310 && isUA882) {
+        // For the first segment, just add the flight
+        if (segmentIndex === 0) {
+          buildItinerariesFromSegment([flightUuid], segmentIndex + 1);
+        } else {
+          // For subsequent segments, check connection validity
+          const lastFlightUuid = currentItinerary[currentItinerary.length - 1];
+          if (lastFlightUuid) {
+            const validConnections = connectionMatrix.get(lastFlightUuid);
+            if (validConnections && validConnections.has(flightUuid)) {
+              // Valid connection - continue building the itinerary
+              buildItinerariesFromSegment([...currentItinerary, flightUuid], segmentIndex + 1);
+            }
           }
         }
       }
     }
+    
+    // Start building itineraries from the first segment
+    buildItinerariesFromSegment([], 0);
     
     if (dateResults.length > 0) {
       const uniqueResults = Array.from(new Map(dateResults.map(itin => [itin.join('>'), itin])).values());

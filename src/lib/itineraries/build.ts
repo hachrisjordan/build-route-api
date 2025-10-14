@@ -223,8 +223,8 @@ for (let i = 0; i < codes.length - 1; i++) {
         }
       }
       
-      // Group segments by original route structure (2-segment routes)
-      // For HAN-TYO-ORD, we want: [HAN-NRT, HAN-HND] and [NRT-ORD, HND-ORD]
+      // Group segments by original route structure (multi-segment routes)
+      // For HAN-TYO-CHI-ORD, we want: [HAN-NRT, HAN-HND], [NRT-ORDX, HND-ORDX], [ORDX-ORD]
       const firstSegmentFlights: AvailabilityGroup[] = [];
       const secondSegmentFlights: AvailabilityGroup[] = [];
       
@@ -242,7 +242,7 @@ for (let i = 0; i < codes.length - 1; i++) {
       }
       
       
-      // Create a simple 2-segment structure for composeItineraries
+      // Create a multi-segment structure for composeItineraries
       // Create segment structure based on actual route
 const segments: [string, string][] = [];
 for (let i = 0; i < codes.length - 1; i++) {
