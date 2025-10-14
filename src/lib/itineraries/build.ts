@@ -63,31 +63,42 @@ export async function buildItinerariesAcrossRoutes(
         }
       }
       
-      // Group segments by original route structure (2-segment routes)
-      // For HAN-TYO-ORD, we want: [HAN-NRT, HAN-HND] and [NRT-ORD, HND-ORD]
-      const firstSegmentFlights: AvailabilityGroup[] = [];
-      const secondSegmentFlights: AvailabilityGroup[] = [];
+      // Create segment structure based on actual route
+const segments: [string, string][] = [];
+for (let i = 0; i < codes.length - 1; i++) {
+  segments.push([codes[i]!, codes[i + 1]!]);
+}
+      // Group segment availability by route structure
+      const segmentAvail: AvailabilityGroup[][] = [];
+      const alliances: (string[] | null)[] = [];
       
-      // Collect all flights for each segment
-      for (const [from, to] of segmentPairs) {
-        const segKey = `${from}-${to}`;
-        const avail = segmentAvailability[segKey] || [];
+      for (let i = 0; i < segments.length; i++) {
+        const [from, to] = segments[i]!;
+        const segmentFlights: AvailabilityGroup[] = [];
         
-        // Determine which segment group this belongs to based on origin
-        if (from === codes[0]) { // First segment (HAN-*)
-          firstSegmentFlights.push(...avail);
-        } else { // Second segment (*-ORD)
-          secondSegmentFlights.push(...avail);
+        // Collect all flights for this segment by expanding city codes
+        const fromAirports = isCityCode(from) ? getCityAirports(from) : [from];
+        const toAirports = isCityCode(to) ? getCityAirports(to) : [to];
+        
+        for (const fromAirport of fromAirports) {
+          for (const toAirport of toAirports) {
+            const segKey = `${fromAirport}-${toAirport}`;
+            const avail = segmentAvailability[segKey] || [];
+            segmentFlights.push(...avail);
+          }
+        }
+        
+        segmentAvail.push(segmentFlights);
+        
+        // Alliance validation based on route position
+        if (i === 0) {
+          alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
+        } else if (i === segments.length - 1) {
+          alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
+        } else {
+          alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
         }
       }
-      
-      // Create a simple 2-segment structure for composeItineraries
-      const segments: [string, string][] = [['HAN', 'TYO'], ['TYO', 'ORD']];
-      const segmentAvail: AvailabilityGroup[][] = [firstSegmentFlights, secondSegmentFlights];
-      const alliances: (string[] | null)[] = [
-        Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null),
-        Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null)
-      ];
       
       const t0 = Date.now();
       const routeResults = await composeItineraries(segments, segmentAvail, alliances, flightMap, connectionMatrix);
@@ -232,12 +243,42 @@ export async function buildItinerariesAcrossRoutes(
       
       
       // Create a simple 2-segment structure for composeItineraries
-      const segments: [string, string][] = [['HAN', 'TYO'], ['TYO', 'ORD']];
-      const segmentAvail: AvailabilityGroup[][] = [firstSegmentFlights, secondSegmentFlights];
-      const alliances: (string[] | null)[] = [
-        Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null),
-        Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null)
-      ];
+      // Create segment structure based on actual route
+const segments: [string, string][] = [];
+for (let i = 0; i < codes.length - 1; i++) {
+  segments.push([codes[i]!, codes[i + 1]!]);
+}
+      // Group segment availability by route structure
+      const segmentAvail: AvailabilityGroup[][] = [];
+      const alliances: (string[] | null)[] = [];
+      
+      for (let i = 0; i < segments.length; i++) {
+        const [from, to] = segments[i]!;
+        const segmentFlights: AvailabilityGroup[] = [];
+        
+        // Collect all flights for this segment by expanding city codes
+        const fromAirports = isCityCode(from) ? getCityAirports(from) : [from];
+        const toAirports = isCityCode(to) ? getCityAirports(to) : [to];
+        
+        for (const fromAirport of fromAirports) {
+          for (const toAirport of toAirports) {
+            const segKey = `${fromAirport}-${toAirport}`;
+            const avail = segmentAvailability[segKey] || [];
+            segmentFlights.push(...avail);
+          }
+        }
+        
+        segmentAvail.push(segmentFlights);
+        
+        // Alliance validation based on route position
+        if (i === 0) {
+          alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
+        } else if (i === segments.length - 1) {
+          alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
+        } else {
+          alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
+        }
+      }
       
       const routeResults = await composeItineraries(segments, segmentAvail, alliances, flightMap, connectionMatrix);
       

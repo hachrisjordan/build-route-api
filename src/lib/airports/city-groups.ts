@@ -103,11 +103,20 @@ export function isSameCity(airport1: string, airport2: string): boolean {
   const city1 = getAirportCityCode(airport1);
   const city2 = getAirportCityCode(airport2);
   
-  // If either airport is not in a city group, they're not in the same city
-  if (city1 === airport1 || city2 === airport2) {
-    return false;
+  // If both are city codes, compare directly
+  if (city1 === airport1 && city2 === airport2) {
+    return airport1 === airport2;
   }
   
+  // If one is a city code and the other is an airport, check if airport belongs to city
+  if (city1 === airport1) {
+    return city2 === airport1; // airport2 belongs to city airport1
+  }
+  if (city2 === airport2) {
+    return city1 === airport2; // airport1 belongs to city airport2
+  }
+  
+  // Both are airports, check if they belong to the same city
   return city1 === city2;
 }
 

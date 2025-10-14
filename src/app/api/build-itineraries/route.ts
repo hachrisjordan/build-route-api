@@ -295,7 +295,7 @@ export async function POST(req: NextRequest) {
     // Special handling for direct flights (maxStop=0)
     if (maxStop === 0) {
       console.log('[build-itineraries] Processing direct flights (maxStop=0)');
-      const direct = buildDirectItineraries(origin, destination, filteredSegmentPool, flightMap);
+      const direct = await buildDirectItineraries(origin, destination, filteredSegmentPool, flightMap);
       Object.assign(output, direct);
       console.log(`[build-itineraries] Direct flight processing completed: ${Object.keys(output).length} routes`);
     } else {
