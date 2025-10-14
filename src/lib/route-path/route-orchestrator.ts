@@ -11,6 +11,7 @@ import { RouteCalculatorService } from './calculator';
 import { RouteGroupingService } from './grouping';
 import { ResponseFormatterService } from './response-formatter';
 import { FullRoutePathResult } from '@/types/route';
+import { initializeCityGroups, getCityAirports, isCityCode } from '@/lib/airports/city-groups';
 
 /**
  * Route orchestration result
@@ -145,10 +146,33 @@ export class RouteOrchestratorService {
     context: RouteOrchestrationContext,
     performanceMonitor: APIPerformanceMonitor
   ): Promise<any> {
+    // Initialize city groups first
+    await initializeCityGroups();
+
+    // Expand city codes to airports for batch processing
+    const expandedOriginList: string[] = [];
+    const expandedDestinationList: string[] = [];
+
+    for (const origin of context.validatedData.originList) {
+      if (isCityCode(origin)) {
+        expandedOriginList.push(...getCityAirports(origin));
+      } else {
+        expandedOriginList.push(origin);
+      }
+    }
+
+    for (const destination of context.validatedData.destinationList) {
+      if (isCityCode(destination)) {
+        expandedDestinationList.push(...getCityAirports(destination));
+      } else {
+        expandedDestinationList.push(destination);
+      }
+    }
+
     const batchResult = await BatchProcessorService.processBatchData(
       context.supabase,
-      context.validatedData.originList,
-      context.validatedData.destinationList,
+      expandedOriginList,
+      expandedDestinationList,
       context.validatedData.maxStop,
       context.cacheService,
       performanceMonitor
@@ -177,30 +201,39 @@ export class RouteOrchestratorService {
     // Create route calculation promises for all pairs
     for (const origin of originList) {
       for (const destination of destinationList) {
-        const sharedPathsKey = BatchProcessorService.calculateSharedPathKey(
-          origin,
-          destination,
-          context.cacheService
-        );
+        // Expand city codes to airports
+        const originAirports = isCityCode(origin) ? getCityAirports(origin) : [origin];
+        const destinationAirports = isCityCode(destination) ? getCityAirports(destination) : [destination];
 
-        const calculator = new RouteCalculatorService();
-        pairPromises.push(
-          calculator.calculateFullRoutePath({
-            origin,
-            destination,
-            maxStop,
-            supabase: context.supabase,
-            cacheService: context.cacheService,
-            sharedPathsKey
-          })
-        );
+        // Calculate routes for all airport combinations
+        for (const originAirport of originAirports) {
+          for (const destinationAirport of destinationAirports) {
+            const sharedPathsKey = BatchProcessorService.calculateSharedPathKey(
+              originAirport,
+              destinationAirport,
+              context.cacheService
+            );
+
+            const calculator = new RouteCalculatorService();
+            pairPromises.push(
+              calculator.calculateFullRoutePath({
+                origin: originAirport,
+                destination: destinationAirport,
+                maxStop,
+                supabase: context.supabase,
+                cacheService: context.cacheService,
+                sharedPathsKey
+              })
+            );
+          }
+        }
       }
     }
 
     // Execute all route calculations in parallel
     const pairResults = await Promise.allSettled(pairPromises);
     performanceMonitor.endAPI('pair-processing', { 
-      pairsCount: originList.length * destinationList.length 
+      pairsCount: pairPromises.length 
     });
 
     // Process results

@@ -30,7 +30,12 @@ export interface ValidatedRouteInput {
 const AIRPORT_CODE_REGEX = /^[A-Z]{3}$/;
 
 /**
- * Multi-airport validation regex (slash-separated)
+ * City code validation regex (same as airport for now, but we'll validate against city groups)
+ */
+const CITY_CODE_REGEX = /^[A-Z]{3}$/;
+
+/**
+ * Multi-airport/city validation regex (slash-separated)
  */
 const MULTI_AIRPORT_REGEX = /^([A-Z]{3})(\/[A-Z]{3})*$/;
 
@@ -41,11 +46,11 @@ export const routePathValidationSchema = z.object({
   origin: z
     .string()
     .min(1, 'Origin is required')
-    .regex(MULTI_AIRPORT_REGEX, 'Origin must be valid airport codes separated by slashes (e.g., LAX or LAX/SFO)'),
+    .regex(MULTI_AIRPORT_REGEX, 'Origin must be valid airport/city codes separated by slashes (e.g., LAX or TYO/NYC)'),
   destination: z
     .string()
     .min(1, 'Destination is required')
-    .regex(MULTI_AIRPORT_REGEX, 'Destination must be valid airport codes separated by slashes (e.g., JFK or JFK/LAX)'),
+    .regex(MULTI_AIRPORT_REGEX, 'Destination must be valid airport/city codes separated by slashes (e.g., JFK or TYO/NYC)'),
   maxStop: z
     .number()
     .int('MaxStop must be an integer')
@@ -193,14 +198,14 @@ export class ValidationService {
         };
       }
 
-      // Validate each airport code
+      // Validate each airport/city code
       for (let i = 0; i < airports.length; i++) {
-        const airport = airports[i];
-        if (!airport || !AIRPORT_CODE_REGEX.test(airport)) {
+        const code = airports[i];
+        if (!code || !AIRPORT_CODE_REGEX.test(code)) {
           const zodError = new z.ZodError([
             {
               code: 'custom',
-              message: `Invalid airport code: ${airport}. Must be 3 uppercase letters.`,
+              message: `Invalid airport/city code: ${code}. Must be 3 uppercase letters.`,
               path: [fieldName, i]
             }
           ]);
