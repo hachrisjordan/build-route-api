@@ -45,7 +45,6 @@ export async function composeItineraries(
   // 1. Any HAN-TYO flight to any TYO-ORD flight
   // 2. Use connection matrix to validate airport-to-airport connections
   
-  console.log(`[DEBUG] Processing route with segments:`, segments);
   
   // Get the city keys from the segments
   const segmentCityKeys: string[] = [];
@@ -56,7 +55,6 @@ export async function composeItineraries(
     segmentCityKeys.push(`${fromCity}-${toCity}`);
   }
   
-  console.log(`[DEBUG] Segment city keys:`, segmentCityKeys);
   
   // Get flights for each segment by city key
   const segmentFlights: AvailabilityGroup[][] = [];
@@ -106,15 +104,8 @@ export async function composeItineraries(
     const vn310Flights = firstSegmentFlights.filter(f => f.FlightNumbers === 'VN310');
     const ua882Flights = secondSegmentFlights.filter(f => f.FlightNumbers === 'UA882');
     
-    console.log(`[DEBUG] Date ${date}: ${firstSegmentFlights.length} first segment flights, ${secondSegmentFlights.length} second segment flights`);
-    console.log(`[DEBUG] Date ${date}: ${vn310Flights.length} VN310 flights, ${ua882Flights.length} UA882 flights`);
     
     if (vn310Flights.length > 0) {
-      console.log(`[DEBUG] VN310 flights on ${date}:`, vn310Flights.map(f => `${f.FlightNumbers} ${f.DepartsAt}`));
-    }
-    if (ua882Flights.length > 0) {
-      console.log(`[DEBUG] UA882 flights on ${date}:`, ua882Flights.map(f => `${f.FlightNumbers} ${f.DepartsAt}`));
-    }
     
     // Try every first segment flight with every second segment flight
     for (const firstFlight of firstSegmentFlights) {
@@ -134,12 +125,6 @@ export async function composeItineraries(
         const isUA882 = secondFlight.FlightNumbers === 'UA882';
         
         if (isVN310 && isUA882) {
-          console.log(`[DEBUG] Checking VN310 + UA882 in itinerary building:`);
-          console.log(`  VN310 UUID: ${firstUuid}`);
-          console.log(`  UA882 UUID: ${secondUuid}`);
-          console.log(`  Connection matrix has VN310: ${connectionMatrix.has(firstUuid)}`);
-          console.log(`  Valid connections for VN310: ${connectionMatrix.get(firstUuid)?.size || 0}`);
-          console.log(`  UA882 in valid connections: ${connectionMatrix.get(firstUuid)?.has(secondUuid) || false}`);
         }
         
         // Check if connection is valid using connection matrix
@@ -148,10 +133,7 @@ export async function composeItineraries(
           // Valid connection - add to results
           dateResults.push([firstUuid, secondUuid]);
           if (isVN310 && isUA882) {
-            console.log(`  ✅ VN310 + UA882 ITINERARY ADDED!`);
           }
-        } else if (isVN310 && isUA882) {
-          console.log(`  ❌ VN310 + UA882 itinerary rejected by connection matrix`);
         }
       }
     }

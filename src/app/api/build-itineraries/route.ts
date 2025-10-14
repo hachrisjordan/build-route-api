@@ -171,7 +171,6 @@ export async function POST(req: NextRequest) {
 
     // 2.5. Keep city-coded routes and prepare for segment expansion
     await initializeCityGroups(); // Ensure city groups are loaded
-    console.log(`[DEBUG] City groups initialized`);
     
     const processedRoutes: FullRoutePathResult[] = [];
     const routeToOriginalMap = new Map<FullRoutePathResult, FullRoutePathResult>();

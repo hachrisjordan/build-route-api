@@ -240,7 +240,6 @@ export async function buildItinerariesAcrossRoutes(
       ];
       
       const routeResults = await composeItineraries(segments, segmentAvail, alliances, flightMap, connectionMatrix);
-      console.log(`[DEBUG] composeItineraries returned:`, Object.keys(routeResults).length, 'dates');
       
       // Process each date's results to rebuild route keys from actual flights
       const processedRouteResults: Record<string, string[][]> = {};
