@@ -307,7 +307,8 @@ export async function POST(req: NextRequest) {
       flightMap,
       connectionMatrix,
       routeToOriginalMap,
-      { parallel: CONCURRENCY_CONFIG.PARALLEL_ROUTE_PROCESSING }
+      { parallel: CONCURRENCY_CONFIG.PARALLEL_ROUTE_PROCESSING },
+      { origin, destination }
     );
     Object.assign(output, built.output);
     itineraryMetrics = built.metrics;

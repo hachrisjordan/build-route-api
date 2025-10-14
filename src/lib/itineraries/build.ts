@@ -25,7 +25,8 @@ export async function buildItinerariesAcrossRoutes(
   flightMap: Map<string, AvailabilityFlight>,
   connectionMatrix: Map<string, Set<string>>,
   routeToOriginalMap: Map<FullRoutePathResult, FullRoutePathResult>,
-  options: { parallel: boolean } = { parallel: false }
+  options: { parallel: boolean } = { parallel: false },
+  originalSearchParams?: { origin: string; destination: string }
 ) {
   const output: Record<string, Record<string, string[][]>> = {};
 
@@ -141,6 +142,18 @@ for (let i = 0; i < codes.length - 1; i++) {
           routeParts.push(lastFlight.destinationAirport || '');
           
           const rebuiltRouteKey = routeParts.join('-');
+          
+          // Validate that the rebuilt route matches the original search criteria
+          if (originalSearchParams) {
+            const { origin, destination } = originalSearchParams;
+            const routeOrigin = routeParts[0];
+            const routeDestination = routeParts[routeParts.length - 1];
+            
+            // Only include routes that match the original search origin and destination
+            if (routeOrigin !== origin || routeDestination !== destination) {
+              continue; // Skip this itinerary as it doesn't match the search
+            }
+          }
           
           // Group by rebuilt route key and date
           if (!processedResults[rebuiltRouteKey]) processedResults[rebuiltRouteKey] = [];
@@ -321,6 +334,18 @@ for (let i = 0; i < codes.length - 1; i++) {
           routeParts.push(lastFlight.destinationAirport || '');
           
           const rebuiltRouteKey = routeParts.join('-');
+          
+          // Validate that the rebuilt route matches the original search criteria
+          if (originalSearchParams) {
+            const { origin, destination } = originalSearchParams;
+            const routeOrigin = routeParts[0];
+            const routeDestination = routeParts[routeParts.length - 1];
+            
+            // Only include routes that match the original search origin and destination
+            if (routeOrigin !== origin || routeDestination !== destination) {
+              continue; // Skip this itinerary as it doesn't match the search
+            }
+          }
           
           // Group by rebuilt route key
           if (!processedRouteResults[rebuiltRouteKey]) {
