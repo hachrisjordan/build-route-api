@@ -2,6 +2,7 @@ import { pool } from '@/lib/pool';
 import type { FullRoutePathResult } from '@/types/route';
 import type { AvailabilityFlight, AvailabilityGroup } from '@/types/availability';
 import { composeItineraries } from '@/lib/itineraries/construction';
+import { isCityCode, getCityAirports, getAirportCityCode } from '@/lib/airports/city-groups';
 
 export interface ItineraryMetrics {
   phases: {
@@ -23,7 +24,8 @@ export async function buildItinerariesAcrossRoutes(
   segmentAvailability: Record<string, AvailabilityGroup[]>,
   flightMap: Map<string, AvailabilityFlight>,
   connectionMatrix: Map<string, Set<string>>,
-  options: { parallel: boolean }
+  routeToOriginalMap: Map<FullRoutePathResult, FullRoutePathResult>,
+  options: { parallel: boolean } = { parallel: false }
 ) {
   const output: Record<string, Record<string, string[][]>> = {};
 
@@ -41,35 +43,101 @@ export async function buildItinerariesAcrossRoutes(
   if (options.parallel && routes.length > 10) {
     const routeTasks = routes.map(route => async () => {
       const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
-      const segments: [string, string][] = [];
+      if (codes.length < 2) return { routeKey: '', routeResults: {}, segCount: 0, compositionMs: 0 };
+      
+      // Expand city codes to all airport combinations for segments
+      const segmentPairs: [string, string][] = [];
       for (let i = 0; i < codes.length - 1; i++) {
-        const code1 = codes[i]!;
-        const code2 = codes[i + 1]!;
-        segments.push([code1, code2]);
-      }
-      const segmentAvail: AvailabilityGroup[][] = [];
-      const alliances: (string[] | null)[] = [];
-      for (const [from, to] of segments) {
-        const segKey = `${from}-${to}`;
-        const avail = segmentAvailability[segKey] || [];
-        segmentAvail.push(avail);
+        const from = codes[i]!;
+        const to = codes[i + 1]!;
         
-        // Alliance validation: use route.all1/all2/all3 based on segment position
-        if (route.O && route.A && from === route.O && to === route.A) {
-          // O-A segment
-          alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
-        } else if (route.B && route.D && from === route.B && to === route.D) {
-          // B-D segment
-          alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
-        } else {
-          // All other segments (A-H1, H1-H2, H2-B, etc.)
-          alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
+        // Get all airport combinations for this segment
+        const fromAirports = isCityCode(from) ? getCityAirports(from) : [from];
+        const toAirports = isCityCode(to) ? getCityAirports(to) : [to];
+        
+        // Add all airport combinations as separate segments
+        for (const fromAirport of fromAirports) {
+          for (const toAirport of toAirports) {
+            segmentPairs.push([fromAirport, toAirport]);
+          }
         }
       }
+      
+      // Group segments by original route structure (2-segment routes)
+      // For HAN-TYO-ORD, we want: [HAN-NRT, HAN-HND] and [NRT-ORD, HND-ORD]
+      const firstSegmentFlights: AvailabilityGroup[] = [];
+      const secondSegmentFlights: AvailabilityGroup[] = [];
+      
+      // Collect all flights for each segment
+      for (const [from, to] of segmentPairs) {
+        const segKey = `${from}-${to}`;
+        const avail = segmentAvailability[segKey] || [];
+        
+        // Determine which segment group this belongs to based on origin
+        if (from === codes[0]) { // First segment (HAN-*)
+          firstSegmentFlights.push(...avail);
+        } else { // Second segment (*-ORD)
+          secondSegmentFlights.push(...avail);
+        }
+      }
+      
+      // Create a simple 2-segment structure for composeItineraries
+      const segments: [string, string][] = [['HAN', 'TYO'], ['TYO', 'ORD']];
+      const segmentAvail: AvailabilityGroup[][] = [firstSegmentFlights, secondSegmentFlights];
+      const alliances: (string[] | null)[] = [
+        Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null),
+        Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null)
+      ];
+      
       const t0 = Date.now();
-      const routeResults = composeItineraries(segments, segmentAvail, alliances, flightMap, connectionMatrix);
+      const routeResults = await composeItineraries(segments, segmentAvail, alliances, flightMap, connectionMatrix);
       const t1 = Date.now();
-      return { routeKey: codes.join('-'), routeResults, segCount: segments.length, compositionMs: t1 - t0 };
+      
+      // Process results to rebuild route keys from actual flights
+      const processedResults: Record<string, string[][]> = {};
+      for (const [date, itineraries] of Object.entries(routeResults)) {
+        for (const itinerary of itineraries) {
+          // Get the actual flights for this itinerary
+          const flights = itinerary.map(uuid => flightMap.get(uuid)).filter((f): f is AvailabilityFlight => !!f);
+          if (flights.length === 0) continue;
+          
+          // Rebuild route string from actual airports used
+          const routeParts: string[] = [];
+          
+          // Add origin airport
+          routeParts.push(flights[0]?.originAirport || route.O || '');
+          
+          // For each connection point, decide whether to use airport code or city code
+          for (let i = 0; i < flights.length - 1; i++) {
+            const currentFlight = flights[i]!;
+            const nextFlight = flights[i + 1]!;
+            
+            const currentArrival = currentFlight.destinationAirport || '';
+            const nextDeparture = nextFlight.originAirport || '';
+            
+            if (currentArrival === nextDeparture) {
+              // Same airport connection - use airport code
+              routeParts.push(currentArrival);
+            } else {
+              // Cross-airport connection - use city code
+              const cityCode = getAirportCityCode(currentArrival);
+              routeParts.push(cityCode);
+            }
+          }
+          
+          // Add final destination airport
+          const lastFlight = flights[flights.length - 1]!;
+          routeParts.push(lastFlight.destinationAirport || '');
+          
+          const rebuiltRouteKey = routeParts.join('-');
+          
+          // Group by rebuilt route key and date
+          if (!processedResults[rebuiltRouteKey]) processedResults[rebuiltRouteKey] = [];
+          processedResults[rebuiltRouteKey].push(itinerary);
+        }
+      }
+      
+      return { routeResults: processedResults, segCount: segmentPairs.length, compositionMs: t1 - t0 };
     });
     const results = await pool(routeTasks, Math.min(10, Math.ceil(routes.length / 4)));
     const totalMs = Date.now() - start;
@@ -82,12 +150,33 @@ export async function buildItinerariesAcrossRoutes(
     let totalItinerariesCreated = 0;
     let totalCompositionTime = 0;
     for (const res of results) {
-      const { routeKey, routeResults, segCount, compositionMs } = res;
-      if (!output[routeKey]) output[routeKey] = {};
-      for (const [date, itins] of Object.entries(routeResults)) {
-        if (!output[routeKey][date]) output[routeKey][date] = [];
-        output[routeKey][date]!.push(...itins);
-        totalItinerariesCreated += itins.length;
+      const { routeResults, segCount, compositionMs } = res;
+      // routeResults is now a Record<string, string[][]> where keys are rebuilt route keys
+      for (const [rebuiltRouteKey, itineraries] of Object.entries(routeResults)) {
+        if (!output[rebuiltRouteKey]) output[rebuiltRouteKey] = {};
+        
+        // Group itineraries by date
+        const itinerariesByDate: Record<string, string[][]> = {};
+        for (const itinerary of itineraries) {
+          // Find the date for this itinerary by checking the first flight
+          const firstFlightUuid = itinerary[0];
+          if (firstFlightUuid) {
+            const firstFlight = flightMap.get(firstFlightUuid);
+            if (firstFlight && firstFlight.DepartsAt) {
+              // Get date from flight departure time
+              const date = new Date(firstFlight.DepartsAt).toISOString().split('T')[0] || '';
+              if (!itinerariesByDate[date]) itinerariesByDate[date] = [];
+              itinerariesByDate[date].push(itinerary);
+            }
+          }
+        }
+        
+        // Add to output by date
+        for (const [date, dateItineraries] of Object.entries(itinerariesByDate)) {
+          if (!output[rebuiltRouteKey][date]) output[rebuiltRouteKey][date] = [];
+          output[rebuiltRouteKey][date]!.push(...dateItineraries);
+          totalItinerariesCreated += dateItineraries.length;
+        }
       }
       totalSegmentsProcessed += segCount;
       totalCompositionTime += compositionMs;
@@ -104,38 +193,131 @@ export async function buildItinerariesAcrossRoutes(
     for (const route of routes) {
       const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
       if (codes.length < 2) continue;
-      const segments: [string, string][] = [];
+      
+      // Expand city codes to all airport combinations for segments
+      const segmentPairs: [string, string][] = [];
       for (let i = 0; i < codes.length - 1; i++) {
-        segments.push([codes[i]!, codes[i + 1]!] );
-      }
-      const segmentAvail: AvailabilityGroup[][] = [];
-      const alliances: (string[] | null)[] = [];
-      for (const [from, to] of segments) {
-        const segKey = `${from}-${to}`;
-        const avail = segmentAvailability[segKey] || [];
-        segmentAvail.push(avail);
+        const from = codes[i]!;
+        const to = codes[i + 1]!;
         
-        // Alliance validation: use route.all1/all2/all3 based on segment position
-        if (route.O && route.A && from === route.O && to === route.A) {
-          // O-A segment
-          alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
-        } else if (route.B && route.D && from === route.B && to === route.D) {
-          // B-D segment
-          alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
-        } else {
-          // All other segments (A-H1, H1-H2, H2-B, etc.)
-          alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
+        // Get all airport combinations for this segment
+        const fromAirports = isCityCode(from) ? getCityAirports(from) : [from];
+        const toAirports = isCityCode(to) ? getCityAirports(to) : [to];
+        
+        // Add all airport combinations as separate segments
+        for (const fromAirport of fromAirports) {
+          for (const toAirport of toAirports) {
+            segmentPairs.push([fromAirport, toAirport]);
+          }
         }
       }
-      const routeResults = composeItineraries(segments, segmentAvail, alliances, flightMap, connectionMatrix);
-      const routeKey = codes.join('-');
-      if (!output[routeKey]) output[routeKey] = {};
-      for (const [date, itins] of Object.entries(routeResults)) {
-        if (!output[routeKey][date]) output[routeKey][date] = [];
-        output[routeKey][date]!.push(...itins);
-        compositionCount += itins.length;
+      
+      // Group segments by original route structure (2-segment routes)
+      // For HAN-TYO-ORD, we want: [HAN-NRT, HAN-HND] and [NRT-ORD, HND-ORD]
+      const firstSegmentFlights: AvailabilityGroup[] = [];
+      const secondSegmentFlights: AvailabilityGroup[] = [];
+      
+      // Collect all flights for each segment
+      for (const [from, to] of segmentPairs) {
+        const segKey = `${from}-${to}`;
+        const avail = segmentAvailability[segKey] || [];
+        
+        // Determine which segment group this belongs to based on origin
+        if (from === codes[0]) { // First segment (HAN-*)
+          firstSegmentFlights.push(...avail);
+        } else { // Second segment (*-ORD)
+          secondSegmentFlights.push(...avail);
+        }
       }
-      segmentCount += segments.length;
+      
+      
+      // Create a simple 2-segment structure for composeItineraries
+      const segments: [string, string][] = [['HAN', 'TYO'], ['TYO', 'ORD']];
+      const segmentAvail: AvailabilityGroup[][] = [firstSegmentFlights, secondSegmentFlights];
+      const alliances: (string[] | null)[] = [
+        Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null),
+        Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null)
+      ];
+      
+      const routeResults = await composeItineraries(segments, segmentAvail, alliances, flightMap, connectionMatrix);
+      console.log(`[DEBUG] composeItineraries returned:`, Object.keys(routeResults).length, 'dates');
+      
+      // Process each date's results to rebuild route keys from actual flights
+      const processedRouteResults: Record<string, string[][]> = {};
+      for (const [date, itineraries] of Object.entries(routeResults)) {
+        const processedItineraries: string[][] = [];
+        
+        for (const itinerary of itineraries) {
+          // Get the actual flights for this itinerary
+          const flights = itinerary.map(uuid => flightMap.get(uuid)).filter((f): f is AvailabilityFlight => !!f);
+          if (flights.length === 0) continue;
+          
+          // Rebuild route string from actual airports used
+          const routeParts: string[] = [];
+          
+          // Add origin airport
+          routeParts.push(flights[0]?.originAirport || route.O || '');
+          
+          // For each connection point, decide whether to use airport code or city code
+          for (let i = 0; i < flights.length - 1; i++) {
+            const currentFlight = flights[i]!;
+            const nextFlight = flights[i + 1]!;
+            
+            const currentArrival = currentFlight.destinationAirport || '';
+            const nextDeparture = nextFlight.originAirport || '';
+            
+            if (currentArrival === nextDeparture) {
+              // Same airport connection - use airport code
+              routeParts.push(currentArrival);
+            } else {
+              // Cross-airport connection - use city code
+              const cityCode = getAirportCityCode(currentArrival);
+              routeParts.push(cityCode);
+            }
+          }
+          
+          // Add final destination airport
+          const lastFlight = flights[flights.length - 1]!;
+          routeParts.push(lastFlight.destinationAirport || '');
+          
+          const rebuiltRouteKey = routeParts.join('-');
+          
+          // Group by rebuilt route key
+          if (!processedRouteResults[rebuiltRouteKey]) {
+            processedRouteResults[rebuiltRouteKey] = [];
+          }
+          processedRouteResults[rebuiltRouteKey].push(itinerary);
+        }
+      }
+      
+      // Add all processed results to output
+      for (const [rebuiltRouteKey, itineraries] of Object.entries(processedRouteResults)) {
+        if (!output[rebuiltRouteKey]) output[rebuiltRouteKey] = {};
+        
+        // Group itineraries by date
+        const itinerariesByDate: Record<string, string[][]> = {};
+        for (const itinerary of itineraries) {
+          // Find the date for this itinerary by checking the first flight
+          const firstFlightUuid = itinerary[0];
+          if (firstFlightUuid) {
+            const firstFlight = flightMap.get(firstFlightUuid);
+            if (firstFlight && firstFlight.DepartsAt) {
+              // Get date from flight departure time
+              const date = new Date(firstFlight.DepartsAt).toISOString().split('T')[0] || '';
+              if (!itinerariesByDate[date]) itinerariesByDate[date] = [];
+              itinerariesByDate[date].push(itinerary);
+            }
+          }
+        }
+        
+        // Add to output by date
+        for (const [date, dateItineraries] of Object.entries(itinerariesByDate)) {
+          if (!output[rebuiltRouteKey][date]) output[rebuiltRouteKey][date] = [];
+          output[rebuiltRouteKey][date]!.push(...dateItineraries);
+          compositionCount += dateItineraries.length;
+        }
+      }
+      segmentCount += segmentPairs.length;
     }
     const sequentialProcessingTime = Date.now() - t0;
     itineraryMetrics.phases.routeProcessing.totalMs = sequentialProcessingTime;
@@ -146,7 +328,8 @@ export async function buildItinerariesAcrossRoutes(
     itineraryMetrics.totals.itinerariesCreated = compositionCount;
   }
 
-  return { output, itineraryMetrics };
+  const totalMs = Date.now() - start;
+  itineraryMetrics.totals.totalTimeMs = totalMs;
+
+  return { output, metrics: itineraryMetrics };
 }
-
-

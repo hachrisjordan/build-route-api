@@ -63,6 +63,8 @@ export interface FlightEntry {
 export interface GroupedResult {
   originAirport: string;
   destinationAirport: string;
+  originCity: string; // Added: City code (same as airport if no city group)
+  destinationCity: string; // Added: City code (same as airport if no city group)
   date: string;
   distance: number;
   alliance: string;

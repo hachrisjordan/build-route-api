@@ -24,6 +24,7 @@ import { prefilterValidRoutes } from '@/lib/itineraries/route-prefilter';
 import { buildDirectItineraries } from '@/lib/itineraries/direct';
 import { buildOptimizedFromCached } from '@/lib/itineraries/cached-response';
 import { precomputeFlightMetadata, buildGroupConnectionMatrix as extBuildGroupConnectionMatrix, buildConnectionMatrix as extBuildConnectionMatrix } from '@/lib/itineraries/connections';
+import { initializeCityGroups, isCityCode, getCityAirports } from '@/lib/airports/city-groups';
 import { buildItinerariesAcrossRoutes } from '../../../lib/itineraries/build';
 import { fetchRoutePaths } from '@/lib/clients/route-path';
 import { parseBuildItinerariesRequest } from '@/lib/http/build-itineraries-request';
@@ -168,6 +169,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No eligible routes found' }, { status: 404 });
     }
 
+    // 2.5. Keep city-coded routes and prepare for segment expansion
+    await initializeCityGroups(); // Ensure city groups are loaded
+    console.log(`[DEBUG] City groups initialized`);
+    
+    const processedRoutes: FullRoutePathResult[] = [];
+    const routeToOriginalMap = new Map<FullRoutePathResult, FullRoutePathResult>();
+    
+    for (const route of routes) {
+      // Keep the original city-coded route as-is
+      processedRoutes.push(route);
+      routeToOriginalMap.set(route, route);
+    }
+    
+    console.log(`[build-itineraries] Processing ${routes.length} city-coded routes`);
+    console.log(`[DEBUG] Routes:`, routes.map(r => `${r.O}-${r.A}-${r.h1}-${r.h2}-${r.B}-${r.D}`));
+
     // 3. Extract query params (route groups)
     if (!Array.isArray(routePathData.queryParamsArr) || routePathData.queryParamsArr.length === 0) {
       return NextResponse.json({ error: 'No route groups found in create-full-route-path response' }, { status: 500 });
@@ -260,12 +277,12 @@ export async function POST(req: NextRequest) {
     performanceMetrics.flightMetadata = Date.now() - flightMetadataStart;
     
     const flightConnectionStart = Date.now();
-    const connectionMatrix = extBuildConnectionMatrix(flightMetadata, filteredSegmentPool, groupConnectionMatrix);
+    const connectionMatrix = await extBuildConnectionMatrix(flightMetadata, filteredSegmentPool, groupConnectionMatrix);
     performanceMetrics.flightConnectionMatrix = Date.now() - flightConnectionStart;
 
     // 6. Pre-filter routes based on segment availability (fail-fast optimization)
     const preFilterStart = Date.now();
-    const { allRoutes, validRoutes } = prefilterValidRoutes(routes as FullRoutePathResult[], filteredSegmentPool);
+    const { allRoutes, validRoutes } = prefilterValidRoutes(processedRoutes as FullRoutePathResult[], filteredSegmentPool);
     
     const preFilterTime = Date.now() - preFilterStart;
     performanceMetrics.routePreFiltering = preFilterTime;
@@ -291,10 +308,11 @@ export async function POST(req: NextRequest) {
       filteredSegmentPool,
       flightMap,
       connectionMatrix,
+      routeToOriginalMap,
       { parallel: CONCURRENCY_CONFIG.PARALLEL_ROUTE_PROCESSING }
     );
     Object.assign(output, built.output);
-    itineraryMetrics = built.itineraryMetrics;
+    itineraryMetrics = built.metrics;
     } // End of else block for maxStop > 0
 
     // NOTE: While composeItineraries deduplicates within its own results, 

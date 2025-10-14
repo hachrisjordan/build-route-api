@@ -8,11 +8,17 @@ export interface AvailabilityFlight {
   WCount: number;
   JCount: number;
   FCount: number;
+  originAirport?: string;
+  destinationAirport?: string;
+  originCity?: string;
+  destinationCity?: string;
 }
 
 export interface AvailabilityGroup {
   originAirport: string;
   destinationAirport: string;
+  originCity: string; // Added: City code (same as airport if no city group)
+  destinationCity: string; // Added: City code (same as airport if no city group)
   date: string;
   alliance: string;
   flights: AvailabilityFlight[];

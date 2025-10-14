@@ -1,5 +1,6 @@
 import type { AvailabilityGroup, AvailabilityFlight } from '@/types/availability';
 import { getFlightUUID } from '@/lib/itineraries/ids';
+import { initializeCityGroups, isSameCity } from '@/lib/airports/city-groups';
 
 export interface FlightMetadata {
   uuid: string;
@@ -8,6 +9,8 @@ export interface FlightMetadata {
   duration: number;
   airlineCode: string;
   originalFlight: AvailabilityFlight;
+  fromAirport: string;
+  toAirport: string;
 }
 
 export function precomputeFlightMetadata(segmentPool: Record<string, AvailabilityGroup[]>): Map<string, FlightMetadata> {
@@ -24,6 +27,8 @@ export function precomputeFlightMetadata(segmentPool: Record<string, Availabilit
             duration: flight.TotalDuration,
             airlineCode: flight.FlightNumbers.slice(0, 2).toUpperCase(),
             originalFlight: flight,
+            fromAirport: group.originAirport,
+            toAirport: group.destinationAirport,
           });
         }
       }
@@ -84,24 +89,87 @@ export function buildGroupConnectionMatrix(
   }
   for (const groupA of groupsWithTiming) {
     const validConnections = new Set<string>();
-    const potentialConnections = groupsByOrigin.get(groupA.group.destinationAirport);
-    if (!potentialConnections) {
-      groupConnections.set(groupA.key, validConnections);
-      continue;
+    
+    // Debug: Track VN310 and UA882 specifically
+    const isVN310Group = groupA.group.flights.some(f => f.FlightNumbers === 'VN310' && f.DepartsAt.includes('2025-10-22'));
+    const isUA882Group = groupA.group.flights.some(f => f.FlightNumbers === 'UA882' && f.DepartsAt.includes('2025-10-22'));
+    
+    if (isVN310Group) {
+      console.log(`[DEBUG] Processing VN310 group: ${groupA.group.originAirport}-${groupA.group.destinationAirport} on ${groupA.group.date}`);
     }
+    
+    // Find potential connections - both same airport and same city
+    const potentialConnections: GroupWithTiming[] = [];
+    
+    // Same airport connections
+    const sameAirportConnections = groupsByOrigin.get(groupA.group.destinationAirport) || [];
+    potentialConnections.push(...sameAirportConnections);
+    
+    // Same city connections (cross-airport)
+    for (const [originAirport, groups] of groupsByOrigin) {
+      if (originAirport !== groupA.group.destinationAirport && 
+          isSameCity(groupA.group.destinationAirport, originAirport)) {
+        potentialConnections.push(...groups);
+      }
+    }
+    
+    if (isVN310Group) {
+      console.log(`[DEBUG] VN310 potential connections: ${potentialConnections.length} total`);
+      console.log(`[DEBUG] VN310 destination airport: ${groupA.group.destinationAirport}`);
+      console.log(`[DEBUG] Available origin airports:`, Array.from(groupsByOrigin.keys()));
+    }
+    
     for (const groupB of potentialConnections) {
       if (groupA.key === groupB.key) continue;
+      
+      const isUA882Potential = groupB.group.flights.some(f => f.FlightNumbers === 'UA882' && f.DepartsAt.includes('2025-10-22'));
+      
+      if (isVN310Group && isUA882Potential) {
+        console.log(`[DEBUG] Checking VN310 → UA882 connection:`);
+        console.log(`  VN310 arrives at: ${groupA.group.destinationAirport}`);
+        console.log(`  UA882 departs from: ${groupB.group.originAirport}`);
+        console.log(`  Same city check: ${isSameCity(groupA.group.destinationAirport, groupB.group.originAirport)}`);
+      }
+      
+      // Determine MCT based on connection type
+      const sameAirport = groupA.group.destinationAirport === groupB.group.originAirport;
+      const sameCity = !sameAirport && isSameCity(groupA.group.destinationAirport, groupB.group.originAirport);
+      const requiredMCT = sameAirport ? minConnectionMinutes : sameCity ? 240 : Infinity;
+      
+      if (isVN310Group && isUA882Potential) {
+        console.log(`  Connection type: ${sameAirport ? 'same-airport' : sameCity ? 'cross-airport' : 'different-city'}`);
+        console.log(`  Required MCT: ${requiredMCT} minutes`);
+      }
+      
       if (
         groupA.earliestArrivalTime && groupA.latestArrivalTime &&
         groupB.earliestDepartureTime && groupB.latestDepartureTime
       ) {
         const shortestConnection = (groupB.earliestDepartureTime - groupA.latestArrivalTime) / 60000;
         const longestConnection = (groupB.latestDepartureTime - groupA.earliestArrivalTime) / 60000;
-        if (longestConnection >= minConnectionMinutes && shortestConnection <= 24 * 60) {
-          validConnections.add(groupB.key);
+        
+        if (isVN310Group && isUA882Potential) {
+          console.log(`  VN310 arrival: ${new Date(groupA.latestArrivalTime).toISOString()}`);
+          console.log(`  UA882 departure: ${new Date(groupB.earliestDepartureTime).toISOString()}`);
+          console.log(`  Connection time: ${shortestConnection.toFixed(1)} minutes`);
+          console.log(`  Valid: ${longestConnection >= requiredMCT && shortestConnection <= 24 * 60}`);
         }
-      } else if (canGroupsConnect(groupA.group, groupB.group, minConnectionMinutes)) {
+        
+        if (longestConnection >= requiredMCT && shortestConnection <= 24 * 60) {
+          validConnections.add(groupB.key);
+          if (isVN310Group && isUA882Potential) {
+            console.log(`  ✅ VN310 → UA882 CONNECTION ADDED!`);
+          }
+        } else if (isVN310Group && isUA882Potential) {
+          console.log(`  ❌ VN310 → UA882 connection rejected: ${longestConnection < requiredMCT ? 'insufficient MCT' : 'too long connection'}`);
+        }
+      } else if (canGroupsConnect(groupA.group, groupB.group, requiredMCT)) {
         validConnections.add(groupB.key);
+        if (isVN310Group && isUA882Potential) {
+          console.log(`  ✅ VN310 → UA882 CONNECTION ADDED via canGroupsConnect!`);
+        }
+      } else if (isVN310Group && isUA882Potential) {
+        console.log(`  ❌ VN310 → UA882 connection rejected by canGroupsConnect`);
       }
     }
     groupConnections.set(groupA.key, validConnections);
@@ -114,15 +182,18 @@ export function buildGroupConnectionMatrix(
   return groupConnections;
 }
 
-export function buildConnectionMatrix(
+export async function buildConnectionMatrix(
   metadata: Map<string, FlightMetadata>,
   segmentPool: Record<string, AvailabilityGroup[]>,
   groupConnections: Map<string, Set<string>>,
   minConnectionMinutes = 45
-): Map<string, Set<string>> {
+): Promise<Map<string, Set<string>>> {
   const connections = new Map<string, Set<string>>();
   const flightToGroup = new Map<string, string>();
   const groupToFlights = new Map<string, string[]>();
+
+  // Initialize city groups
+  await initializeCityGroups();
 
   let groupIndex = 0;
   for (const [segmentKey, groups] of Object.entries(segmentPool)) {
@@ -147,6 +218,18 @@ export function buildConnectionMatrix(
     const connectedGroups = groupConnections.get(fromGroupKey);
     if (!connectedGroups) continue;
 
+    // Debug: Track VN310 and UA882 specifically
+    const isVN310 = flightMeta.originalFlight.FlightNumbers === 'VN310' && 
+                   flightMeta.originalFlight.DepartsAt.includes('2025-10-22');
+    const isUA882 = flightMeta.originalFlight.FlightNumbers === 'UA882' && 
+                   flightMeta.originalFlight.DepartsAt.includes('2025-10-22');
+
+    if (isVN310) {
+      console.log(`[DEBUG] Processing VN310 flight UUID: ${flightUuid}`);
+      console.log(`[DEBUG] VN310 group key: ${fromGroupKey}`);
+      console.log(`[DEBUG] VN310 connected groups: ${connectedGroups.size}`);
+    }
+
     for (const toGroupKey of connectedGroups) {
       const groupFlights = groupToFlights.get(toGroupKey);
       if (!groupFlights) continue;
@@ -154,9 +237,31 @@ export function buildConnectionMatrix(
         if (flightUuid === toFlightUuid) continue;
         const toFlightMeta = metadata.get(toFlightUuid);
         if (!toFlightMeta) continue;
+        
         const diffMinutes = (toFlightMeta.departureTime - flightMeta.arrivalTime) / 60000;
-        if (diffMinutes >= minConnectionMinutes && diffMinutes <= 24 * 60) {
+        
+        // Determine minimum connection time based on airport change
+        const sameAirport = flightMeta.toAirport === toFlightMeta.fromAirport;
+        const sameCity = !sameAirport && isSameCity(flightMeta.toAirport, toFlightMeta.fromAirport);
+        
+        const requiredMinConn = sameAirport ? 45 : sameCity ? 240 : Infinity;
+        
+        if (isVN310 && isUA882) {
+          console.log(`[DEBUG] VN310 → UA882 flight-level check:`);
+          console.log(`  VN310 arrives at: ${flightMeta.toAirport}`);
+          console.log(`  UA882 departs from: ${toFlightMeta.fromAirport}`);
+          console.log(`  Connection time: ${diffMinutes.toFixed(1)} minutes`);
+          console.log(`  Required MCT: ${requiredMinConn} minutes`);
+          console.log(`  Valid: ${diffMinutes >= requiredMinConn && diffMinutes <= 24 * 60}`);
+        }
+        
+        if (diffMinutes >= requiredMinConn && diffMinutes <= 24 * 60) {
           validConnections.add(toFlightUuid);
+          if (isVN310 && isUA882) {
+            console.log(`  ✅ VN310 → UA882 FLIGHT CONNECTION ADDED!`);
+          }
+        } else if (isVN310 && isUA882) {
+          console.log(`  ❌ VN310 → UA882 flight connection rejected`);
         }
       }
     }

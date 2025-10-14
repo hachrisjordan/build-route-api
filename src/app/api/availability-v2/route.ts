@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
     const mergedMap = mergeProcessedTrips(results, reliabilityTable);
     console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Merging completed - Merged results: ${mergedMap.size}`);
 
-    const groupedResults = groupAndDeduplicate(mergedMap);
+    const groupedResults = await groupAndDeduplicate(mergedMap);
     console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Grouping completed - Final groups: ${groupedResults.length}`);
 
     // 6. UA Seat Adjustments (if enabled)

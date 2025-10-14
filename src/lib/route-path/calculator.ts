@@ -5,6 +5,7 @@ import { RoutePathCacheService } from './cache';
 import { RouteGroupingService } from './grouping';
 import { RoutePerformanceMonitor } from './performance';
 import { ErrorHandlerService, RouteErrorType } from './error-handler';
+import { initializeCityGroups, normalizeToCityCode } from '@/lib/airports/city-groups';
 
 /**
  * Input parameters for route calculation
@@ -315,13 +316,54 @@ export class RouteCalculatorService {
       outputCount: explodedResults.length 
     });
 
+    // Merge routes by city codes in middle nodes
+    performanceMonitor.startRoute('city-normalization');
+    await initializeCityGroups(); // Ensure city groups are loaded
+    
+    const normalizedRouteMap = new Map<string, FullRoutePathResult>();
+
+    for (const route of explodedResults) {
+      // Create normalized key for grouping
+      const normalizedKey = JSON.stringify({
+        O: route.O,
+        A: normalizeToCityCode(route.A),
+        h1: route.h1 ? normalizeToCityCode(route.h1) : null,
+        h2: route.h2 ? normalizeToCityCode(route.h2) : null,
+        B: route.D ? normalizeToCityCode(route.B!) : route.B,
+        D: route.D,
+        all1: route.all1,
+        all2: route.all2,
+        all3: route.all3,
+        caseType: route.caseType
+      });
+      
+      const existing = normalizedRouteMap.get(normalizedKey);
+      
+      // Keep route with lowest distance, save with city codes in middle nodes
+      if (!existing || route.cumulativeDistance < existing.cumulativeDistance) {
+        normalizedRouteMap.set(normalizedKey, {
+          ...route,
+          A: normalizeToCityCode(route.A),
+          h1: route.h1 ? normalizeToCityCode(route.h1) : null,
+          h2: route.h2 ? normalizeToCityCode(route.h2) : null,
+          B: route.D ? normalizeToCityCode(route.B!) : route.B,
+        });
+      }
+    }
+
+    const mergedResults = Array.from(normalizedRouteMap.values());
+    performanceMonitor.endRoute('city-normalization', { 
+      inputCount: explodedResults.length,
+      outputCount: mergedResults.length 
+    });
+
     // Group segments by departure airport (except those ending at input destination)
     performanceMonitor.startRoute('grouping');
     const segmentMap: Record<string, Set<string>> = {};
     // Group segments by destination (for those ending at input destination)
     const destMap: Record<string, Set<string>> = {};
     
-    for (const route of explodedResults) {
+    for (const route of mergedResults) {
       const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
       for (let i = 0; i < codes.length - 1; i++) {
         const from = codes[i]!; // Safe due to filter above
@@ -344,6 +386,6 @@ export class RouteCalculatorService {
     performanceMonitor.endRoute('grouping', { groupsCount: groups.length });
     performanceMonitor.logRouteSummary();
 
-    return { routes: explodedResults, queryParamsArr, cached: false };
+    return { routes: mergedResults, queryParamsArr, cached: false };
   }
 }

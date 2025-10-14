@@ -1,16 +1,24 @@
 import { ALLIANCE_MAP } from '@/lib/airlines/alliances';
 import { MergedEntry, FlightEntry, GroupedResult } from '@/types/availability-v2';
+import { initializeCityGroups, getAirportCityCode } from '@/lib/airports/city-groups';
 
 /**
  * Groups merged entries by alliance and deduplicates identical flights.
  */
-export function groupAndDeduplicate(mergedMap: Map<string, MergedEntry>): GroupedResult[] {
+export async function groupAndDeduplicate(mergedMap: Map<string, MergedEntry>): Promise<GroupedResult[]> {
+  // Initialize city groups to get city codes
+  await initializeCityGroups();
+  
   const finalGroupedMap = new Map<string, GroupedResult>();
 
   for (const entry of mergedMap.values()) {
     const flightPrefix = entry.FlightNumbers.slice(0, 2);
     const alliance = ALLIANCE_MAP.get(flightPrefix);
     if (!alliance) continue;
+
+    // Get city codes for airports (if no city group, city = airport)
+    const originCity = getAirportCityCode(entry.originAirport);
+    const destinationCity = getAirportCityCode(entry.destinationAirport);
 
     const groupKey = `${entry.originAirport}|${entry.destinationAirport}|${entry.date}|${alliance}`;
     const existing = finalGroupedMap.get(groupKey);
@@ -19,6 +27,8 @@ export function groupAndDeduplicate(mergedMap: Map<string, MergedEntry>): Groupe
       finalGroupedMap.set(groupKey, {
         originAirport: entry.originAirport,
         destinationAirport: entry.destinationAirport,
+        originCity: originCity, // Always include city (same as airport if no city group)
+        destinationCity: destinationCity, // Always include city (same as airport if no city group)
         date: entry.date,
         distance: entry.distance,
         alliance,
