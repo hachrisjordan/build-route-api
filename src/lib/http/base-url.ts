@@ -19,10 +19,9 @@ export function buildBaseUrl(req: NextRequest): string {
     baseUrl = 'http://localhost:3000';
   }
   
-  // For internal API calls to create-full-route-path, use port 3001
-  if (baseUrl.includes('localhost:3000')) {
-    baseUrl = baseUrl.replace('localhost:3000', 'localhost:3001');
-  }
+  // For VPS deployment with individual containers, keep localhost:3000 for internal calls
+  // since all services are running on the same host
+  // No need to change the port - internal API calls should use the same port as the main service
   
   return baseUrl;
 }
