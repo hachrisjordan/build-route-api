@@ -105,8 +105,6 @@ export async function composeItineraries(
     const ua882Flights = secondSegmentFlights.filter(f => f.FlightNumbers === 'UA882');
     
     
-    if (vn310Flights.length > 0) {
-    
     // Try every first segment flight with every second segment flight
     for (const firstFlight of firstSegmentFlights) {
       const firstUuid = getFlightUUID(firstFlight);
@@ -146,6 +144,3 @@ export async function composeItineraries(
 
   return results;
 }
-
-
-

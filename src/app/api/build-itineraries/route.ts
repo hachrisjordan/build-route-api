@@ -182,7 +182,6 @@ export async function POST(req: NextRequest) {
     }
     
     console.log(`[build-itineraries] Processing ${routes.length} city-coded routes`);
-    console.log(`[DEBUG] Routes:`, routes.map(r => `${r.O}-${r.A}-${r.h1}-${r.h2}-${r.B}-${r.D}`));
 
     // 3. Extract query params (route groups)
     if (!Array.isArray(routePathData.queryParamsArr) || routePathData.queryParamsArr.length === 0) {
