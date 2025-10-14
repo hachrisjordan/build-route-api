@@ -222,7 +222,9 @@ export class RouteOrchestratorService {
                 maxStop,
                 supabase: context.supabase,
                 cacheService: context.cacheService,
-                sharedPathsKey
+                sharedPathsKey,
+                originalOrigin: origin,
+                originalDestination: destination
               })
             );
           }

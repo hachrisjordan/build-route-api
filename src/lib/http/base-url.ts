@@ -18,6 +18,12 @@ export function buildBaseUrl(req: NextRequest): string {
   } catch {
     baseUrl = 'http://localhost:3000';
   }
+  
+  // For internal API calls to create-full-route-path, use port 3001
+  if (baseUrl.includes('localhost:3000')) {
+    baseUrl = baseUrl.replace('localhost:3000', 'localhost:3001');
+  }
+  
   return baseUrl;
 }
 

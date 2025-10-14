@@ -5,7 +5,7 @@ import { RoutePathCacheService } from './cache';
 import { RouteGroupingService } from './grouping';
 import { RoutePerformanceMonitor } from './performance';
 import { ErrorHandlerService, RouteErrorType } from './error-handler';
-import { initializeCityGroups, normalizeToCityCode } from '@/lib/airports/city-groups';
+import { initializeCityGroups, normalizeToCityCode, isCityCode } from '@/lib/airports/city-groups';
 
 /**
  * Input parameters for route calculation
@@ -17,6 +17,8 @@ export interface RouteCalculationInput {
   supabase: SupabaseClient;
   cacheService: RoutePathCacheService;
   sharedPathsKey?: string;
+  originalOrigin?: string; // Original input (could be city code)
+  originalDestination?: string; // Original input (could be city code)
 }
 
 /**
@@ -47,7 +49,7 @@ export class RouteCalculatorService {
    * Calculate full route path for a given origin-destination pair
    */
   async calculateFullRoutePath(input: RouteCalculationInput): Promise<RouteCalculationResult> {
-    const { origin, destination, maxStop, supabase, cacheService, sharedPathsKey } = input;
+    const { origin, destination, maxStop, supabase, cacheService, sharedPathsKey, originalOrigin, originalDestination } = input;
     const performanceMonitor = new RoutePerformanceMonitor(`${origin}-${destination}`);
     
     // Get airports from cache (pre-fetched)
@@ -323,14 +325,18 @@ export class RouteCalculatorService {
     const normalizedRouteMap = new Map<string, FullRoutePathResult>();
 
     for (const route of explodedResults) {
+      // Determine what should be normalized to city codes
+      const shouldNormalizeOrigin = originalOrigin && isCityCode(originalOrigin);
+      const shouldNormalizeDestination = originalDestination && isCityCode(originalDestination);
+      
       // Create normalized key for grouping
       const normalizedKey = JSON.stringify({
-        O: route.O,
+        O: route.O === null ? null : (shouldNormalizeOrigin ? originalOrigin : route.O),
         A: normalizeToCityCode(route.A),
         h1: route.h1 ? normalizeToCityCode(route.h1) : null,
         h2: route.h2 ? normalizeToCityCode(route.h2) : null,
-        B: route.D ? normalizeToCityCode(route.B!) : route.B,
-        D: route.D,
+        B: route.D ? normalizeToCityCode(route.B!) : (shouldNormalizeDestination ? originalDestination : route.B),
+        D: route.D ? (shouldNormalizeDestination ? originalDestination : route.D) : route.D,
         all1: route.all1,
         all2: route.all2,
         all3: route.all3,
@@ -339,14 +345,17 @@ export class RouteCalculatorService {
       
       const existing = normalizedRouteMap.get(normalizedKey);
       
-      // Keep route with lowest distance, save with city codes in middle nodes
+      // Keep route with lowest distance, save with city codes where appropriate
       if (!existing || route.cumulativeDistance < existing.cumulativeDistance) {
         normalizedRouteMap.set(normalizedKey, {
           ...route,
+          // For O field: only normalize if route.O is not null (preserve null for direct routes)
+          O: route.O === null ? null : (shouldNormalizeOrigin ? originalOrigin : route.O),
           A: normalizeToCityCode(route.A),
           h1: route.h1 ? normalizeToCityCode(route.h1) : null,
           h2: route.h2 ? normalizeToCityCode(route.h2) : null,
-          B: route.D ? normalizeToCityCode(route.B!) : route.B,
+          B: route.D ? normalizeToCityCode(route.B!) : (shouldNormalizeDestination ? originalDestination : route.B),
+          D: route.D ? (shouldNormalizeDestination ? originalDestination : route.D) : route.D,
         });
       }
     }
