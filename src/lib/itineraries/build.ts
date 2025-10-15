@@ -149,8 +149,23 @@ for (let i = 0; i < codes.length - 1; i++) {
             const routeOrigin = routeParts[0];
             const routeDestination = routeParts[routeParts.length - 1];
             
-            // Only include routes that match the original search origin and destination
-            if (routeOrigin !== origin || routeDestination !== destination) {
+            // Build acceptable airport sets from slash-separated inputs and city codes
+            const originCodes = origin.split('/').map(s => s.trim().toUpperCase()).filter(Boolean);
+            const destinationCodes = destination.split('/').map(s => s.trim().toUpperCase()).filter(Boolean);
+            const acceptableOriginAirports = new Set<string>();
+            const acceptableDestinationAirports = new Set<string>();
+            
+            for (const code of originCodes) {
+              const airports = isCityCode(code) ? getCityAirports(code) : [code];
+              airports.forEach(a => acceptableOriginAirports.add(a));
+            }
+            for (const code of destinationCodes) {
+              const airports = isCityCode(code) ? getCityAirports(code) : [code];
+              airports.forEach(a => acceptableDestinationAirports.add(a));
+            }
+            
+            // Check against expanded airport sets instead of exact string comparison
+            if (!routeOrigin || !routeDestination || !acceptableOriginAirports.has(routeOrigin) || !acceptableDestinationAirports.has(routeDestination)) {
               continue; // Skip this itinerary as it doesn't match the search
             }
           }
@@ -341,8 +356,23 @@ for (let i = 0; i < codes.length - 1; i++) {
             const routeOrigin = routeParts[0];
             const routeDestination = routeParts[routeParts.length - 1];
             
-            // Only include routes that match the original search origin and destination
-            if (routeOrigin !== origin || routeDestination !== destination) {
+            // Build acceptable airport sets from slash-separated inputs and city codes
+            const originCodes = origin.split('/').map(s => s.trim().toUpperCase()).filter(Boolean);
+            const destinationCodes = destination.split('/').map(s => s.trim().toUpperCase()).filter(Boolean);
+            const acceptableOriginAirports = new Set<string>();
+            const acceptableDestinationAirports = new Set<string>();
+            
+            for (const code of originCodes) {
+              const airports = isCityCode(code) ? getCityAirports(code) : [code];
+              airports.forEach(a => acceptableOriginAirports.add(a));
+            }
+            for (const code of destinationCodes) {
+              const airports = isCityCode(code) ? getCityAirports(code) : [code];
+              airports.forEach(a => acceptableDestinationAirports.add(a));
+            }
+            
+            // Check against expanded airport sets instead of exact string comparison
+            if (!routeOrigin || !routeDestination || !acceptableOriginAirports.has(routeOrigin) || !acceptableDestinationAirports.has(routeDestination)) {
               continue; // Skip this itinerary as it doesn't match the search
             }
           }

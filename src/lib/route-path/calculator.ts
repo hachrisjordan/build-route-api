@@ -325,18 +325,47 @@ export class RouteCalculatorService {
     const normalizedRouteMap = new Map<string, FullRoutePathResult>();
 
     for (const route of explodedResults) {
-      // Determine what should be normalized to city codes
       const shouldNormalizeOrigin = originalOrigin && isCityCode(originalOrigin);
       const shouldNormalizeDestination = originalDestination && isCityCode(originalDestination);
       
-      // Create normalized key for grouping
+      // Identify start/end/middle nodes dynamically
+      const allAirports = [route.O, route.A, route.h1, route.h2, route.B, route.D]
+        .filter((c): c is string => c !== null);
+      
+      const startNode = allAirports[0]; // First non-null airport
+      const endNode = allAirports[allAirports.length - 1]; // Last non-null airport
+      const middleNodesSet = new Set(allAirports.slice(1, -1)); // All airports between first and last
+      
+      // Helper function to normalize a single field
+      const normalizeField = (value: string | null): string | null => {
+        if (value === null) return null;
+        
+        // If this field IS the start node and user passed city code for origin
+        if (value === startNode && shouldNormalizeOrigin) {
+          return originalOrigin;
+        }
+        
+        // If this field IS the end node and user passed city code for destination
+        if (value === endNode && shouldNormalizeDestination) {
+          return originalDestination;
+        }
+        
+        // If this field is in middle nodes, always normalize
+        if (middleNodesSet.has(value)) {
+          return normalizeToCityCode(value);
+        }
+        
+        // Otherwise, keep as-is (start/end node when user passed airport code)
+        return value;
+      };
+      
       const normalizedKey = JSON.stringify({
-        O: route.O === null ? null : (shouldNormalizeOrigin ? originalOrigin : route.O),
-        A: normalizeToCityCode(route.A),
-        h1: route.h1 ? normalizeToCityCode(route.h1) : null,
-        h2: route.h2 ? normalizeToCityCode(route.h2) : null,
-        B: route.D ? normalizeToCityCode(route.B!) : (shouldNormalizeDestination ? originalDestination : route.B),
-        D: route.D ? (shouldNormalizeDestination ? originalDestination : route.D) : route.D,
+        O: normalizeField(route.O),
+        A: normalizeField(route.A),
+        h1: normalizeField(route.h1),
+        h2: normalizeField(route.h2),
+        B: normalizeField(route.B),
+        D: normalizeField(route.D),
         all1: route.all1,
         all2: route.all2,
         all3: route.all3,
@@ -345,17 +374,15 @@ export class RouteCalculatorService {
       
       const existing = normalizedRouteMap.get(normalizedKey);
       
-      // Keep route with lowest distance, save with city codes where appropriate
       if (!existing || route.cumulativeDistance < existing.cumulativeDistance) {
         normalizedRouteMap.set(normalizedKey, {
           ...route,
-          // For O field: only normalize if route.O is not null (preserve null for direct routes)
-          O: route.O === null ? null : (shouldNormalizeOrigin ? originalOrigin : route.O),
-          A: normalizeToCityCode(route.A),
-          h1: route.h1 ? normalizeToCityCode(route.h1) : null,
-          h2: route.h2 ? normalizeToCityCode(route.h2) : null,
-          B: route.D ? normalizeToCityCode(route.B!) : (shouldNormalizeDestination ? originalDestination : route.B),
-          D: route.D ? (shouldNormalizeDestination ? originalDestination : route.D) : route.D,
+          O: normalizeField(route.O),
+          A: normalizeField(route.A),
+          h1: normalizeField(route.h1),
+          h2: normalizeField(route.h2),
+          B: normalizeField(route.B),
+          D: normalizeField(route.D),
         });
       }
     }
