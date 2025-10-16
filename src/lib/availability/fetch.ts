@@ -32,7 +32,7 @@ export async function fetchAvailabilityForGroups(
       routeId,
       startDate: params.startDate,
       endDate: params.endDate,
-      binbin: true, // Always fetch pricing data for build-itineraries
+      binbin: params.binbin, // Always fetch pricing data for build-itineraries
       ...(params.cabin ? { cabin: params.cabin } : {}),
       ...(params.carriers ? { carriers: params.carriers } : {}),
       ...(params.seats ? { seats: params.seats } : {}),
