@@ -10,7 +10,8 @@ export function buildOptimizedFromCached(
   reliabilityMap: Record<string, { min_count: number; exemption?: string }>,
   minReliabilityPercent: number,
   filterParams: any,
-  pricingPool?: Map<string, any>
+  pricingPool?: Map<string, any>,
+  routeStructureMap?: Map<string, any>
 ) {
   const optimizedItineraries = precomputeItineraryMetadata(
     itineraries,
@@ -18,7 +19,7 @@ export function buildOptimizedFromCached(
     reliabilityMap,
     minReliabilityPercent,
     getClassPercentages,
-    undefined, // routeStructureMap not available from cache
+    routeStructureMap,
     pricingPool
   );
   const { total, data } = optimizedFilterSortSearchPaginate(optimizedItineraries, filterParams);

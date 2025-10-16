@@ -111,9 +111,11 @@ export async function POST(req: NextRequest) {
     const cacheKey = getCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united });
     let cached = await getCachedItineraries(cacheKey);
     if (cached) {
-      const { itineraries, flights, minRateLimitRemaining, minRateLimitReset, totalSeatsAeroHttpRequests } = cached;
+      const { itineraries, flights, pricing, routeStructures, minRateLimitRemaining, minRateLimitReset, totalSeatsAeroHttpRequests } = cached;
       const { table: reliabilityTable, map: reliabilityMap } = await getReliabilityData();
-      const { total, data, filterMetadata, flightsPage, pricingPage } = buildOptimizedFromCached(itineraries, flights, reliabilityMap, minReliabilityPercent, filterParams, new Map());
+      const pricingPoolFromCache = pricing ? new Map(Object.entries(pricing)) : new Map();
+      const routeStructureMapFromCache = routeStructures ? new Map(Object.entries(routeStructures)) : undefined;
+      const { total, data, filterMetadata, flightsPage, pricingPage } = buildOptimizedFromCached(itineraries, flights, reliabilityMap, minReliabilityPercent, filterParams, pricingPoolFromCache, routeStructureMapFromCache);
       const response = buildResponse({
         data,
         total,
@@ -198,6 +200,7 @@ export async function POST(req: NextRequest) {
       carriers,
       seats,
       united,
+      binbin: true,
       concurrency: CONCURRENCY_CONFIG.AVAILABILITY_CONCURRENT_REQUESTS,
     });
     let minRateLimitRemaining: number | null = minRateLimitRemainingFetched;
@@ -396,9 +399,17 @@ export async function POST(req: NextRequest) {
     addPerformanceBreadcrumb(performanceMetrics);
 
     // --- RESPONSE COMPRESSION LOGIC ---
+    // Convert routeStructureMap to a plain object for caching
+    const routeStructures: Record<string, any> = {};
+    routeStructureMap.forEach((value, key) => {
+      routeStructures[key] = value;
+    });
+    
     const responseObj = await cacheItineraries(cacheKey, {
       itineraries: filteredOutput,
       flights: Object.fromEntries(flightMap),
+      pricing: Object.fromEntries(pricingPool),
+      routeStructures,
       minRateLimitRemaining,
       minRateLimitReset,
       totalSeatsAeroHttpRequests,
