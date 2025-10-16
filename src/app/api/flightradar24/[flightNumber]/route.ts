@@ -101,7 +101,6 @@ export async function GET(
             
             // Check and log the new latest date in the database
             const newLatestDate = await getLatestDateFromDatabase(flightNumber, originIata, destinationIata);
-            }
           }
         } else {
           console.log('[FlightRadar24] No flights with actual ontime data found - nothing saved to database');
