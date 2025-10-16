@@ -78,6 +78,7 @@ export interface GroupedResult {
 export interface AvailabilityV2Response {
   groups: GroupedResult[];
   seatsAeroRequests: number;
+  pricing?: PricingEntry[];
 }
 
 export interface ProcessingStats {
@@ -104,6 +105,7 @@ export interface ResponseBuilderOptions {
   seats: number;
   united: boolean;
   startTime: number;
+  pricingData?: PricingEntry[] | null;
 }
 
 export interface SentryErrorContext {
@@ -166,6 +168,31 @@ export type AllianceCode = 'SA' | 'ST' | 'OW' | 'EY' | 'EK' | 'JX' | 'B6' | 'GF'
 
 // Cabin types
 export type CabinType = 'economy' | 'premium' | 'business' | 'first' | 'y' | 'w' | 'j' | 'f';
+
+// Pricing types
+export interface PricingSource {
+  source: string;
+  YPrice: number | null;
+  YTaxes: number | null;
+  WPrice: number | null;
+  WTaxes: number | null;
+  JPrice: number | null;
+  JTaxes: number | null;
+  FPrice: number | null;
+  FTaxes: number | null;
+  TaxesCurrency: string | null;
+}
+
+export interface PricingEntry {
+  id: string;
+  flightnumbers: string;
+  date: string;
+  DepartsAt: string;
+  ArrivesAt: string;
+  departingAirport: string;
+  arrivingAirport: string;
+  pricing: PricingSource[];
+}
 
 // Error types
 export interface ApiError {

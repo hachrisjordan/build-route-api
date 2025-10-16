@@ -8,6 +8,7 @@ import { CONCURRENCY_CONFIG } from '@/lib/concurrency-config';
 import { getSupabaseConfig } from '@/lib/env-utils';
 import { getReliabilityTableCached } from '@/lib/reliability-cache';
 import { processAvailabilityData } from '@/lib/availability-v2/processing';
+import { processPricingData } from '@/lib/availability-v2/pricing-processor';
 import { mergeProcessedTrips } from '@/lib/availability-v2/merge';
 import { groupAndDeduplicate } from '@/lib/availability-v2/group';
 import { buildAvailabilityResponse } from '@/lib/availability-v2/response-builder';
@@ -15,7 +16,7 @@ import { handleAvailabilityError } from '@/lib/availability-v2/sentry-helper';
 import { createValidationErrorResponse } from '@/lib/availability-v2/zod-error-mapper';
 import { adjustSeatCountsForUA } from '@/lib/airlines/ua-seat-adjust';
 import { fetchUaPzRecords } from '@/lib/supabase/pz-service';
-import { AvailabilityV2Request } from '@/types/availability-v2';
+import { AvailabilityV2Request, PricingEntry } from '@/types/availability-v2';
 import { API_CONFIG, REQUEST_CONFIG, PERFORMANCE_CONFIG, LOGGING_CONFIG } from '@/lib/config/availability-v2';
 
 /**
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(errorResponse, { status: 400 });
     }
     
-    const { routeId, startDate, endDate, cabin, carriers, seats: seatsRaw, united } = parseResult.data;
+    const { routeId, startDate, endDate, cabin, carriers, seats: seatsRaw, united, binbin } = parseResult.data;
     const seats = typeof seatsRaw === 'number' && seatsRaw > 0 ? seatsRaw : REQUEST_CONFIG.DEFAULT_SEATS;
     
     if (united) {
@@ -60,7 +61,6 @@ export async function POST(req: NextRequest) {
     if (united) {
       try {
         pzData = await fetchUaPzRecords(startDate, endDate);
-        console.log(`[PERF] PZ data fetch completed. Found ${pzData.length} records`);
       } catch (error) {
         console.error('Error fetching pz data:', error);
       }
@@ -81,11 +81,14 @@ export async function POST(req: NextRequest) {
       end_date: seatsAeroEndDate,
       take: API_CONFIG.DEFAULT_PAGE_SIZE.toString(),
       include_trips: 'true',
-      only_direct_flights: 'true',
       include_filtered: 'true',
       carriers: REQUEST_CONFIG.SUPPORTED_CARRIERS.join('%2C'),
       disable_live_filtering: 'true'
     };
+    // If binbin is false, we include only_direct_flights; default (true) omits this filter
+    if (binbin === false) {
+      baseParams.only_direct_flights = 'true';
+    }
     
     if (cabin) baseParams.cabin = cabin;
     if (carriers) baseParams.carriers = carriers;
@@ -98,6 +101,13 @@ export async function POST(req: NextRequest) {
       API_CONFIG.MAX_PAGINATION_PAGES
     );
     seatsAeroRequests += requestCount;
+
+    // 4.5. Pricing Data Processing (if binbin=true)
+    let pricingData = null;
+    if (binbin === true) {
+      pricingData = processPricingData(allPages);
+      console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Pricing processing completed - ${pricingData.length} pricing entries`);
+    }
 
     // 5. Data Processing Pipeline
     const { results, stats } = processAvailabilityData(
@@ -153,7 +163,8 @@ export async function POST(req: NextRequest) {
       carriers,
       seats,
       united,
-      startTime
+      startTime,
+      pricingData
     });
 
   } catch (error: any) {

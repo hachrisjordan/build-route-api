@@ -212,7 +212,7 @@ export class RoutePerformanceMonitor extends PerformanceMonitor {
    */
   logRouteSummary(): void {
     const totalTime = this.getTotalTime();
-    console.log(`[${this.routeId}] Total route processing: ${totalTime.toFixed(2)}ms`);
+    // Route processing completed
   }
 }
 

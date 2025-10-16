@@ -112,8 +112,6 @@ export async function POST(request: NextRequest) {
     
     // Convert back to array
     const deduplicatedFlights = Array.from(uniqueFlightsMap.values());
-    
-    console.log(`[FlightRadar24] Deduplicated ${formattedFlights.length} flights to ${deduplicatedFlights.length} unique entries`);
 
     // Get Supabase admin client
     const supabase = getSupabaseAdminClient();

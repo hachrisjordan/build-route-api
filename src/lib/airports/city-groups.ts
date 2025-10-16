@@ -58,7 +58,7 @@ async function loadCityGroups(): Promise<void> {
         }
       }
 
-      console.log(`[city-groups] Loaded ${cityToAirports.size} city groups with ${airportToCity.size} airports`);
+      // City groups loaded successfully
     } catch (error) {
       console.error('[city-groups] Failed to load city groups:', error);
       // Initialize empty maps on error

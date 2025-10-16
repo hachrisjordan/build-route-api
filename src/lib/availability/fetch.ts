@@ -11,6 +11,7 @@ export interface AvailabilityFetchParams {
   seats?: number;
   united?: boolean;
   concurrency: number;
+  binbin?: boolean;
 }
 
 export interface AvailabilityTaskResult {
@@ -31,12 +32,15 @@ export async function fetchAvailabilityForGroups(
       routeId,
       startDate: params.startDate,
       endDate: params.endDate,
+      binbin: true, // Always fetch pricing data for build-itineraries
       ...(params.cabin ? { cabin: params.cabin } : {}),
       ...(params.carriers ? { carriers: params.carriers } : {}),
       ...(params.seats ? { seats: params.seats } : {}),
       ...(params.united ? { united: params.united } : {}),
     };
-
+    
+    // Always request pricing data for build-itineraries
+    
     const cached = await getCachedAvailabilityV2Response(bodyParams);
     if (cached) {
       return { routeId, error: false, data: cached } as AvailabilityTaskResult;

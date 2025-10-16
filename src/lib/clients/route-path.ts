@@ -1,6 +1,12 @@
 export interface RoutePathResponse {
   routes: any[];
   queryParamsArr: string[];
+  airportList?: {
+    O?: string[];
+    A?: string[];
+    B?: string[];
+    D?: string[];
+  };
 }
 
 export async function fetchRoutePaths(baseUrl: string, params: { origin: string; destination: string; maxStop: number }): Promise<RoutePathResponse> {

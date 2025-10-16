@@ -14,8 +14,6 @@ function getSupabaseClient() {
 
 export async function GET(request: NextRequest) {
   try {
-    console.log('[Tokens API] Fetching tokens from database...');
-    
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('token')
@@ -38,7 +36,6 @@ export async function GET(request: NextRequest) {
     }
 
     const tokens = data.map(row => row.token);
-    console.log(`[Tokens API] Successfully fetched ${tokens.length} tokens`);
     
     return NextResponse.json({ tokens });
     

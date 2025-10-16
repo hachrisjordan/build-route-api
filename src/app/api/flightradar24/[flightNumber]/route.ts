@@ -47,24 +47,13 @@ export async function GET(
     // Add stop_date parameter if we found existing data (for stopping condition only)
     if (latestDate) {
       args.push('--stop-date', latestDate);
-      console.log(`[FlightRadar24] 📅 LATEST DATE IN SUPABASE TABLE: ${latestDate}`);
-      console.log(`[FlightRadar24] 🎯 Flight: ${flightNumber}${originIata ? ` | Origin: ${originIata}` : ''}${destinationIata ? ` | Destination: ${destinationIata}` : ''}`);
-      console.log(`[FlightRadar24] 🚀 Starting from today, stopping when reaching ${latestDate}`);
-    } else {
-      console.log(`[FlightRadar24] 📅 NO EXISTING DATA IN SUPABASE TABLE`);
-      console.log(`[FlightRadar24] 🎯 Flight: ${flightNumber}${originIata ? ` | Origin: ${originIata}` : ''}${destinationIata ? ` | Destination: ${destinationIata}` : ''}`);
-      console.log(`[FlightRadar24] 🚀 Starting from today, stopping after 360 days`);
     }
-    
-    console.log(`[FlightRadar24] Executing script with args: ${args.join(' ')}`);
     
     // Execute the Python script
     const result = await executePythonScript(args);
     
     // Parse the CSV output from Python script
     const flights = parseFlightData(result);
-    
-    console.log(`[FlightRadar24] Retrieved ${flights.length} flights for ${flightNumber}`);
     
     // Auto-save flights to database if any data was retrieved
     if (flights.length > 0) {
@@ -95,8 +84,6 @@ export async function GET(
           // Convert back to array
           const deduplicatedFlights = Array.from(uniqueFlightsMap.values());
           
-          console.log(`[FlightRadar24] Deduplicated ${formattedFlights.length} flights to ${deduplicatedFlights.length} unique entries`);
-          
           const supabase = getSupabaseAdminClient();
           
           const { data: storedData, error } = await supabase
@@ -110,12 +97,10 @@ export async function GET(
           if (error) {
             console.error('[FlightRadar24] Database storage error:', error);
           } else {
-            console.log(`[FlightRadar24] Auto-saved ${storedData?.length || 0} flights to database`);
+            // Auto-saved flights to database
             
             // Check and log the new latest date in the database
             const newLatestDate = await getLatestDateFromDatabase(flightNumber, originIata, destinationIata);
-            if (newLatestDate) {
-              console.log(`[FlightRadar24] 📅 NEW LATEST DATE IN SUPABASE TABLE: ${newLatestDate}`);
             }
           }
         } else {

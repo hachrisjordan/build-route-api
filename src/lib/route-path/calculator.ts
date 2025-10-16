@@ -96,7 +96,7 @@ export class RouteCalculatorService {
         }
         return true; // For maxStop > 2, include all
       });
-      console.log(`[${origin}-${destination}] Using shared path data: ${paths.length} paths (filtered from ${allSharedPaths.length})`);
+      // Using shared path data
     } else {
       // Fallback to individual fetching
       paths = await cacheService.fetchPathsCached(supabase, originAirport.region, destinationAirport.region, maxDistance, origin, destination, maxStop);
@@ -170,7 +170,7 @@ export class RouteCalculatorService {
       if (p.destination) intraRoutePairs.push({ origin: p.destination, destination });
     });
 
-    console.log(`[${origin}-${destination}] Intra route pairs prepared: ${intraRoutePairs.length} pairs`);
+    // Intra route pairs prepared
 
     // Batch fetch all intra routes
     performanceMonitor.startRoute('intra-routes-fetch');

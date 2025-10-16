@@ -10,14 +10,14 @@ import { getReliabilityData } from '@/lib/reliability/service';
 import { getAirportData } from '@/lib/airports/service';
 import { filterUnreliableSegments, isUnreliableFlight } from '@/lib/early-filter';
 import { fetchAvailabilityForGroups } from '@/lib/availability/fetch';
-import { buildSegmentPool } from '@/lib/availability/segment-pool';
+import { buildSegmentAndPricingPools } from '@/lib/availability/segment-pool';
 import { getCacheKey, cacheItineraries, getCachedItineraries, getOptimizedCacheKey, cacheOptimizedItineraries, getCachedOptimizedItineraries } from '@/lib/cache';
 import type { AvailabilityFlight, AvailabilityGroup } from '@/types/availability';
 import { getClassPercentages } from '@/lib/itineraries/class-percentages';
 import { filterReliableItineraries } from '@/lib/itineraries/reliability';
 import { buildFilterParamsFromUrl } from '@/lib/http/request';
 import { extractFilterMetadata } from '@/lib/itineraries/filter-metadata';
-import { filterItinerariesByDate, buildFlightsPage, buildResponse, dedupeAndPruneOutput, pruneUnusedFlights, collectUsedFlightUUIDs } from '@/lib/itineraries/postprocess';
+import { filterItinerariesByDate, buildFlightsPage, buildPricingPage, buildResponse, dedupeAndPruneOutput, pruneUnusedFlights, collectUsedFlightUUIDs } from '@/lib/itineraries/postprocess';
 import { setInitialSentryContext, setRequestSentryContext, reportPerformance, addPerformanceBreadcrumb, captureBuildError, reportItineraryBreakdown } from '@/lib/observability/perf';
 import { createPerformanceMetrics, createItineraryMetrics, finalizePostProcessingMetrics } from '@/lib/observability/metrics';
 import { prefilterValidRoutes } from '@/lib/itineraries/route-prefilter';
@@ -26,7 +26,7 @@ import { buildOptimizedFromCached } from '@/lib/itineraries/cached-response';
 import { precomputeFlightMetadata, buildGroupConnectionMatrix as extBuildGroupConnectionMatrix, buildConnectionMatrix as extBuildConnectionMatrix } from '@/lib/itineraries/connections';
 import { initializeCityGroups, isCityCode, getCityAirports } from '@/lib/airports/city-groups';
 import { buildItinerariesAcrossRoutes } from '../../../lib/itineraries/build';
-import { fetchRoutePaths } from '@/lib/clients/route-path';
+import { fetchRoutePaths, RoutePathResponse } from '@/lib/clients/route-path';
 import { parseBuildItinerariesRequest } from '@/lib/http/build-itineraries-request';
 import { getTotalDuration, precomputeItineraryMetadata, optimizedFilterSortSearchPaginate } from '@/lib/itineraries/processing';
 
@@ -74,8 +74,6 @@ export async function POST(req: NextRequest) {
     maxStop: 'pending',
   });
   
-  console.log('[build-itineraries] Starting request processing...');
-  
   try {
     // 1. Validate input
     requestData = await parseBuildItinerariesRequest(req);
@@ -84,7 +82,7 @@ export async function POST(req: NextRequest) {
     const united = requestData.united || false;
     
     if (united) {
-      console.log(`[UNITED] United parameter enabled - will adjust seat counts for UA flights based on pz table data`);
+      // United parameter enabled - will adjust seat counts for UA flights based on pz table data
     }
 
     // 2. Apply smart rate limiting and null API key restrictions
@@ -106,22 +104,18 @@ export async function POST(req: NextRequest) {
     const optimizedCacheKey = getOptimizedCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united }, filterParams);
     let cachedOptimized = await getCachedOptimizedItineraries(optimizedCacheKey);
     if (cachedOptimized) {
-      console.log('[build-itineraries] Cache HIT - optimized result found');
       return NextResponse.json(cachedOptimized);
     }
-    console.log('[build-itineraries] Cache MISS - optimized result not found, checking raw cache...');
 
     // --- Fallback to original cache for raw data ---
     const cacheKey = getCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united });
     let cached = await getCachedItineraries(cacheKey);
     if (cached) {
-      console.log('[build-itineraries] Cache HIT - raw data found, processing with optimized logic...');
       const { itineraries, flights, minRateLimitRemaining, minRateLimitReset, totalSeatsAeroHttpRequests } = cached;
       const { table: reliabilityTable, map: reliabilityMap } = await getReliabilityData();
-      const { total, data, filterMetadata, flightsPage } = buildOptimizedFromCached(itineraries, flights, reliabilityMap, minReliabilityPercent, filterParams);
-      const response = {
-        itineraries: data,
-        flights: flightsPage,
+      const { total, data, filterMetadata, flightsPage, pricingPage } = buildOptimizedFromCached(itineraries, flights, reliabilityMap, minReliabilityPercent, filterParams, new Map());
+      const response = buildResponse({
+        data,
         total,
         page: filterParams.page,
         pageSize: filterParams.pageSize,
@@ -129,7 +123,9 @@ export async function POST(req: NextRequest) {
         minRateLimitReset,
         totalSeatsAeroHttpRequests,
         filterMetadata,
-      };
+        flightsPage,
+        pricingPage,
+      });
       await cacheOptimizedItineraries(optimizedCacheKey, response);
       return NextResponse.json(response);
     }
@@ -149,7 +145,7 @@ export async function POST(req: NextRequest) {
         usedProKey = proKeyData.pro_key;
         usedProKeyRowId = proKeyData.pro_key;
         
-        console.log(`[build-itineraries] Using pro_key with ${proKeyData.remaining} remaining quota`);
+        // Using pro_key with remaining quota
       } catch (error) {
         console.error('[build-itineraries] Failed to get pro_key:', error);
         return NextResponse.json({ 
@@ -163,7 +159,7 @@ export async function POST(req: NextRequest) {
     const baseUrl = buildBaseUrl(req);
 
     // 2. Call create-full-route-path API
-    const routePathData = await fetchRoutePaths(baseUrl, { origin, destination, maxStop });
+    const routePathData: RoutePathResponse = await fetchRoutePaths(baseUrl, { origin, destination, maxStop });
     const { routes } = routePathData;
     if (!routes || !Array.isArray(routes) || routes.length === 0) {
       return NextResponse.json({ error: 'No eligible routes found' }, { status: 404 });
@@ -181,17 +177,13 @@ export async function POST(req: NextRequest) {
       routeToOriginalMap.set(route, route);
     }
     
-    console.log(`[build-itineraries] Processing ${routes.length} city-coded routes`);
-
     // 3. Extract query params (route groups)
     if (!Array.isArray(routePathData.queryParamsArr) || routePathData.queryParamsArr.length === 0) {
       return NextResponse.json({ error: 'No route groups found in create-full-route-path response' }, { status: 500 });
     }
     const routeGroups: string[] = routePathData.queryParamsArr;
 
-    // Log the number of seats.aero API links to run
-    console.log('[build-itineraries] Total seats.aero API links to run:', routeGroups.length);
-    console.log('[build-itineraries] Route groups:', routeGroups.slice(0, 5), routeGroups.length > 5 ? `... and ${routeGroups.length - 5} more` : '');
+    // Process seats.aero API links
 
     // 4. For each group, call availability-v2 in parallel (limit 10 at a time)
     // Start performance monitoring
@@ -215,7 +207,7 @@ export async function POST(req: NextRequest) {
     PERFORMANCE_MONITORING.logMetrics();
     const afterAvailabilityTime = Date.now(); // Time after fetching availability-v2
 
-    console.log('[build-itineraries] Availability fetch completed in', afterAvailabilityTime - t0, 'ms');
+    // Availability fetch completed
 
     // Sum up the total number of actual seats.aero HTTP requests (including paginated)
     let totalSeatsAeroHttpRequests = 0;
@@ -232,7 +224,7 @@ export async function POST(req: NextRequest) {
       }
     }
     
-    console.log('[build-itineraries] Total seats.aero HTTP requests:', totalSeatsAeroHttpRequests);
+    // Total seats.aero HTTP requests processed
 
     // Track availability fetch performance
     performanceMetrics.availabilityFetch = afterAvailabilityTime - t0;
@@ -242,8 +234,10 @@ export async function POST(req: NextRequest) {
       totalSeatsAeroRequests: totalSeatsAeroHttpRequests,
     });
 
-    // 5. Build a pool of all segment availabilities from all responses
-    const segmentPool = buildSegmentPool(availabilityResults as any);
+    // 5. Build a pool of all segment availabilities and pricing from all responses
+    // Extract airport list from route path data for early pricing filtering
+    const routeStructure = routePathData.airportList ? { airportList: routePathData.airportList } : undefined;
+    const { segmentPool, pricingPool } = buildSegmentAndPricingPools(availabilityResults as any, routeStructure);
 
     // EARLY FILTERING: Remove unreliable intermediate segments from availability pool
     // This requires reliability data, so fetch it first
@@ -284,20 +278,19 @@ export async function POST(req: NextRequest) {
     
     const preFilterTime = Date.now() - preFilterStart;
     performanceMetrics.routePreFiltering = preFilterTime;
-    console.log(`[build-itineraries] Route pre-filtering: ${allRoutes.length} → ${validRoutes.length} routes (eliminated ${allRoutes.length - validRoutes.length} impossible routes) in ${preFilterTime}ms`);
+    // Route pre-filtering completed
 
     // 7. Optimized parallel route processing
     const output: Record<string, Record<string, string[][]>> = {};
     const flightMap = new Map<string, AvailabilityFlight>();
     const itineraryBuildStart = Date.now();
     let itineraryMetrics: any = createItineraryMetrics();
+    let routeStructureMap = new Map<string, FullRoutePathResult>();
     
     // Special handling for direct flights (maxStop=0)
     if (maxStop === 0) {
-      console.log('[build-itineraries] Processing direct flights (maxStop=0)');
       const direct = await buildDirectItineraries(origin, destination, filteredSegmentPool, flightMap);
       Object.assign(output, direct);
-      console.log(`[build-itineraries] Direct flight processing completed: ${Object.keys(output).length} routes`);
     } else {
     
     // Build itineraries across routes (parallel or sequential)
@@ -312,6 +305,7 @@ export async function POST(req: NextRequest) {
     );
     Object.assign(output, built.output);
     itineraryMetrics = built.metrics;
+    routeStructureMap = built.routeStructureMap;
     } // End of else block for maxStop > 0
 
     // NOTE: While composeItineraries deduplicates within its own results, 
@@ -349,7 +343,7 @@ export async function POST(req: NextRequest) {
       try {
         const updateSuccess = await updateProKeyRemaining(usedProKeyRowId, minRateLimitRemaining);
         if (updateSuccess) {
-          console.log(`[build-itineraries] Updated pro_key quota: ${usedProKeyRowId} -> ${minRateLimitRemaining} remaining`);
+          // Updated pro_key quota
         } else {
           console.warn(`[build-itineraries] Failed to update pro_key quota for ${usedProKeyRowId}`);
         }
@@ -383,10 +377,7 @@ export async function POST(req: NextRequest) {
       }, 0);
     }, 0);
     
-    console.log(`[build-itineraries] Itinerary build time (ms):`, itineraryBuildTimeMs);
-    console.log(`[build-itineraries] Total running time (ms):`, totalTimeMs);
-    console.log(`[build-itineraries] Total itineraries found:`, totalItineraries);
-    console.log(`[build-itineraries] Total unique flights:`, flightMap.size);
+    // Performance metrics logged to Sentry
     
     // Send comprehensive performance metrics to Sentry
     reportPerformance(performanceMetrics, {
@@ -420,11 +411,12 @@ export async function POST(req: NextRequest) {
     // already cached via cacheFullResponse
     
     // --- Use optimized processing for new data ---
-    const optimizedItineraries = precomputeItineraryMetadata(filteredOutput, Object.fromEntries(flightMap), reliabilityMap, minReliabilityPercent, getClassPercentages);
+    const optimizedItineraries = precomputeItineraryMetadata(filteredOutput, Object.fromEntries(flightMap), reliabilityMap, minReliabilityPercent, getClassPercentages, routeStructureMap, pricingPool);
     const { total, data } = optimizedFilterSortSearchPaginate(optimizedItineraries, filterParams);
     
     const allFlights = Object.fromEntries(flightMap);
     const flightsPage = buildFlightsPage(data as any, allFlights);
+    const pricingPage = buildPricingPage(data as any, pricingPool);
     const response = buildResponse({
       data,
       total,
@@ -435,6 +427,7 @@ export async function POST(req: NextRequest) {
       totalSeatsAeroHttpRequests,
       filterMetadata,
       flightsPage,
+      pricingPage,
     });
     
     // Cache the optimized result

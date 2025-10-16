@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createHash } from 'crypto';
 import { saveCompressedJson } from '@/lib/redis/client';
-import { RateLimitInfo, AvailabilityV2Response, ResponseBuilderOptions } from '@/types/availability-v2';
+import { RateLimitInfo, AvailabilityV2Response, ResponseBuilderOptions, PricingEntry } from '@/types/availability-v2';
 
 /**
  * Builds the final response with rate limit headers and Redis caching
@@ -18,13 +18,18 @@ export function buildAvailabilityResponse(options: ResponseBuilderOptions): Next
     carriers,
     seats,
     united,
-    startTime
+    startTime,
+    pricingData
   } = options;
 
   // Forward rate limit headers captured from client pagination
   const rlRemaining: string | null = rateLimit?.remaining || null;
   const rlReset: string | null = rateLimit?.reset || null;
-  const responsePayload: AvailabilityV2Response = { groups: groupedResults, seatsAeroRequests };
+  const responsePayload: AvailabilityV2Response = { 
+    groups: groupedResults, 
+    seatsAeroRequests,
+    ...(pricingData && { pricing: pricingData })
+  };
   
   // Save compressed response to Redis (async, non-blocking)
   const redisStartTime = Date.now();
@@ -33,13 +38,13 @@ export function buildAvailabilityResponse(options: ResponseBuilderOptions): Next
   const redisPromise = saveCompressedJson(redisKey, responsePayload, 1800);
   // Don't await Redis save to avoid blocking response
   redisPromise.then(() => {
-    console.log(`[PERF] Redis save completed in ${Date.now() - redisStartTime}ms`);
+    // Redis save completed
   }).catch(err => {
     console.error('Redis save error:', err);
   });
   
   const totalTime = Date.now() - startTime;
-  console.log(`[PERF] Total API request completed in ${totalTime}ms`);
+  // Total API request completed
   
   const nextRes = NextResponse.json(responsePayload);
   if (rlRemaining) nextRes.headers.set('x-ratelimit-remaining', rlRemaining);

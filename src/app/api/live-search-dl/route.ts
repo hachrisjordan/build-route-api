@@ -32,8 +32,6 @@ function normalizeDeltaItineraries(data: any): any[] {
       // Extract pricing information from offers
       let bundles: any[] = [];
       if (offers.length > 0) {
-        console.log('DEBUG: Number of offers:', offers.length);
-        console.log('DEBUG: First offer structure:', JSON.stringify(offers[0], null, 2));
         
         bundles = offers.map((offer: any, index: number) => {
           // Navigate through the nested structure to get pricing
@@ -53,10 +51,7 @@ function normalizeDeltaItineraries(data: any): any[] {
           const totalFarePrice = fareInfo?.farePrice?.[0]?.totalFarePrice;
           const brandByFlightLegs = fareInfo?.brandByFlightLegs || [];
           
-          console.log(`DEBUG: Offer ${index} - totalFarePrice:`, totalFarePrice);
-          console.log(`DEBUG: Offer ${index} - brandByFlightLegs:`, brandByFlightLegs);
-          console.log(`DEBUG: Offer ${index} - First brandId:`, brandByFlightLegs[0]?.brandId);
-          console.log(`DEBUG: Offer ${index} - dominantSegmentBrandId:`, offer.additionalOfferProperties?.dominantSegmentBrandId);
+          // Processing offer pricing and branding
           
           // Map brandId to cabin class - use dominantSegmentBrandId for the overall cabin class
           const dominantBrandId = offer.additionalOfferProperties?.dominantSegmentBrandId || 'MAIN';

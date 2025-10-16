@@ -1,5 +1,16 @@
 import { NextResponse } from 'next/server';
 import { FullRoutePathResult } from '@/types/route';
+import { isCityCode, getCityAirports } from '@/lib/airports/city-groups';
+
+/**
+ * Airport list structure organized by route roles
+ */
+export interface AirportList {
+  O: string[];
+  A: string[];
+  B: string[];
+  D: string[];
+}
 
 /**
  * API response data structure
@@ -7,6 +18,7 @@ import { FullRoutePathResult } from '@/types/route';
 export interface RoutePathResponse {
   routes: FullRoutePathResult[];
   queryParamsArr: string[];
+  airportList: AirportList;
   metadata?: ResponseMetadata;
 }
 
@@ -61,6 +73,61 @@ export class ResponseFormatterService {
   readonly version = '1.0.0';
 
   /**
+   * Extract unique airport list from routes organized by O,A,B,D structure
+   * Expands city codes to include all airports in that city
+   */
+  static extractAirportList(routes: FullRoutePathResult[]): AirportList {
+    const OSet = new Set<string>();
+    const ASet = new Set<string>();
+    const BSet = new Set<string>();
+    const DSet = new Set<string>();
+    
+    routes.forEach(route => {
+      // Extract airports by their role in the route structure and expand city codes
+      if (route.O) {
+        const airports = this.expandCityCode(route.O);
+        airports.forEach(airport => OSet.add(airport));
+      }
+      if (route.A) {
+        const airports = this.expandCityCode(route.A);
+        airports.forEach(airport => ASet.add(airport));
+      }
+      if (route.B) {
+        const airports = this.expandCityCode(route.B);
+        airports.forEach(airport => BSet.add(airport));
+      }
+      if (route.D) {
+        const airports = this.expandCityCode(route.D);
+        airports.forEach(airport => DSet.add(airport));
+      }
+    });
+    
+    return {
+      O: Array.from(OSet).sort(),
+      A: Array.from(ASet).sort(),
+      B: Array.from(BSet).sort(),
+      D: Array.from(DSet).sort()
+    };
+  }
+
+  /**
+   * Expand city code to all airports in that city, or return single airport if not a city code
+   */
+  private static expandCityCode(code: string): string[] {
+    try {
+      if (isCityCode(code)) {
+        return getCityAirports(code);
+      } else {
+        return [code];
+      }
+    } catch (error) {
+      // If city groups not loaded, return the code as-is
+      console.warn(`Failed to expand city code ${code}:`, error);
+      return [code];
+    }
+  }
+
+  /**
    * Format successful route path response
    */
   static formatSuccessResponse(
@@ -68,9 +135,12 @@ export class ResponseFormatterService {
     queryParamsArr: string[],
     metadata?: ResponseMetadata
   ): NextResponse<RoutePathResponse> {
+    const airportList = this.extractAirportList(routes);
+    
     const response: RoutePathResponse = {
       routes,
       queryParamsArr,
+      airportList,
       ...(metadata && { metadata })
     };
 
@@ -300,6 +370,7 @@ export class ResponseFormatterService {
   static validateResponseData(data: {
     routes: FullRoutePathResult[];
     queryParamsArr: string[];
+    airportList?: AirportList;
   }): { isValid: boolean; errors: string[] } {
     const errors: string[] = [];
     
@@ -309,6 +380,19 @@ export class ResponseFormatterService {
     
     if (!Array.isArray(data.queryParamsArr)) {
       errors.push('QueryParamsArr must be an array');
+    }
+    
+    if (data.airportList) {
+      if (typeof data.airportList !== 'object' || data.airportList === null) {
+        errors.push('AirportList must be an object');
+      } else {
+        const requiredFields = ['O', 'A', 'B', 'D'];
+        requiredFields.forEach(field => {
+          if (!Array.isArray(data.airportList[field as keyof AirportList])) {
+            errors.push(`AirportList.${field} must be an array`);
+          }
+        });
+      }
     }
     
     if (data.routes.length === 0) {

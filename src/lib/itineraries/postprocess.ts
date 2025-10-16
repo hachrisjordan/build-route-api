@@ -55,6 +55,25 @@ export function buildFlightsPage(itinerariesPage: Array<{ itinerary: string[] }>
   return flightsPage;
 }
 
+export function buildPricingPage(itinerariesPage: Array<{ pricingId?: string[] }>, pricingPool: Map<string, any>) {
+  const pricingIds = new Set<string>();
+  itinerariesPage.forEach((card) => {
+    if (card.pricingId && Array.isArray(card.pricingId)) {
+      card.pricingId.forEach((id) => pricingIds.add(id));
+    }
+  });
+  const pricingPage: Record<string, any> = {};
+  pricingIds.forEach(id => {
+    const pricing = pricingPool.get(id);
+    if (pricing) {
+      // Remove the id field from the pricing entry
+      const { id: _, ...pricingWithoutId } = pricing;
+      pricingPage[id] = pricingWithoutId;
+    }
+  });
+  return pricingPage;
+}
+
 export function buildResponse({
   data,
   total,
@@ -65,17 +84,21 @@ export function buildResponse({
   totalSeatsAeroHttpRequests,
   filterMetadata,
   flightsPage,
+  pricingPage,
 }: any) {
   return {
     itineraries: data,
     flights: flightsPage,
-    total,
-    page,
-    pageSize,
-    minRateLimitRemaining,
-    minRateLimitReset,
-    totalSeatsAeroHttpRequests,
-    filterMetadata,
+    pricing: pricingPage,
+    metadata: {
+      total,
+      page,
+      pageSize,
+      minRateLimitRemaining,
+      minRateLimitReset,
+      totalSeatsAeroHttpRequests,
+      filterMetadata,
+    },
   };
 }
 

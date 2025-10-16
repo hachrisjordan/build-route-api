@@ -1,4 +1,7 @@
 import type { AvailabilityFlight, AvailabilityGroup } from '@/types/availability';
+import type { FullRoutePathResult } from '@/types/route';
+import type { PricingEntry } from '@/types/availability-v2';
+import { extractSegmentPricing } from '@/lib/itineraries/pricing-matcher';
 
 export interface OptimizedItinerary {
   route: string;
@@ -13,6 +16,22 @@ export interface OptimizedItinerary {
   destination: string;
   connections: string[];
   classPercentages: { y: number; w: number; j: number; f: number };
+  pricingId?: string[]; // Array of pricing IDs for segments (O-A, A-B, B-D)
+  routeTimings?: {
+    O: string | null;
+    A: string | null;
+    B: string | null;
+    D: string | null;
+    OA: string | null;
+    AB: string | null;
+    BD: string | null;
+    ODepartureTime: string | null;
+    AArrivalTime: string | null;
+    ADepartureTime: string | null;
+    BArrivalTime: string | null;
+    BDepartureTime: string | null;
+    DArrivalTime: string | null;
+  };
 }
 
 export function getTotalDuration(flights: (any | undefined)[]): number {
@@ -31,12 +50,157 @@ export function getTotalDuration(flights: (any | undefined)[]): number {
   return total;
 }
 
+/**
+ * Extract route timings based on the O-A-B-D structure
+ * Maps flights to route waypoints and extracts arrival/departure times
+ * Returns times in ISO 8601 format (e.g., "2025-01-01T01:02:03Z")
+ */
+export function extractRouteTimings(
+  flights: AvailabilityFlight[],
+  routeStructure: FullRoutePathResult | null
+): {
+  O: string | null;
+  A: string | null;
+  B: string | null;
+  D: string | null;
+  OA: string | null;
+  AB: string | null;
+  BD: string | null;
+  ODepartureTime: string | null;
+  AArrivalTime: string | null;
+  ADepartureTime: string | null;
+  BArrivalTime: string | null;
+  BDepartureTime: string | null;
+  DArrivalTime: string | null;
+} | null {
+  if (!routeStructure || flights.length === 0) {
+    return null;
+  }
+
+  const { O, A, h1, h2, B, D } = routeStructure;
+  
+  // Build waypoint sequence: O -> A -> h1 -> h2 -> B -> D
+  const waypoints = [O, A, h1, h2, B, D].filter((w): w is string => w !== null && w !== undefined);
+  
+  if (waypoints.length === 0) {
+    return null;
+  }
+
+  // Map flights to waypoints by matching origin/destination airports
+  const result = {
+    O: O || null,
+    A: A || null,
+    B: B || null,
+    D: D || null,
+    OA: null as string | null,
+    AB: null as string | null,
+    BD: null as string | null,
+    ODepartureTime: null as string | null,
+    AArrivalTime: null as string | null,
+    ADepartureTime: null as string | null,
+    BArrivalTime: null as string | null,
+    BDepartureTime: null as string | null,
+    DArrivalTime: null as string | null,
+  };
+
+  // Helper function to format date to ISO string (YYYY-MM-DDTHH:MM:SS format without milliseconds and without Z)
+  const formatDate = (dateString: string): string => {
+    const date = new Date(dateString);
+    return date.toISOString().replace(/\.\d{3}Z$/, '');
+  };
+
+  // Track flight numbers for each segment
+  const oaFlightNumbers: string[] = [];
+  const abFlightNumbers: string[] = [];
+  const bdFlightNumbers: string[] = [];
+
+  // First pass: classify each flight into segments based on route structure
+  for (let i = 0; i < flights.length; i++) {
+    const flight = flights[i];
+    if (!flight) continue;
+    
+    const origin = flight.originAirport;
+    const destination = flight.destinationAirport;
+    const flightNumber = flight.FlightNumbers;
+
+    // Determine which segment this flight belongs to
+    // O-A segment: Only if O exists and this flight starts from O
+    if (O && origin === O) {
+      oaFlightNumbers.push(flightNumber);
+      continue;
+    }
+
+    // B-D segment: Only if D exists and this flight ends at D
+    if (D && destination === D) {
+      bdFlightNumbers.push(flightNumber);
+      continue;
+    }
+
+    // A-B segment: Everything else between A and B
+    // This includes flights from A and flights going to B (but not from O or to D)
+    abFlightNumbers.push(flightNumber);
+  }
+
+  // Set segment flight numbers
+  if (oaFlightNumbers.length > 0) {
+    result.OA = oaFlightNumbers.join(', ');
+  }
+  if (abFlightNumbers.length > 0) {
+    result.AB = abFlightNumbers.join(', ');
+  }
+  if (bdFlightNumbers.length > 0) {
+    result.BD = bdFlightNumbers.join(', ');
+  }
+
+  // Second pass: extract timing information for each waypoint
+  for (const flight of flights) {
+    const origin = flight.originAirport;
+    const destination = flight.destinationAirport;
+
+    // O waypoint
+    if (O && origin === O) {
+      if (result.ODepartureTime === null) {
+        result.ODepartureTime = formatDate(flight.DepartsAt);
+      }
+    }
+
+    // A waypoint
+    if (A) {
+      if (destination === A && result.AArrivalTime === null) {
+        result.AArrivalTime = formatDate(flight.ArrivesAt);
+      }
+      if (origin === A && result.ADepartureTime === null) {
+        result.ADepartureTime = formatDate(flight.DepartsAt);
+      }
+    }
+
+    // B waypoint
+    if (B) {
+      if (destination === B && result.BArrivalTime === null) {
+        result.BArrivalTime = formatDate(flight.ArrivesAt);
+      }
+      if (origin === B && result.BDepartureTime === null) {
+        result.BDepartureTime = formatDate(flight.DepartsAt);
+      }
+    }
+
+    // D waypoint
+    if (D && destination === D) {
+      result.DArrivalTime = formatDate(flight.ArrivesAt);
+    }
+  }
+
+  return result;
+}
+
 export function precomputeItineraryMetadata(
   itineraries: Record<string, Record<string, string[][]>>,
   flights: Record<string, AvailabilityFlight>,
   reliability: Record<string, { min_count: number; exemption?: string }>,
   minReliabilityPercent: number,
-  getClassPercentages: (flightsArr: any[], reliability: any, minReliabilityPercent: number) => { y: number; w: number; j: number; f: number }
+  getClassPercentages: (flightsArr: any[], reliability: any, minReliabilityPercent: number) => { y: number; w: number; j: number; f: number },
+  routeStructureMap?: Map<string, FullRoutePathResult>,
+  pricingPool?: Map<string, PricingEntry>
 ): OptimizedItinerary[] {
   const optimized: OptimizedItinerary[] = [];
   for (const routeKey of Object.keys(itineraries)) {
@@ -45,6 +209,10 @@ export function precomputeItineraryMetadata(
     const origin = routeSegments[0] || '';
     const destination = routeSegments[routeSegments.length - 1] || '';
     const connections = routeSegments.slice(1, -1).filter(Boolean);
+    
+    // Get route structure for timing extraction
+    const routeStructure = routeStructureMap?.get(routeKey) || null;
+    
     for (const date of Object.keys(itineraries[routeKey] || {})) {
       for (const itinerary of itineraries[routeKey]![date] || []) {
         const flightObjs = itinerary.map(uuid => flights[uuid]).filter(Boolean);
@@ -63,6 +231,17 @@ export function precomputeItineraryMetadata(
         const arrivalTime = new Date(flightObjs[flightObjs.length - 1]!.ArrivesAt).getTime();
         const airlineCodes = flightObjs.map(f => f!.FlightNumbers.slice(0, 2).toUpperCase());
         const classPercentages = getClassPercentages(flightObjs, reliability, minReliabilityPercent);
+        
+        // Extract route timings based on O-A-B-D structure
+        const routeTimings = extractRouteTimings(flightObjs as AvailabilityFlight[], routeStructure);
+        
+        // Extract pricing information if pricing pool is available
+        let pricingId: string[] | undefined;
+        
+        if (pricingPool && routeTimings) {
+          pricingId = extractSegmentPricing(flightObjs as AvailabilityFlight[], routeStructure, pricingPool, routeTimings);
+        }
+        
         optimized.push({
           route: routeKey,
           date,
@@ -76,6 +255,8 @@ export function precomputeItineraryMetadata(
           destination,
           connections,
           classPercentages,
+          ...(pricingId && pricingId.length > 0 && { pricingId }),
+          ...(routeTimings && { routeTimings }),
         });
       }
     }

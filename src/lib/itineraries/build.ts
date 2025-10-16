@@ -91,12 +91,15 @@ for (let i = 0; i < codes.length - 1; i++) {
         
         segmentAvail.push(segmentFlights);
         
-        // Alliance validation based on route position
-        if (i === 0) {
+        // Alliance validation based on route structure, not segment position
+        if (from === route.O && to === route.A) {
+          // O-A segment
           alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
-        } else if (i === segments.length - 1) {
+        } else if (from === route.B && to === route.D) {
+          // B-D segment
           alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
         } else {
+          // A-B segment (everything between A and B)
           alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
         }
       }
@@ -298,12 +301,15 @@ for (let i = 0; i < codes.length - 1; i++) {
         
         segmentAvail.push(segmentFlights);
         
-        // Alliance validation based on route position
-        if (i === 0) {
+        // Alliance validation based on route structure, not segment position
+        if (from === route.O && to === route.A) {
+          // O-A segment
           alliances.push(Array.isArray(route.all1) ? route.all1 : (route.all1 ? [route.all1] : null));
-        } else if (i === segments.length - 1) {
+        } else if (from === route.B && to === route.D) {
+          // B-D segment
           alliances.push(Array.isArray(route.all3) ? route.all3 : (route.all3 ? [route.all3] : null));
         } else {
+          // A-B segment (everything between A and B)
           alliances.push(Array.isArray(route.all2) ? route.all2 : (route.all2 ? [route.all2] : null));
         }
       }
@@ -426,5 +432,47 @@ for (let i = 0; i < codes.length - 1; i++) {
   const totalMs = Date.now() - start;
   itineraryMetrics.totals.totalTimeMs = totalMs;
 
-  return { output, metrics: itineraryMetrics };
+  // Build route structure mapping for timing extraction
+  // Map route keys to their original route structures
+  const routeStructureMap = new Map<string, FullRoutePathResult>();
+  
+  // For each output route, try to match it back to the original route structure
+  for (const routeKey of Object.keys(output)) {
+    // Try to find a matching original route
+    for (const route of routes) {
+      const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
+      if (codes.length < 2) continue;
+      
+      // Check if this route could have produced this routeKey
+      // The routeKey might be built from actual airports in the itinerary
+      // Try exact match first
+      if (codes.join('-') === routeKey) {
+        routeStructureMap.set(routeKey, route);
+        break;
+      }
+      
+      // Also try to match by checking if all waypoints in the route appear in the routeKey
+      const routeParts = routeKey.split('-');
+      let matches = true;
+      
+      // Check if key waypoints (O, A, B, D) appear in order in routeKey
+      const keyWaypoints = [route.O, route.A, route.B, route.D].filter((w): w is string => w !== null);
+      let lastIndex = -1;
+      for (const waypoint of keyWaypoints) {
+        const index = routeParts.indexOf(waypoint);
+        if (index === -1 || index <= lastIndex) {
+          matches = false;
+          break;
+        }
+        lastIndex = index;
+      }
+      
+      if (matches && keyWaypoints.length > 0) {
+        routeStructureMap.set(routeKey, route);
+        break;
+      }
+    }
+  }
+
+  return { output, metrics: itineraryMetrics, routeStructureMap };
 }

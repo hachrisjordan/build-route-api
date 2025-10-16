@@ -26,7 +26,7 @@ export async function composeItineraries(
   for (let i = 0; i < segmentAvail.length; i++) {
     const groups = segmentAvail[i] || [];
     for (const group of groups) {
-      // Filter by alliance if specified
+      // Filter by alliance if specified - apply per-segment alliance restrictions
       if (alliances[i] && alliances[i]!.length > 0 && !alliances[i]!.includes(group.alliance)) {
         continue;
       }
@@ -69,85 +69,92 @@ export async function composeItineraries(
   }
 
   // Build itineraries by connecting flights across segments
-  const flightsByDate = new Map<string, AvailabilityFlight[][]>();
+  // Note: We need to handle multi-day itineraries where segments may be on different dates
   
-  // Group flights by date for each segment
+  // Collect ALL flights for each segment (regardless of date)
+  const allSegmentFlights: AvailabilityFlight[][] = [];
   for (let segIdx = 0; segIdx < segmentFlights.length; segIdx++) {
-    const groups = segmentFlights[segIdx];
-    if (!groups) continue;
+    const groups = segmentFlights[segIdx] || [];
+    const flights: AvailabilityFlight[] = [];
     
     for (const group of groups) {
-      if (!flightsByDate.has(group.date)) {
-        flightsByDate.set(group.date, []);
-      }
-      const dateFlights = flightsByDate.get(group.date)!;
-      if (!dateFlights[segIdx]) {
-        dateFlights[segIdx] = [];
-      }
-      dateFlights[segIdx]!.push(...group.flights);
+      flights.push(...group.flights);
     }
+    
+    allSegmentFlights.push(flights);
+  }
+  
+  // Check if we have flights for all segments
+  if (allSegmentFlights.some(flights => flights.length === 0)) {
+    return results;
   }
 
-  // Build itineraries for each date using city-based connectivity
-  for (const [date, segmentFlightsForDate] of flightsByDate) {
-    if (segmentFlightsForDate.some(flights => flights.length === 0)) continue;
+  // Build itineraries by connecting flights across ALL segments (cross-date connections allowed)
+  const allDateResults: string[][] = [];
+  const numSegments = allSegmentFlights.length;
+  
+  if (numSegments === 0) {
+    return results;
+  }
+  
+  // Build itineraries recursively through all segments
+  function buildItinerariesFromSegment(
+    currentItinerary: string[], 
+    segmentIndex: number
+  ): void {
+    if (segmentIndex >= numSegments) {
+      // We've built a complete itinerary
+      if (currentItinerary.length === numSegments) {
+        allDateResults.push([...currentItinerary]);
+      }
+      return;
+    }
     
-    const dateResults: string[][] = [];
+    const segmentFlights = allSegmentFlights[segmentIndex] || [];
     
-    // Build itineraries by connecting flights across ALL segments
-    // For routes like HAN-TYO-CHI-LAX, we need to connect:
-    // HAN-TYO flights → TYO-CHI flights → CHI-LAX flights
-    const numSegments = segmentFlightsForDate.length;
-    
-    if (numSegments === 0) continue;
-    
-    // Start with all flights from the first segment
-    const firstSegmentFlights = segmentFlightsForDate[0] || [];
-    
-    // Build itineraries recursively through all segments
-    function buildItinerariesFromSegment(
-      currentItinerary: string[], 
-      segmentIndex: number
-    ): void {
-      if (segmentIndex >= numSegments) {
-        // We've built a complete itinerary
-        if (currentItinerary.length === numSegments) {
-          dateResults.push([...currentItinerary]);
-        }
-        return;
+    for (const flight of segmentFlights) {
+      const flightUuid = getFlightUUID(flight);
+      if (!flightMap.has(flightUuid)) {
+        flightMap.set(flightUuid, flight);
       }
       
-      const segmentFlights = segmentFlightsForDate[segmentIndex] || [];
-      
-      for (const flight of segmentFlights) {
-        const flightUuid = getFlightUUID(flight);
-        if (!flightMap.has(flightUuid)) {
-          flightMap.set(flightUuid, flight);
-        }
-        
-        // For the first segment, just add the flight
-        if (segmentIndex === 0) {
-          buildItinerariesFromSegment([flightUuid], segmentIndex + 1);
-        } else {
-          // For subsequent segments, check connection validity
-          const lastFlightUuid = currentItinerary[currentItinerary.length - 1];
-          if (lastFlightUuid) {
-            const validConnections = connectionMatrix.get(lastFlightUuid);
-            if (validConnections && validConnections.has(flightUuid)) {
-              // Valid connection - continue building the itinerary
-              buildItinerariesFromSegment([...currentItinerary, flightUuid], segmentIndex + 1);
-            }
+      // For the first segment, just add the flight
+      if (segmentIndex === 0) {
+        buildItinerariesFromSegment([flightUuid], segmentIndex + 1);
+      } else {
+        // For subsequent segments, check connection validity
+        const lastFlightUuid = currentItinerary[currentItinerary.length - 1];
+        if (lastFlightUuid) {
+          const validConnections = connectionMatrix.get(lastFlightUuid);
+          if (validConnections && validConnections.has(flightUuid)) {
+            // Valid connection - continue building the itinerary
+            buildItinerariesFromSegment([...currentItinerary, flightUuid], segmentIndex + 1);
           }
         }
       }
     }
+  }
+  
+  // Start building itineraries from the first segment
+  buildItinerariesFromSegment([], 0);
+  
+  // Group results by the departure date of the first flight
+  if (allDateResults.length > 0) {
+    const uniqueResults = Array.from(new Map(allDateResults.map(itin => [itin.join('>'), itin])).values());
     
-    // Start building itineraries from the first segment
-    buildItinerariesFromSegment([], 0);
-    
-    if (dateResults.length > 0) {
-      const uniqueResults = Array.from(new Map(dateResults.map(itin => [itin.join('>'), itin])).values());
-      results[date] = uniqueResults;
+    // Group by departure date of first flight
+    for (const itinerary of uniqueResults) {
+      const firstFlightUuid = itinerary[0];
+      if (firstFlightUuid) {
+        const firstFlight = flightMap.get(firstFlightUuid);
+        if (firstFlight && firstFlight.DepartsAt) {
+          const departureDate = new Date(firstFlight.DepartsAt).toISOString().split('T')[0] || '';
+          if (!results[departureDate]) {
+            results[departureDate] = [];
+          }
+          results[departureDate].push(itinerary);
+        }
+      }
     }
   }
 
