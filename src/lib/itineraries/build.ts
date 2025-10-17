@@ -180,7 +180,7 @@ for (let i = 0; i < codes.length - 1; i++) {
         }
       }
       
-      return { routeResults: processedResults, segCount: segmentPairs.length, compositionMs: t1 - t0 };
+      return { routeResults: processedResults, segCount: segmentPairs.length, compositionMs: t1 - t0, route };
     });
     const results = await pool(routeTasks, Math.min(10, Math.ceil(routes.length / 4)));
     const totalMs = Date.now() - start;
@@ -193,10 +193,15 @@ for (let i = 0; i < codes.length - 1; i++) {
     let totalItinerariesCreated = 0;
     let totalCompositionTime = 0;
     for (const res of results) {
-      const { routeResults, segCount, compositionMs } = res;
+      const { routeResults, segCount, compositionMs, route } = res;
       // routeResults is now a Record<string, string[][]> where keys are rebuilt route keys
       for (const [rebuiltRouteKey, itineraries] of Object.entries(routeResults)) {
         if (!output[rebuiltRouteKey]) output[rebuiltRouteKey] = {};
+        
+        // Store the route structure immediately
+        if (!routeStructureMap.has(rebuiltRouteKey)) {
+          routeStructureMap.set(rebuiltRouteKey, route);
+        }
         
         // Group itineraries by date
         const itinerariesByDate: Record<string, string[][]> = {};
@@ -433,27 +438,28 @@ for (let i = 0; i < codes.length - 1; i++) {
   const totalMs = Date.now() - start;
   itineraryMetrics.totals.totalTimeMs = totalMs;
 
-  // Build route structure mapping for timing extraction
-  // Map route keys to their original route structures
+  // Fill in any missing route structure mappings (only if not already set)
   for (const routeKey of Object.keys(output)) {
+    // Skip if already mapped during processing
+    if (routeStructureMap.has(routeKey)) {
+      continue;
+    }
+    
     // Try to find a matching original route
     for (const route of routes) {
       const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
       if (codes.length < 2) continue;
       
-      // Check if this route could have produced this routeKey
-      // The routeKey might be built from actual airports in the itinerary
       // Try exact match first
       if (codes.join('-') === routeKey) {
         routeStructureMap.set(routeKey, route);
         break;
       }
       
-      // Also try to match by checking if all waypoints in the route appear in the routeKey
+      // Also try to match by checking if all waypoints appear in order
       const routeParts = routeKey.split('-');
       let matches = true;
       
-      // Check if key waypoints (O, A, B, D) appear in order in routeKey
       const keyWaypoints = [route.O, route.A, route.B, route.D].filter((w): w is string => w !== null);
       let lastIndex = -1;
       for (const waypoint of keyWaypoints) {

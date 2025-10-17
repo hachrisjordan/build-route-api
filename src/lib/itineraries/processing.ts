@@ -2,6 +2,7 @@ import type { AvailabilityFlight, AvailabilityGroup } from '@/types/availability
 import type { FullRoutePathResult } from '@/types/route';
 import type { PricingEntry } from '@/types/availability-v2';
 import { extractSegmentPricing } from '@/lib/itineraries/pricing-matcher';
+import { isCityCode, getCityAirports } from '@/lib/airports/city-groups';
 
 export interface OptimizedItinerary {
   route: string;
@@ -109,6 +110,20 @@ export function extractRouteTimings(
     return date.toISOString().replace(/\.\d{3}Z$/, '');
   };
 
+  // Helper function to check if an airport matches a waypoint (handles city codes)
+  const matchesWaypoint = (airport: string, waypoint: string | null): boolean => {
+    if (!waypoint) return false;
+    if (airport === waypoint) return true;
+    
+    // If waypoint is a city code, check if airport belongs to that city
+    if (isCityCode(waypoint)) {
+      const cityAirports = getCityAirports(waypoint);
+      return cityAirports.includes(airport);
+    }
+    
+    return false;
+  };
+
   // Track flight numbers for each segment
   const oaFlightNumbers: string[] = [];
   const abFlightNumbers: string[] = [];
@@ -125,13 +140,13 @@ export function extractRouteTimings(
 
     // Determine which segment this flight belongs to
     // O-A segment: Only if O exists and this flight starts from O
-    if (O && origin === O) {
+    if (O && matchesWaypoint(origin, O)) {
       oaFlightNumbers.push(flightNumber);
       continue;
     }
 
     // B-D segment: Only if D exists and this flight ends at D
-    if (D && destination === D) {
+    if (D && matchesWaypoint(destination, D)) {
       bdFlightNumbers.push(flightNumber);
       continue;
     }
@@ -158,7 +173,7 @@ export function extractRouteTimings(
     const destination = flight.destinationAirport;
 
     // O waypoint
-    if (O && origin === O) {
+    if (O && matchesWaypoint(origin, O)) {
       if (result.ODepartureTime === null) {
         result.ODepartureTime = formatDate(flight.DepartsAt);
       }
@@ -166,26 +181,26 @@ export function extractRouteTimings(
 
     // A waypoint
     if (A) {
-      if (destination === A && result.AArrivalTime === null) {
+      if (matchesWaypoint(destination, A) && result.AArrivalTime === null) {
         result.AArrivalTime = formatDate(flight.ArrivesAt);
       }
-      if (origin === A && result.ADepartureTime === null) {
+      if (matchesWaypoint(origin, A) && result.ADepartureTime === null) {
         result.ADepartureTime = formatDate(flight.DepartsAt);
       }
     }
 
     // B waypoint
     if (B) {
-      if (destination === B && result.BArrivalTime === null) {
+      if (matchesWaypoint(destination, B) && result.BArrivalTime === null) {
         result.BArrivalTime = formatDate(flight.ArrivesAt);
       }
-      if (origin === B && result.BDepartureTime === null) {
+      if (matchesWaypoint(origin, B) && result.BDepartureTime === null) {
         result.BDepartureTime = formatDate(flight.DepartsAt);
       }
     }
 
     // D waypoint
-    if (D && destination === D) {
+    if (D && matchesWaypoint(destination, D)) {
       result.DArrivalTime = formatDate(flight.ArrivesAt);
     }
   }
