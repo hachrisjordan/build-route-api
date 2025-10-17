@@ -29,6 +29,7 @@ export async function buildItinerariesAcrossRoutes(
   originalSearchParams?: { origin: string; destination: string }
 ) {
   const output: Record<string, Record<string, string[][]>> = {};
+  const routeStructureMap = new Map<string, FullRoutePathResult>();
 
   const itineraryMetrics: ItineraryMetrics = {
     phases: {
@@ -434,9 +435,6 @@ for (let i = 0; i < codes.length - 1; i++) {
 
   // Build route structure mapping for timing extraction
   // Map route keys to their original route structures
-  const routeStructureMap = new Map<string, FullRoutePathResult>();
-  
-  // For each output route, try to match it back to the original route structure
   for (const routeKey of Object.keys(output)) {
     // Try to find a matching original route
     for (const route of routes) {
