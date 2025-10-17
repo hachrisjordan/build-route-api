@@ -12,6 +12,7 @@ export const buildItinerariesSchema = z.object({
   minReliabilityPercent: z.number().min(0).max(100).optional(),
   seats: z.coerce.number().int().min(1).default(1).optional(),
   united: z.coerce.boolean().default(false).optional(),
+  binbin: z.coerce.boolean().default(false).optional(),
 });
 
 export type BuildItinerariesInput = z.infer<typeof buildItinerariesSchema>;

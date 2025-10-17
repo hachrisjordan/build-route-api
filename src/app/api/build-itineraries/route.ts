@@ -80,6 +80,7 @@ export async function POST(req: NextRequest) {
     let { origin, destination, maxStop, startDate, endDate, apiKey, cabin, carriers, minReliabilityPercent } = requestData;
     const seats = typeof requestData.seats === 'number' && requestData.seats > 0 ? requestData.seats : 1;
     const united = requestData.united || false;
+    const binbin = requestData.binbin ?? false;
     
     if (united) {
       // United parameter enabled - will adjust seat counts for UA flights based on pz table data
@@ -101,7 +102,7 @@ export async function POST(req: NextRequest) {
     const filterParams = buildFilterParamsFromUrl(req.url);
 
     // --- Try optimized cache first (includes filter parameters) ---
-    const optimizedCacheKey = getOptimizedCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united }, filterParams);
+    const optimizedCacheKey = getOptimizedCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united, binbin }, filterParams);
     let cachedOptimized = await getCachedOptimizedItineraries(optimizedCacheKey);
     if (cachedOptimized) {
       return NextResponse.json(cachedOptimized);
@@ -200,7 +201,7 @@ export async function POST(req: NextRequest) {
       carriers,
       seats,
       united,
-      binbin: true,
+      binbin,
       concurrency: CONCURRENCY_CONFIG.AVAILABILITY_CONCURRENT_REQUESTS,
     });
     let minRateLimitRemaining: number | null = minRateLimitRemainingFetched;
