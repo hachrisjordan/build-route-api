@@ -1,0 +1,22 @@
+airline,type,variant,config,note,color
+WS,Boeing 737-700,73G,W12/Y120 (132),Standard configuration,#E74C3C
+WS,Boeing 737-800,738,W12/Y162 (174),2-Class configuration,#3498DB
+WS,Boeing 737-800,738H,Y189 (189),Economy configuration,#2ECC71
+WS,Boeing 737-800,738F,Cargo,Cargo configuration,#95A5A6
+WS,Boeing 737 MAX 8,7M8,W12/Y162 (174),2-Class configuration,#9B59B6
+WS,Boeing 737 MAX 8,7M8H,Y189 (189),Economy configuration,#E67E22
+WS,Boeing 787-9,789,J16/W28/Y276 (320),Standard configuration,#1ABC9C
+ZH,Airbus A319-100,319,J8/Y120 (128),Standard Configuration,#e57373
+ZH,Airbus A320-200,320A,J8/Y150 (158),2-Class Configuration (158 seats),#64b5f6
+ZH,Airbus A320-200,320B,J8/Y144 (152),2-Class Configuration (152 seats),#81c784
+ZH,Airbus A320-200,320C,J8/W18/Y126 (152),3-Class Configuration,#ffd54f
+ZH,Airbus A320neo,32N1,J8/Y144 (152),2-Class Configuration,#ba68c8
+ZH,Airbus A320neo,32N2,J8/W18/Y126 (152),3-Class Configuration,#4dd0e1
+ZH,Airbus A321neo,321N1,J12/Y172 (184),2-Class Configuration,#ffb74d
+ZH,Airbus A321neo,321N2,J12/W18/Y154 (184),3-Class Configuration,#a1887f
+ZH,Airbus A330-300,333,J18/W24/Y267 (309),3-Class Configuration,#90caf9
+ZH,Boeing 737-800,738A,J8/Y160 (168),2-Class Configuration (168 seats),#f06292
+ZH,Boeing 737-800,738B,J8/Y154 (162),2-Class Configuration (162 seats),#aed581
+ZH,Boeing 737-800,738C,J8/W18/Y130 (156),3-Class Configuration,#ffd600
+ZH,Boeing 737 MAX 8,7M8,J8/Y154 (162),2-Class Configuration (162 seats),#7986cb
+ZH,Boeing 737 MAX 8,7M8A,J8/Y160 (168),2-Class Configuration (168 seats),#b0bec5

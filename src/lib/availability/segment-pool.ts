@@ -135,11 +135,54 @@ export function buildSegmentAndPricingPools(
 ): {
   segmentPool: Record<string, AvailabilityGroup[]>;
   pricingPool: Map<string, PricingEntry>;
+  pricingIndex: {
+    byFlightNumber: Map<string, PricingEntry[]>;
+    byRoute: Map<string, PricingEntry[]>;
+    byFlightAndRoute: Map<string, PricingEntry[]>;
+  };
 } {
+  const pricingPool = buildPricingPool(availabilityResults, routeStructure);
   return {
     segmentPool: buildSegmentPool(availabilityResults),
-    pricingPool: buildPricingPool(availabilityResults, routeStructure)
+    pricingPool,
+    pricingIndex: buildPricingIndex(pricingPool)
   };
+}
+
+export function buildPricingIndex(pricingPool: Map<string, PricingEntry>): {
+  byFlightNumber: Map<string, PricingEntry[]>;
+  byRoute: Map<string, PricingEntry[]>;
+  byFlightAndRoute: Map<string, PricingEntry[]>;
+} {
+  const byFlightNumber = new Map<string, PricingEntry[]>();
+  const byRoute = new Map<string, PricingEntry[]>();
+  const byFlightAndRoute = new Map<string, PricingEntry[]>();
+
+  for (const entry of pricingPool.values()) {
+    const flightKey = entry.flightnumbers.toLowerCase();
+    const routeKey = `${entry.departingAirport}-${entry.arrivingAirport}`;
+    const combinedKey = `${flightKey}:${routeKey}`;
+
+    // Index by flight number
+    if (!byFlightNumber.has(flightKey)) {
+      byFlightNumber.set(flightKey, []);
+    }
+    byFlightNumber.get(flightKey)!.push(entry);
+
+    // Index by route
+    if (!byRoute.has(routeKey)) {
+      byRoute.set(routeKey, []);
+    }
+    byRoute.get(routeKey)!.push(entry);
+
+    // Index by flight + route (most specific)
+    if (!byFlightAndRoute.has(combinedKey)) {
+      byFlightAndRoute.set(combinedKey, []);
+    }
+    byFlightAndRoute.get(combinedKey)!.push(entry);
+  }
+
+  return { byFlightNumber, byRoute, byFlightAndRoute };
 }
 
 

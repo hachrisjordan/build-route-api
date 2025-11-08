@@ -19,6 +19,7 @@ export interface RouteCalculationInput {
   sharedPathsKey?: string;
   originalOrigin?: string; // Original input (could be city code)
   originalDestination?: string; // Original input (could be city code)
+  binbin?: boolean;
 }
 
 /**
@@ -49,7 +50,7 @@ export class RouteCalculatorService {
    * Calculate full route path for a given origin-destination pair
    */
   async calculateFullRoutePath(input: RouteCalculationInput): Promise<RouteCalculationResult> {
-    const { origin, destination, maxStop, supabase, cacheService, sharedPathsKey, originalOrigin, originalDestination } = input;
+    const { origin, destination, maxStop, supabase, cacheService, sharedPathsKey, originalOrigin, originalDestination, binbin } = input;
     const performanceMonitor = new RoutePerformanceMonitor(`${origin}-${destination}`);
     
     // Get airports from cache (pre-fetched)
@@ -416,7 +417,8 @@ export class RouteCalculatorService {
 
     // Use the grouping service for advanced merging
     const groupingService = new RouteGroupingService();
-    const { groups, queryParams } = groupingService.processRouteGrouping(segmentMap, destMap);
+    const maxComboLimit = binbin === true ? 30 : 60;
+    const { groups, queryParams } = groupingService.processRouteGrouping(segmentMap, destMap, maxComboLimit);
     const queryParamsArr = queryParams;
 
     performanceMonitor.endRoute('grouping', { groupsCount: groups.length });

@@ -7,7 +7,6 @@ import { getClassPercentages } from '@/lib/itineraries/class-percentages';
 export function buildOptimizedFromCached(
   itineraries: Record<string, Record<string, string[][]>>,
   flights: Record<string, AvailabilityFlight>,
-  reliabilityMap: Record<string, { min_count: number; exemption?: string }>,
   minReliabilityPercent: number,
   filterParams: any,
   pricingPool?: Map<string, any>,
@@ -16,7 +15,6 @@ export function buildOptimizedFromCached(
   const optimizedItineraries = precomputeItineraryMetadata(
     itineraries,
     flights,
-    reliabilityMap,
     minReliabilityPercent,
     getClassPercentages,
     routeStructureMap,

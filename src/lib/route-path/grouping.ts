@@ -16,7 +16,7 @@ export class RouteGroupingService {
   /**
    * Merge groups by combining groups where destinations are subsets
    */
-  mergeGroups(groups: RouteGroup[]): RouteGroup[] {
+  mergeGroups(groups: RouteGroup[], maxComboLimit: number = 60): RouteGroup[] {
     let merged = [...groups];
     let changed = true;
     
@@ -34,10 +34,10 @@ export class RouteGroupingService {
           const setI = new Set(groupI.dests);
           const setJ = new Set(groupJ.dests);
           if ([...setI].every(d => setJ.has(d))) {
-            // Check if merging would exceed the 60 limit
+            // Check if merging would exceed the limit
             const combinedKeys = new Set([...groupJ.keys, ...groupI.keys]);
             const combinedDests = new Set([...groupJ.dests, ...groupI.dests]);
-            if (combinedKeys.size * combinedDests.size <= 60) {
+            if (combinedKeys.size * combinedDests.size <= maxComboLimit) {
               // Merge i into j
               groupJ.keys = Array.from(combinedKeys).sort();
               groupJ.dests = Array.from(combinedDests).sort();
@@ -64,8 +64,8 @@ export class RouteGroupingService {
   /**
    * Advanced merging: merge groups where keys of one are a subset of another's, combining destinations
    */
-  advancedMergeGroups(groups: RouteGroup[]): RouteGroup[] {
-    let mergedGroups = this.mergeGroups(groups);
+  advancedMergeGroups(groups: RouteGroup[], maxComboLimit: number = 60): RouteGroup[] {
+    let mergedGroups = this.mergeGroups(groups, maxComboLimit);
     let changed = true;
     
     while (changed) {
@@ -84,10 +84,10 @@ export class RouteGroupingService {
           const setJ = new Set(groupJ.keys);
           // If i's keys are a subset of j's keys
           if ([...setI].every(k => setJ.has(k))) {
-            // Check if merging would exceed the 60 limit
+            // Check if merging would exceed the limit
             const combinedKeys = new Set([...groupJ.keys, ...groupI.keys]);
             const combinedDests = new Set([...groupJ.dests, ...groupI.dests]);
-            if (combinedKeys.size * combinedDests.size <= 60) {
+            if (combinedKeys.size * combinedDests.size <= maxComboLimit) {
               // Merge i's dests into j's dests (deduped)
               groupJ.dests = Array.from(combinedDests).sort();
               // The superset group (j) keeps its keys (origins)
@@ -158,13 +158,14 @@ export class RouteGroupingService {
    */
   processRouteGrouping(
     segmentMap: Record<string, Set<string>>,
-    destMap: Record<string, Set<string>>
+    destMap: Record<string, Set<string>>,
+    maxComboLimit: number = 60
   ): { groups: RouteGroup[]; queryParams: string[] } {
     // Build initial groups
     const initialGroups = this.buildInitialGroups(segmentMap, destMap);
     
     // Apply advanced merging
-    const mergedGroups = this.advancedMergeGroups(initialGroups);
+    const mergedGroups = this.advancedMergeGroups(initialGroups, maxComboLimit);
     
     // Filter by size limit
     const filteredGroups = this.filterGroupsBySizeLimit(mergedGroups);

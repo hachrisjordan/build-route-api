@@ -9,7 +9,7 @@ export interface RoutePathResponse {
   };
 }
 
-export async function fetchRoutePaths(baseUrl: string, params: { origin: string; destination: string; maxStop: number }): Promise<RoutePathResponse> {
+export async function fetchRoutePaths(baseUrl: string, params: { origin: string; destination: string; maxStop: number; binbin?: boolean }): Promise<RoutePathResponse> {
   const url = `${baseUrl}/api/create-full-route-path`;
   const res = await fetch(url, {
     method: 'POST',

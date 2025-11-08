@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { availabilityV2Schema } from '@/lib/availability-v2/schema';
 import { validateApiKeyWithResponse } from '@/lib/http/auth';
-import { parseDateRange } from '@/lib/availability-v2/date-utils';
+import { parseDateRange, generateDateRange } from '@/lib/availability-v2/date-utils';
 import { parseRouteId } from '@/lib/routes/parse-route-id';
 import { createSeatsAeroClient, paginateSearch } from '@/lib/clients/seats-aero';
 import { CONCURRENCY_CONFIG } from '@/lib/concurrency-config';
@@ -16,8 +16,10 @@ import { handleAvailabilityError } from '@/lib/availability-v2/sentry-helper';
 import { createValidationErrorResponse } from '@/lib/availability-v2/zod-error-mapper';
 import { adjustSeatCountsForUA } from '@/lib/airlines/ua-seat-adjust';
 import { fetchUaPzRecords } from '@/lib/supabase/pz-service';
-import { AvailabilityV2Request, PricingEntry } from '@/types/availability-v2';
+import { AvailabilityV2Request, PricingEntry, GroupedResult } from '@/types/availability-v2';
 import { API_CONFIG, REQUEST_CONFIG, PERFORMANCE_CONFIG, LOGGING_CONFIG } from '@/lib/config/availability-v2';
+import { getCachedAvailabilityGroup, saveCachedAvailabilityGroup, getCachedPricingGroup, saveCachedPricingGroup } from '@/lib/availability-v2/cache-helper';
+import { initializeCityGroups, isCityCode, getCityAirports } from '@/lib/airports/city-groups';
 
 /**
  * POST /api/availability-v2
@@ -27,8 +29,6 @@ export async function POST(req: NextRequest) {
   const startTime = Date.now();
   let parseResult: any = null;
   let seatsAeroRequests = 0;
-  
-  console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} API Request started at ${new Date().toISOString()}`);
   
   try {
     // 1. Authentication & Validation
@@ -54,6 +54,141 @@ export async function POST(req: NextRequest) {
     const { seatsAeroEndDate, sevenDaysAgo } = parsedDates;
     const { originAirports, destinationSegments, middleSegments } = parseRouteId(routeId);
 
+    // 2.5. Early Cache Check
+    // Initialize city groups to expand city codes to airports
+    await initializeCityGroups();
+    
+    // Build allOrigins and allDestinations for seats.aero API (keep city codes as-is)
+    const allOrigins = [...originAirports];
+    const allDestinations = [...destinationSegments];
+    middleSegments.forEach((segment: string[]) => {
+      allOrigins.push(...segment);
+      allDestinations.unshift(...segment);
+    });
+    
+    // Expand city codes to individual airports for cache checking
+    const expandToAirports = (codes: string[]): string[] => {
+      const airports: string[] = [];
+      for (const code of codes) {
+        if (isCityCode(code)) {
+          airports.push(...getCityAirports(code));
+        } else {
+          airports.push(code);
+        }
+      }
+      return airports;
+    };
+
+    // Expand city codes to individual airports for cache keys
+    const uniqueOriginAirports = [...new Set(expandToAirports(allOrigins))];
+    const uniqueDestinationAirports = [...new Set(expandToAirports(allDestinations))];
+    
+    // Check cache for extended date range (same as what gets processed: startDate to seatsAeroEndDate)
+    const dates = generateDateRange(startDate, seatsAeroEndDate);
+
+    // Check cache for all airport pair combinations
+    const cachedGroups: GroupedResult[] = [];
+    const cachedKeys: string[] = [];
+    const missingKeys: string[] = [];
+
+    // Check pricing cache if binbin=true
+    const cachedPricingEntries: PricingEntry[] = [];
+    const cachedPricingKeys: string[] = [];
+    const missingPricingKeys: string[] = [];
+
+    const emptyCachedKeys: string[] = []; // Track empty cache hits
+    
+    for (const originAirport of uniqueOriginAirports) {
+      for (const destinationAirport of uniqueDestinationAirports) {
+        for (const date of dates) {
+          const key = `${originAirport}-${destinationAirport}-${date}`;
+          
+          // Check availability cache
+          // null = not cached, [] = cached but empty, [items] = cached with results
+          const cached = await getCachedAvailabilityGroup(originAirport, destinationAirport, date);
+          if (cached !== null) {
+            // Cached (either empty or with results)
+            if (cached.length > 0) {
+              cachedGroups.push(...cached);
+              cachedKeys.push(key);
+            } else {
+              // Empty array = cached but no results (don't fetch again)
+              emptyCachedKeys.push(key);
+            }
+          } else {
+            // Not cached = need to fetch
+            missingKeys.push(key);
+          }
+
+          // Check pricing cache if binbin=true
+          if (binbin === true) {
+            const cachedPricing = await getCachedPricingGroup(originAirport, destinationAirport, date);
+            if (cachedPricing !== null) {
+              // Cached (either empty or with results)
+              if (cachedPricing.length > 0) {
+                cachedPricingEntries.push(...cachedPricing);
+                cachedPricingKeys.push(key);
+              }
+              // Note: empty pricing cache is fine, we don't track it separately
+            } else {
+              missingPricingKeys.push(key);
+            }
+          }
+        }
+      }
+    }
+
+    // If all combinations are cached (including empty results), return early (skip slow path)
+    // Note: allAvailabilityCached means all keys are cached (either with results or empty)
+    const allAvailabilityCached = missingKeys.length === 0;
+    const allPricingCached = binbin === true ? (missingPricingKeys.length === 0) : true;
+    
+    if (allAvailabilityCached && allPricingCached) {
+      const filteredCachedGroups = cachedGroups.filter(group => {
+        const groupDate = group.date;
+        return groupDate >= startDate && groupDate <= seatsAeroEndDate;
+      });
+      
+      let filteredCachedPricing: PricingEntry[] | null = null;
+      if (binbin === true && cachedPricingEntries.length > 0) {
+        filteredCachedPricing = cachedPricingEntries.filter(entry => {
+          return entry.date >= startDate && entry.date <= seatsAeroEndDate;
+        });
+      }
+      
+      console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Cache hit - returning ${filteredCachedGroups.length} cached groups (from ${cachedGroups.length} total, filtered to ${startDate} to ${seatsAeroEndDate})`);
+      if (emptyCachedKeys.length > 0) {
+        console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Empty cache hits (no results): ${emptyCachedKeys.length} keys`);
+      }
+      if (binbin === true && filteredCachedPricing) {
+        console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Pricing cache hit - returning ${filteredCachedPricing.length} cached pricing entries (from ${cachedPricingEntries.length} total)`);
+      }
+      
+      return buildAvailabilityResponse({
+        groupedResults: filteredCachedGroups,
+        seatsAeroRequests: 0,
+        rateLimit: null,
+        routeId,
+        startDate,
+        endDate,
+        cabin,
+        carriers,
+        seats,
+        united,
+        startTime,
+        pricingData: filteredCachedPricing
+      });
+    }
+
+    // Log partial cache hits
+    if (cachedGroups.length > 0 || emptyCachedKeys.length > 0) {
+      console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Partial availability cache hit - ${cachedGroups.length} cached with results, ${emptyCachedKeys.length} cached empty, ${missingKeys.length} missing`);
+    }
+    
+    if (binbin === true && cachedPricingEntries.length > 0) {
+      console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Partial pricing cache hit - ${cachedPricingEntries.length} cached, ${missingPricingKeys.length} missing`);
+    }
+
     // 3. External Data Fetching
     const reliabilityTable = await getReliabilityTableCached();
     
@@ -67,13 +202,6 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Seats.aero API Integration
-    const allOrigins = [...originAirports];
-    const allDestinations = [...destinationSegments];
-    middleSegments.forEach((segment: string[]) => {
-      allOrigins.push(...segment);
-      allDestinations.unshift(...segment);
-    });
-
     const baseParams: Record<string, string> = {
       origin_airport: allOrigins.join(','),
       destination_airport: allDestinations.join(','),
@@ -103,10 +231,14 @@ export async function POST(req: NextRequest) {
     seatsAeroRequests += requestCount;
 
     // 4.5. Pricing Data Processing (if binbin=true)
+    // Note: If we reach here, we didn't return early, so we need to process pricing from allPages
     let pricingData = null;
     if (binbin === true) {
       pricingData = processPricingData(allPages);
-      console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Pricing processing completed - ${pricingData.length} pricing entries`);
+      // Pricing log is optional - only log if significant
+      if (pricingData.length > 0) {
+        console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Pricing: ${pricingData.length} entries`);
+      }
     }
 
     // 5. Data Processing Pipeline
@@ -117,13 +249,119 @@ export async function POST(req: NextRequest) {
       sevenDaysAgo,
       reliabilityTable
     );
-    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Processing completed - Items: ${stats.totalItems}, Trips: ${stats.totalTrips}, Filtered: ${stats.filteredTrips}`);
 
     const mergedMap = mergeProcessedTrips(results, reliabilityTable);
-    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Merging completed - Merged results: ${mergedMap.size}`);
 
     const groupedResults = await groupAndDeduplicate(mergedMap);
-    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Grouping completed - Final groups: ${groupedResults.length}`);
+    
+    // Combined processing stats log
+    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Process: ${stats.totalItems} items, ${stats.filteredTrips}/${stats.totalTrips} trips → ${mergedMap.size} merged → ${groupedResults.length} groups`);
+
+    // 5.5. Save groups to cache (group by originAirport-destinationAirport-date to combine all alliances)
+    const groupsByKey = new Map<string, { originAirport: string; destinationAirport: string; date: string; groups: GroupedResult[] }>();
+    for (const group of groupedResults) {
+      const key = `${group.originAirport}-${group.destinationAirport}-${group.date}`;
+      if (!groupsByKey.has(key)) {
+        groupsByKey.set(key, {
+          originAirport: group.originAirport,
+          destinationAirport: group.destinationAirport,
+          date: group.date,
+          groups: []
+        });
+      }
+      groupsByKey.get(key)!.groups.push(group);
+    }
+
+    // Cache all airport-date combinations that were queried
+    // For combinations with results: cache the groups
+    // For combinations without results: cache empty array [] to avoid re-fetching
+    const cachePromises: Promise<void>[] = [];
+    
+    // Cache combinations that have results
+    for (const { originAirport, destinationAirport, date, groups } of groupsByKey.values()) {
+      cachePromises.push(
+        saveCachedAvailabilityGroup(
+          originAirport,
+          destinationAirport,
+          date,
+          groups,
+          1800 // TTL: 30 minutes
+        )
+      );
+    }
+    
+    // Cache combinations that were queried but returned no results
+    // These are airport-date combinations in our query that don't appear in groupedResults
+    const queriedDates = generateDateRange(startDate, seatsAeroEndDate);
+    for (const originAirport of uniqueOriginAirports) {
+      for (const destinationAirport of uniqueDestinationAirports) {
+        for (const date of queriedDates) {
+          const key = `${originAirport}-${destinationAirport}-${date}`;
+          
+          // Only cache if:
+          // 1. It was in missingKeys (not cached before)
+          // 2. It's not in groupsByKey (no results returned)
+          if (missingKeys.includes(key) && !groupsByKey.has(key)) {
+            cachePromises.push(
+              saveCachedAvailabilityGroup(
+                originAirport,
+                destinationAirport,
+                date,
+                [], // Empty array = no results found
+                1800 // TTL: 30 minutes (same as results)
+              )
+            );
+          }
+        }
+      }
+    }
+    
+    // Save to cache asynchronously (non-blocking)
+    Promise.all(cachePromises)
+      .then(() => {
+        const resultCount = groupsByKey.size;
+        const emptyCount = cachePromises.length - resultCount;
+        console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Cache: ${cachePromises.length} entries (${resultCount} results, ${emptyCount} empty)`);
+      })
+      .catch(err => {
+        console.error('[availability-v2] Error saving groups to cache:', err);
+      });
+
+    // 5.6. Save pricing to cache (if binbin=true and pricing was processed)
+    if (binbin === true && pricingData && pricingData.length > 0) {
+      // Group pricing entries by originAirport-destinationAirport-date
+      const pricingByKey = new Map<string, { originAirport: string; destinationAirport: string; date: string; entries: PricingEntry[] }>();
+      for (const entry of pricingData) {
+        const key = `${entry.departingAirport}-${entry.arrivingAirport}-${entry.date}`;
+        if (!pricingByKey.has(key)) {
+          pricingByKey.set(key, {
+            originAirport: entry.departingAirport,
+            destinationAirport: entry.arrivingAirport,
+            date: entry.date,
+            entries: []
+          });
+        }
+        pricingByKey.get(key)!.entries.push(entry);
+      }
+
+      const pricingCachePromises = Array.from(pricingByKey.values()).map(({ originAirport, destinationAirport, date, entries }) => {
+        return saveCachedPricingGroup(
+          originAirport,
+          destinationAirport,
+          date,
+          entries,
+          1800 // TTL: 30 minutes
+        );
+      });
+      // Save to cache asynchronously (non-blocking)
+      Promise.all(pricingCachePromises)
+        .then(() => {
+          console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Pricing cache: ${pricingCachePromises.length} keys, ${pricingData.length} entries`);
+        })
+        .catch(err => {
+          console.error('[availability-v2] Error saving pricing to cache:', err);
+        });
+    }
 
     // 6. UA Seat Adjustments (if enabled)
     if (united) {

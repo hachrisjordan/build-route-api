@@ -174,7 +174,20 @@ export class ErrorHandlerService {
     context: ErrorContext = {},
     request?: NextRequest
   ): void {
-    // Log error to console
+    // Check if it's an operational error (expected/normal behavior)
+    const isOperational = error instanceof RouteError && error.isOperational;
+    
+    if (isOperational) {
+      // Log operational errors (like airport not found, no routes) as info, not error
+      console.log(`[error-handler] ${error.message}`, {
+        type: error.type,
+        context
+      });
+      // Don't send operational errors to Sentry - they're expected scenarios
+      return;
+    }
+    
+    // Log unexpected errors to console
     console.error('Route Error:', {
       message: error.message,
       type: error instanceof RouteError ? error.type : 'UNKNOWN',
@@ -182,7 +195,7 @@ export class ErrorHandlerService {
       stack: error.stack
     });
 
-    // Capture in Sentry with enhanced context
+    // Capture in Sentry with enhanced context (only for non-operational errors)
     const sentryContext = {
       tags: {
         route: 'create-full-route-path',

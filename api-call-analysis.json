@@ -1,0 +1,2142 @@
+{
+  "metadata": {
+    "totalRoutes": 249,
+    "totalApiCalls": 31,
+    "reduction": "87.6%",
+    "dateRange": 14,
+    "maxResultsPerCall": 1000
+  },
+  "apiCalls": [
+    {
+      "id": 1,
+      "params": {
+        "origins": "HAN",
+        "destinations": "ADD,AUH,BJS,BKK,BLR,BOM,DEL,DOH,DXB,FOC,FRA,HKG,HYD,IST,KUL,LON,MEL,MNL,MUC,MXP"
+      },
+      "stats": {
+        "originCount": 1,
+        "destinationCount": 20,
+        "totalCombinations": 20,
+        "neededRoutes": 20,
+        "wastedCombinations": 0,
+        "neededResults": 994,
+        "wastedResults": 0,
+        "utilizationPercent": "99.4"
+      },
+      "breakdown": [
+        {
+          "origin": "HAN",
+          "destination": "ADD",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "HAN",
+          "destination": "AUH",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "HAN",
+          "destination": "BJS",
+          "perDay": 3,
+          "total": 42
+        },
+        {
+          "origin": "HAN",
+          "destination": "BKK",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "HAN",
+          "destination": "BLR",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "HAN",
+          "destination": "BOM",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "HAN",
+          "destination": "DEL",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "HAN",
+          "destination": "DOH",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "HAN",
+          "destination": "DXB",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "HAN",
+          "destination": "FOC",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "HAN",
+          "destination": "FRA",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "HAN",
+          "destination": "HKG",
+          "perDay": 8,
+          "total": 112
+        },
+        {
+          "origin": "HAN",
+          "destination": "HYD",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "HAN",
+          "destination": "IST",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "HAN",
+          "destination": "KUL",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "HAN",
+          "destination": "LON",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "HAN",
+          "destination": "MEL",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "HAN",
+          "destination": "MNL",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "HAN",
+          "destination": "MUC",
+          "perDay": 3,
+          "total": 42
+        },
+        {
+          "origin": "HAN",
+          "destination": "MXP",
+          "perDay": 2,
+          "total": 28
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "params": {
+        "origins": "BJS,BKK,BLR,BOM,DEL,DXB,FRA,HKG",
+        "destinations": "PAR"
+      },
+      "stats": {
+        "originCount": 8,
+        "destinationCount": 1,
+        "totalCombinations": 8,
+        "neededRoutes": 8,
+        "wastedCombinations": 0,
+        "neededResults": 994,
+        "wastedResults": 0,
+        "utilizationPercent": "99.4"
+      },
+      "breakdown": [
+        {
+          "origin": "BJS",
+          "destination": "PAR",
+          "perDay": 8,
+          "total": 112
+        },
+        {
+          "origin": "BKK",
+          "destination": "PAR",
+          "perDay": 10,
+          "total": 140
+        },
+        {
+          "origin": "BLR",
+          "destination": "PAR",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "BOM",
+          "destination": "PAR",
+          "perDay": 8,
+          "total": 112
+        },
+        {
+          "origin": "DEL",
+          "destination": "PAR",
+          "perDay": 9,
+          "total": 126
+        },
+        {
+          "origin": "DXB",
+          "destination": "PAR",
+          "perDay": 9,
+          "total": 126
+        },
+        {
+          "origin": "FRA",
+          "destination": "PAR",
+          "perDay": 11,
+          "total": 154
+        },
+        {
+          "origin": "HKG",
+          "destination": "PAR",
+          "perDay": 9,
+          "total": 126
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "params": {
+        "origins": "LON,MNL,MUC,MXP,OSA,PVG,SEL,SGN,SIN",
+        "destinations": "PAR"
+      },
+      "stats": {
+        "originCount": 9,
+        "destinationCount": 1,
+        "totalCombinations": 9,
+        "neededRoutes": 9,
+        "wastedCombinations": 0,
+        "neededResults": 994,
+        "wastedResults": 0,
+        "utilizationPercent": "99.4"
+      },
+      "breakdown": [
+        {
+          "origin": "LON",
+          "destination": "PAR",
+          "perDay": 10,
+          "total": 140
+        },
+        {
+          "origin": "MNL",
+          "destination": "PAR",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "MUC",
+          "destination": "PAR",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "MXP",
+          "destination": "PAR",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "OSA",
+          "destination": "PAR",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "PVG",
+          "destination": "PAR",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "SEL",
+          "destination": "PAR",
+          "perDay": 10,
+          "total": 140
+        },
+        {
+          "origin": "SGN",
+          "destination": "PAR",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "SIN",
+          "destination": "PAR",
+          "perDay": 13,
+          "total": 182
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "params": {
+        "origins": "DXB",
+        "destinations": "BOS,CHI,DFW,IAH,LON,MCO,QMI,SEA,WAS,YTO"
+      },
+      "stats": {
+        "originCount": 1,
+        "destinationCount": 10,
+        "totalCombinations": 10,
+        "neededRoutes": 10,
+        "wastedCombinations": 0,
+        "neededResults": 994,
+        "wastedResults": 0,
+        "utilizationPercent": "99.4"
+      },
+      "breakdown": [
+        {
+          "origin": "DXB",
+          "destination": "BOS",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "DXB",
+          "destination": "CHI",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "DXB",
+          "destination": "DFW",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "DXB",
+          "destination": "IAH",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "DXB",
+          "destination": "LON",
+          "perDay": 24,
+          "total": 336
+        },
+        {
+          "origin": "DXB",
+          "destination": "MCO",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "DXB",
+          "destination": "QMI",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "DXB",
+          "destination": "SEA",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "DXB",
+          "destination": "WAS",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "DXB",
+          "destination": "YTO",
+          "perDay": 6,
+          "total": 84
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "params": {
+        "origins": "ATL,BOS,CHI,CLT,CUN,DEN,DFW,DTW,IAH,LAS,LON,MCO,MSP,NYC",
+        "destinations": "CVG"
+      },
+      "stats": {
+        "originCount": 14,
+        "destinationCount": 1,
+        "totalCombinations": 14,
+        "neededRoutes": 14,
+        "wastedCombinations": 0,
+        "neededResults": 980,
+        "wastedResults": 0,
+        "utilizationPercent": "98.0"
+      },
+      "breakdown": [
+        {
+          "origin": "ATL",
+          "destination": "CVG",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "BOS",
+          "destination": "CVG",
+          "perDay": 8,
+          "total": 112
+        },
+        {
+          "origin": "CHI",
+          "destination": "CVG",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "CLT",
+          "destination": "CVG",
+          "perDay": 3,
+          "total": 42
+        },
+        {
+          "origin": "CUN",
+          "destination": "CVG",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "DEN",
+          "destination": "CVG",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "DFW",
+          "destination": "CVG",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "DTW",
+          "destination": "CVG",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "IAH",
+          "destination": "CVG",
+          "perDay": 3,
+          "total": 42
+        },
+        {
+          "origin": "LAS",
+          "destination": "CVG",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "LON",
+          "destination": "CVG",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "MCO",
+          "destination": "CVG",
+          "perDay": 3,
+          "total": 42
+        },
+        {
+          "origin": "MSP",
+          "destination": "CVG",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "NYC",
+          "destination": "CVG",
+          "perDay": 5,
+          "total": 70
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "params": {
+        "origins": "BJS,BKK,DOH,DXB,HKG,IST,LON,MEL",
+        "destinations": "QLA"
+      },
+      "stats": {
+        "originCount": 8,
+        "destinationCount": 1,
+        "totalCombinations": 8,
+        "neededRoutes": 8,
+        "wastedCombinations": 0,
+        "neededResults": 966,
+        "wastedResults": 0,
+        "utilizationPercent": "96.6"
+      },
+      "breakdown": [
+        {
+          "origin": "BJS",
+          "destination": "QLA",
+          "perDay": 3,
+          "total": 42
+        },
+        {
+          "origin": "BKK",
+          "destination": "QLA",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "DOH",
+          "destination": "QLA",
+          "perDay": 8,
+          "total": 112
+        },
+        {
+          "origin": "DXB",
+          "destination": "QLA",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "HKG",
+          "destination": "QLA",
+          "perDay": 12,
+          "total": 168
+        },
+        {
+          "origin": "IST",
+          "destination": "QLA",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "LON",
+          "destination": "QLA",
+          "perDay": 19,
+          "total": 266
+        },
+        {
+          "origin": "MEL",
+          "destination": "QLA",
+          "perDay": 13,
+          "total": 182
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "params": {
+        "origins": "SEL",
+        "destinations": "ATL,BOS,CHI,DFW,DTW,LAS,MSP,SEA,SLC,WAS,YTO"
+      },
+      "stats": {
+        "originCount": 1,
+        "destinationCount": 11,
+        "totalCombinations": 11,
+        "neededRoutes": 11,
+        "wastedCombinations": 0,
+        "neededResults": 966,
+        "wastedResults": 0,
+        "utilizationPercent": "96.6"
+      },
+      "breakdown": [
+        {
+          "origin": "SEL",
+          "destination": "ATL",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "SEL",
+          "destination": "BOS",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "SEL",
+          "destination": "CHI",
+          "perDay": 10,
+          "total": 140
+        },
+        {
+          "origin": "SEL",
+          "destination": "DFW",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "SEL",
+          "destination": "DTW",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "SEL",
+          "destination": "LAS",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "SEL",
+          "destination": "MSP",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "SEL",
+          "destination": "SEA",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "SEL",
+          "destination": "SLC",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "SEL",
+          "destination": "WAS",
+          "perDay": 9,
+          "total": 126
+        },
+        {
+          "origin": "SEL",
+          "destination": "YTO",
+          "perDay": 10,
+          "total": 140
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "params": {
+        "origins": "SEL,SIN,TPE,TYO",
+        "destinations": "NYC"
+      },
+      "stats": {
+        "originCount": 4,
+        "destinationCount": 1,
+        "totalCombinations": 4,
+        "neededRoutes": 4,
+        "wastedCombinations": 0,
+        "neededResults": 938,
+        "wastedResults": 0,
+        "utilizationPercent": "93.8"
+      },
+      "breakdown": [
+        {
+          "origin": "SEL",
+          "destination": "NYC",
+          "perDay": 12,
+          "total": 168
+        },
+        {
+          "origin": "SIN",
+          "destination": "NYC",
+          "perDay": 12,
+          "total": 168
+        },
+        {
+          "origin": "TPE",
+          "destination": "NYC",
+          "perDay": 9,
+          "total": 126
+        },
+        {
+          "origin": "TYO",
+          "destination": "NYC",
+          "perDay": 34,
+          "total": 476
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "params": {
+        "origins": "DOH",
+        "destinations": "ATL,BOS,CHI,DFW,IAH,LON,PHL,QMI,SEA"
+      },
+      "stats": {
+        "originCount": 1,
+        "destinationCount": 9,
+        "totalCombinations": 9,
+        "neededRoutes": 9,
+        "wastedCombinations": 0,
+        "neededResults": 924,
+        "wastedResults": 0,
+        "utilizationPercent": "92.4"
+      },
+      "breakdown": [
+        {
+          "origin": "DOH",
+          "destination": "ATL",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "DOH",
+          "destination": "BOS",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "DOH",
+          "destination": "CHI",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "DOH",
+          "destination": "DFW",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "DOH",
+          "destination": "IAH",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "DOH",
+          "destination": "LON",
+          "perDay": 14,
+          "total": 196
+        },
+        {
+          "origin": "DOH",
+          "destination": "PHL",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "DOH",
+          "destination": "QMI",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "DOH",
+          "destination": "SEA",
+          "perDay": 7,
+          "total": 98
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "params": {
+        "origins": "PAR",
+        "destinations": "ATL,BOS,CHI,CUN,DEN,DFW,DTW,IAH,LAS,MCO,MSP"
+      },
+      "stats": {
+        "originCount": 1,
+        "destinationCount": 11,
+        "totalCombinations": 11,
+        "neededRoutes": 11,
+        "wastedCombinations": 0,
+        "neededResults": 896,
+        "wastedResults": 0,
+        "utilizationPercent": "89.6"
+      },
+      "breakdown": [
+        {
+          "origin": "PAR",
+          "destination": "ATL",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PAR",
+          "destination": "BOS",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PAR",
+          "destination": "CHI",
+          "perDay": 14,
+          "total": 196
+        },
+        {
+          "origin": "PAR",
+          "destination": "CUN",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PAR",
+          "destination": "DEN",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PAR",
+          "destination": "DFW",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PAR",
+          "destination": "DTW",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PAR",
+          "destination": "IAH",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PAR",
+          "destination": "LAS",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PAR",
+          "destination": "MCO",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PAR",
+          "destination": "MSP",
+          "perDay": 5,
+          "total": 70
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "params": {
+        "origins": "PAR",
+        "destinations": "NYC,PHX,QLA,QMI,RDU,SEA,SLC"
+      },
+      "stats": {
+        "originCount": 1,
+        "destinationCount": 7,
+        "totalCombinations": 7,
+        "neededRoutes": 7,
+        "wastedCombinations": 0,
+        "neededResults": 882,
+        "wastedResults": 0,
+        "utilizationPercent": "88.2"
+      },
+      "breakdown": [
+        {
+          "origin": "PAR",
+          "destination": "NYC",
+          "perDay": 24,
+          "total": 336
+        },
+        {
+          "origin": "PAR",
+          "destination": "PHX",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PAR",
+          "destination": "QLA",
+          "perDay": 10,
+          "total": 140
+        },
+        {
+          "origin": "PAR",
+          "destination": "QMI",
+          "perDay": 9,
+          "total": 126
+        },
+        {
+          "origin": "PAR",
+          "destination": "RDU",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PAR",
+          "destination": "SEA",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PAR",
+          "destination": "SLC",
+          "perDay": 5,
+          "total": 70
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "params": {
+        "origins": "ADD,AUH,BJS,BOM,DEL,DOH,DXB,FOC",
+        "destinations": "NYC"
+      },
+      "stats": {
+        "originCount": 8,
+        "destinationCount": 1,
+        "totalCombinations": 8,
+        "neededRoutes": 8,
+        "wastedCombinations": 0,
+        "neededResults": 882,
+        "wastedResults": 0,
+        "utilizationPercent": "88.2"
+      },
+      "breakdown": [
+        {
+          "origin": "ADD",
+          "destination": "NYC",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "AUH",
+          "destination": "NYC",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "BJS",
+          "destination": "NYC",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "BOM",
+          "destination": "NYC",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "DEL",
+          "destination": "NYC",
+          "perDay": 12,
+          "total": 168
+        },
+        {
+          "origin": "DOH",
+          "destination": "NYC",
+          "perDay": 8,
+          "total": 112
+        },
+        {
+          "origin": "DXB",
+          "destination": "NYC",
+          "perDay": 12,
+          "total": 168
+        },
+        {
+          "origin": "FOC",
+          "destination": "NYC",
+          "perDay": 4,
+          "total": 56
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "params": {
+        "origins": "TYO",
+        "destinations": "ATL,BOS,CHI,DEN,DFW,DTW,IAH,LAS"
+      },
+      "stats": {
+        "originCount": 1,
+        "destinationCount": 8,
+        "totalCombinations": 8,
+        "neededRoutes": 8,
+        "wastedCombinations": 0,
+        "neededResults": 882,
+        "wastedResults": 0,
+        "utilizationPercent": "88.2"
+      },
+      "breakdown": [
+        {
+          "origin": "TYO",
+          "destination": "ATL",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "TYO",
+          "destination": "BOS",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "TYO",
+          "destination": "CHI",
+          "perDay": 28,
+          "total": 392
+        },
+        {
+          "origin": "TYO",
+          "destination": "DEN",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "TYO",
+          "destination": "DFW",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "TYO",
+          "destination": "DTW",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "TYO",
+          "destination": "IAH",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "TYO",
+          "destination": "LAS",
+          "perDay": 5,
+          "total": 70
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "params": {
+        "origins": "AUH,BLR,BOM,DEL,HKG,HYD,KUL",
+        "destinations": "LON"
+      },
+      "stats": {
+        "originCount": 7,
+        "destinationCount": 1,
+        "totalCombinations": 7,
+        "neededRoutes": 7,
+        "wastedCombinations": 0,
+        "neededResults": 882,
+        "wastedResults": 0,
+        "utilizationPercent": "88.2"
+      },
+      "breakdown": [
+        {
+          "origin": "AUH",
+          "destination": "LON",
+          "perDay": 11,
+          "total": 154
+        },
+        {
+          "origin": "BLR",
+          "destination": "LON",
+          "perDay": 11,
+          "total": 154
+        },
+        {
+          "origin": "BOM",
+          "destination": "LON",
+          "perDay": 11,
+          "total": 154
+        },
+        {
+          "origin": "DEL",
+          "destination": "LON",
+          "perDay": 13,
+          "total": 182
+        },
+        {
+          "origin": "HKG",
+          "destination": "LON",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "HYD",
+          "destination": "LON",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "KUL",
+          "destination": "LON",
+          "perDay": 6,
+          "total": 84
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "params": {
+        "origins": "LON,MXP,PVG",
+        "destinations": "NYC"
+      },
+      "stats": {
+        "originCount": 3,
+        "destinationCount": 1,
+        "totalCombinations": 3,
+        "neededRoutes": 3,
+        "wastedCombinations": 0,
+        "neededResults": 868,
+        "wastedResults": 0,
+        "utilizationPercent": "86.8"
+      },
+      "breakdown": [
+        {
+          "origin": "LON",
+          "destination": "NYC",
+          "perDay": 36,
+          "total": 504
+        },
+        {
+          "origin": "MXP",
+          "destination": "NYC",
+          "perDay": 17,
+          "total": 238
+        },
+        {
+          "origin": "PVG",
+          "destination": "NYC",
+          "perDay": 9,
+          "total": 126
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "params": {
+        "origins": "LON",
+        "destinations": "ATL,BOS,CUN,DTW,LAS,MCO,MSP,QMI,SEA,SLC,TPA"
+      },
+      "stats": {
+        "originCount": 1,
+        "destinationCount": 11,
+        "totalCombinations": 11,
+        "neededRoutes": 11,
+        "wastedCombinations": 0,
+        "neededResults": 854,
+        "wastedResults": 0,
+        "utilizationPercent": "85.4"
+      },
+      "breakdown": [
+        {
+          "origin": "LON",
+          "destination": "ATL",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "LON",
+          "destination": "BOS",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "LON",
+          "destination": "CUN",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "LON",
+          "destination": "DTW",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "LON",
+          "destination": "LAS",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "LON",
+          "destination": "MCO",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "LON",
+          "destination": "MSP",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "LON",
+          "destination": "QMI",
+          "perDay": 11,
+          "total": 154
+        },
+        {
+          "origin": "LON",
+          "destination": "SEA",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "LON",
+          "destination": "SLC",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "LON",
+          "destination": "TPA",
+          "perDay": 5,
+          "total": 70
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "params": {
+        "origins": "IST",
+        "destinations": "ATL,BOS,CHI,DEN,DFW,DTW,IAH,QMI,SEA,WAS,YTO,YUL"
+      },
+      "stats": {
+        "originCount": 1,
+        "destinationCount": 12,
+        "totalCombinations": 12,
+        "neededRoutes": 12,
+        "wastedCombinations": 0,
+        "neededResults": 840,
+        "wastedResults": 0,
+        "utilizationPercent": "84.0"
+      },
+      "breakdown": [
+        {
+          "origin": "IST",
+          "destination": "ATL",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "IST",
+          "destination": "BOS",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "IST",
+          "destination": "CHI",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "IST",
+          "destination": "DEN",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "IST",
+          "destination": "DFW",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "IST",
+          "destination": "DTW",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "IST",
+          "destination": "IAH",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "IST",
+          "destination": "QMI",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "IST",
+          "destination": "SEA",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "IST",
+          "destination": "WAS",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "IST",
+          "destination": "YTO",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "IST",
+          "destination": "YUL",
+          "perDay": 5,
+          "total": 70
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "params": {
+        "origins": "PAR,PHL,PHX,QLA,QMI,RDU,SEA,SLC,TPA,WAS,YTO,YUL",
+        "destinations": "CVG"
+      },
+      "stats": {
+        "originCount": 12,
+        "destinationCount": 1,
+        "totalCombinations": 12,
+        "neededRoutes": 12,
+        "wastedCombinations": 0,
+        "neededResults": 826,
+        "wastedResults": 0,
+        "utilizationPercent": "82.6"
+      },
+      "breakdown": [
+        {
+          "origin": "PAR",
+          "destination": "CVG",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PHL",
+          "destination": "CVG",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "PHX",
+          "destination": "CVG",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "QLA",
+          "destination": "CVG",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "QMI",
+          "destination": "CVG",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "RDU",
+          "destination": "CVG",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "SEA",
+          "destination": "CVG",
+          "perDay": 8,
+          "total": 112
+        },
+        {
+          "origin": "SLC",
+          "destination": "CVG",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "TPA",
+          "destination": "CVG",
+          "perDay": 3,
+          "total": 42
+        },
+        {
+          "origin": "WAS",
+          "destination": "CVG",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "YTO",
+          "destination": "CVG",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "YUL",
+          "destination": "CVG",
+          "perDay": 3,
+          "total": 42
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "params": {
+        "origins": "OSA,PVG,SEL,SGN,SIN,SYD",
+        "destinations": "QLA"
+      },
+      "stats": {
+        "originCount": 6,
+        "destinationCount": 1,
+        "totalCombinations": 6,
+        "neededRoutes": 6,
+        "wastedCombinations": 0,
+        "neededResults": 812,
+        "wastedResults": 0,
+        "utilizationPercent": "81.2"
+      },
+      "breakdown": [
+        {
+          "origin": "OSA",
+          "destination": "QLA",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "PVG",
+          "destination": "QLA",
+          "perDay": 11,
+          "total": 154
+        },
+        {
+          "origin": "SEL",
+          "destination": "QLA",
+          "perDay": 12,
+          "total": 168
+        },
+        {
+          "origin": "SGN",
+          "destination": "QLA",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "SIN",
+          "destination": "QLA",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "SYD",
+          "destination": "QLA",
+          "perDay": 17,
+          "total": 238
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "params": {
+        "origins": "TYO",
+        "destinations": "LON,MSP,SEA,WAS,YTO,YUL"
+      },
+      "stats": {
+        "originCount": 1,
+        "destinationCount": 6,
+        "totalCombinations": 6,
+        "neededRoutes": 6,
+        "wastedCombinations": 0,
+        "neededResults": 742,
+        "wastedResults": 0,
+        "utilizationPercent": "74.2"
+      },
+      "breakdown": [
+        {
+          "origin": "TYO",
+          "destination": "LON",
+          "perDay": 12,
+          "total": 168
+        },
+        {
+          "origin": "TYO",
+          "destination": "MSP",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "TYO",
+          "destination": "SEA",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "TYO",
+          "destination": "WAS",
+          "perDay": 13,
+          "total": 182
+        },
+        {
+          "origin": "TYO",
+          "destination": "YTO",
+          "perDay": 13,
+          "total": 182
+        },
+        {
+          "origin": "TYO",
+          "destination": "YUL",
+          "perDay": 5,
+          "total": 70
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "params": {
+        "origins": "HAN",
+        "destinations": "OSA,PAR,PVG,SEL,SGN,SIN,SYD,TPE,TYO,XMN"
+      },
+      "stats": {
+        "originCount": 1,
+        "destinationCount": 10,
+        "totalCombinations": 10,
+        "neededRoutes": 10,
+        "wastedCombinations": 0,
+        "neededResults": 728,
+        "wastedResults": 0,
+        "utilizationPercent": "72.8"
+      },
+      "breakdown": [
+        {
+          "origin": "HAN",
+          "destination": "OSA",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "HAN",
+          "destination": "PAR",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "HAN",
+          "destination": "PVG",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "HAN",
+          "destination": "SEL",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "HAN",
+          "destination": "SGN",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "HAN",
+          "destination": "SIN",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "HAN",
+          "destination": "SYD",
+          "perDay": 3,
+          "total": 42
+        },
+        {
+          "origin": "HAN",
+          "destination": "TPE",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "HAN",
+          "destination": "TYO",
+          "perDay": 13,
+          "total": 182
+        },
+        {
+          "origin": "HAN",
+          "destination": "XMN",
+          "perDay": 2,
+          "total": 28
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "params": {
+        "origins": "TPE,TYO,XMN",
+        "destinations": "QLA"
+      },
+      "stats": {
+        "originCount": 3,
+        "destinationCount": 1,
+        "totalCombinations": 3,
+        "neededRoutes": 3,
+        "wastedCombinations": 0,
+        "neededResults": 714,
+        "wastedResults": 0,
+        "utilizationPercent": "71.4"
+      },
+      "breakdown": [
+        {
+          "origin": "TPE",
+          "destination": "QLA",
+          "perDay": 14,
+          "total": 196
+        },
+        {
+          "origin": "TYO",
+          "destination": "QLA",
+          "perDay": 33,
+          "total": 462
+        },
+        {
+          "origin": "XMN",
+          "destination": "QLA",
+          "perDay": 4,
+          "total": 56
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "params": {
+        "origins": "FRA,HKG,IST,MUC",
+        "destinations": "NYC,DTW"
+      },
+      "stats": {
+        "originCount": 4,
+        "destinationCount": 2,
+        "totalCombinations": 8,
+        "neededRoutes": 5,
+        "wastedCombinations": 3,
+        "neededResults": 728,
+        "wastedResults": 238,
+        "utilizationPercent": "96.6"
+      },
+      "breakdown": [
+        {
+          "origin": "FRA",
+          "destination": "NYC",
+          "perDay": 18,
+          "total": 252
+        },
+        {
+          "origin": "FRA",
+          "destination": "DTW",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "HKG",
+          "destination": "NYC",
+          "perDay": 8,
+          "total": 112
+        },
+        {
+          "origin": "IST",
+          "destination": "NYC",
+          "perDay": 10,
+          "total": 140
+        },
+        {
+          "origin": "IST",
+          "destination": "DTW",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "MUC",
+          "destination": "DTW",
+          "perDay": 4,
+          "total": 56
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "params": {
+        "origins": "LON,PAR",
+        "destinations": "WAS,YTO,YUL"
+      },
+      "stats": {
+        "originCount": 2,
+        "destinationCount": 3,
+        "totalCombinations": 6,
+        "neededRoutes": 5,
+        "wastedCombinations": 1,
+        "neededResults": 854,
+        "wastedResults": 70,
+        "utilizationPercent": "92.4"
+      },
+      "breakdown": [
+        {
+          "origin": "LON",
+          "destination": "WAS",
+          "perDay": 21,
+          "total": 294
+        },
+        {
+          "origin": "LON",
+          "destination": "YTO",
+          "perDay": 13,
+          "total": 182
+        },
+        {
+          "origin": "PAR",
+          "destination": "WAS",
+          "perDay": 11,
+          "total": 154
+        },
+        {
+          "origin": "PAR",
+          "destination": "YTO",
+          "perDay": 11,
+          "total": 154
+        },
+        {
+          "origin": "PAR",
+          "destination": "YUL",
+          "perDay": 5,
+          "total": 70
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "params": {
+        "origins": "AUH,BJS,DEL,HKG,OSA,PVG,TPE,ADD",
+        "destinations": "YTO,WAS"
+      },
+      "stats": {
+        "originCount": 8,
+        "destinationCount": 2,
+        "totalCombinations": 16,
+        "neededRoutes": 9,
+        "wastedCombinations": 7,
+        "neededResults": 644,
+        "wastedResults": 336,
+        "utilizationPercent": "98.0"
+      },
+      "breakdown": [
+        {
+          "origin": "AUH",
+          "destination": "YTO",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "AUH",
+          "destination": "WAS",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "BJS",
+          "destination": "YTO",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "BJS",
+          "destination": "WAS",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "DEL",
+          "destination": "YTO",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "HKG",
+          "destination": "YTO",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "OSA",
+          "destination": "YTO",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "PVG",
+          "destination": "YTO",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "TPE",
+          "destination": "YTO",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "ADD",
+          "destination": "WAS",
+          "perDay": 3,
+          "total": 42
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "params": {
+        "origins": "AUH,HKG",
+        "destinations": "ATL,BOS,CHI,CLT,WAS,DFW"
+      },
+      "stats": {
+        "originCount": 2,
+        "destinationCount": 6,
+        "totalCombinations": 12,
+        "neededRoutes": 8,
+        "wastedCombinations": 4,
+        "neededResults": 658,
+        "wastedResults": 280,
+        "utilizationPercent": "93.8"
+      },
+      "breakdown": [
+        {
+          "origin": "AUH",
+          "destination": "ATL",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "AUH",
+          "destination": "BOS",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "AUH",
+          "destination": "CHI",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "AUH",
+          "destination": "CLT",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "AUH",
+          "destination": "WAS",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "HKG",
+          "destination": "BOS",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "HKG",
+          "destination": "CHI",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "HKG",
+          "destination": "DFW",
+          "perDay": 8,
+          "total": 112
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "params": {
+        "origins": "PVG,SIN",
+        "destinations": "LON,DFW,DTW,LAS,SEA"
+      },
+      "stats": {
+        "originCount": 2,
+        "destinationCount": 5,
+        "totalCombinations": 10,
+        "neededRoutes": 7,
+        "wastedCombinations": 3,
+        "neededResults": 756,
+        "wastedResults": 168,
+        "utilizationPercent": "92.4"
+      },
+      "breakdown": [
+        {
+          "origin": "PVG",
+          "destination": "LON",
+          "perDay": 15,
+          "total": 210
+        },
+        {
+          "origin": "PVG",
+          "destination": "DFW",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PVG",
+          "destination": "DTW",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "PVG",
+          "destination": "LAS",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "PVG",
+          "destination": "SEA",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "SIN",
+          "destination": "LON",
+          "perDay": 15,
+          "total": 210
+        },
+        {
+          "origin": "SIN",
+          "destination": "SEA",
+          "perDay": 6,
+          "total": 84
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "params": {
+        "origins": "TYO,XMN,SEL,DXB",
+        "destinations": "PAR,YUL"
+      },
+      "stats": {
+        "originCount": 4,
+        "destinationCount": 2,
+        "totalCombinations": 8,
+        "neededRoutes": 4,
+        "wastedCombinations": 4,
+        "neededResults": 882,
+        "wastedResults": 70,
+        "utilizationPercent": "95.2"
+      },
+      "breakdown": [
+        {
+          "origin": "TYO",
+          "destination": "PAR",
+          "perDay": 26,
+          "total": 364
+        },
+        {
+          "origin": "TYO",
+          "destination": "YUL",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "XMN",
+          "destination": "PAR",
+          "perDay": 3,
+          "total": 42
+        },
+        {
+          "origin": "SEL",
+          "destination": "PAR",
+          "perDay": 10,
+          "total": 140
+        },
+        {
+          "origin": "SEL",
+          "destination": "YUL",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "DXB",
+          "destination": "PAR",
+          "perDay": 9,
+          "total": 126
+        },
+        {
+          "origin": "DXB",
+          "destination": "YUL",
+          "perDay": 5,
+          "total": 70
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "params": {
+        "origins": "DOH,DEL,MXP",
+        "destinations": "WAS,YTO,YUL,CHI,BOS"
+      },
+      "stats": {
+        "originCount": 3,
+        "destinationCount": 5,
+        "totalCombinations": 15,
+        "neededRoutes": 6,
+        "wastedCombinations": 9,
+        "neededResults": 686,
+        "wastedResults": 308,
+        "utilizationPercent": "99.4"
+      },
+      "breakdown": [
+        {
+          "origin": "DOH",
+          "destination": "WAS",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "DOH",
+          "destination": "YTO",
+          "perDay": 8,
+          "total": 112
+        },
+        {
+          "origin": "DOH",
+          "destination": "YUL",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "DOH",
+          "destination": "CHI",
+          "perDay": 6,
+          "total": 84
+        },
+        {
+          "origin": "DOH",
+          "destination": "BOS",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "DEL",
+          "destination": "YTO",
+          "perDay": 5,
+          "total": 70
+        },
+        {
+          "origin": "DEL",
+          "destination": "YUL",
+          "perDay": 3,
+          "total": 42
+        },
+        {
+          "origin": "DEL",
+          "destination": "CHI",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "MXP",
+          "destination": "BOS",
+          "perDay": 3,
+          "total": 42
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "params": {
+        "origins": "TPE",
+        "destinations": "CHI,DFW,IAH,PHX,SEA"
+      },
+      "stats": {
+        "originCount": 1,
+        "destinationCount": 5,
+        "totalCombinations": 5,
+        "neededRoutes": 5,
+        "wastedCombinations": 0,
+        "neededResults": 238,
+        "wastedResults": 0,
+        "utilizationPercent": "23.8"
+      },
+      "breakdown": [
+        {
+          "origin": "TPE",
+          "destination": "CHI",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "TPE",
+          "destination": "DFW",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "TPE",
+          "destination": "IAH",
+          "perDay": 2,
+          "total": 28
+        },
+        {
+          "origin": "TPE",
+          "destination": "PHX",
+          "perDay": 3,
+          "total": 42
+        },
+        {
+          "origin": "TPE",
+          "destination": "SEA",
+          "perDay": 8,
+          "total": 112
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "params": {
+        "origins": "FRA,MUC,MXP",
+        "destinations": "ATL"
+      },
+      "stats": {
+        "originCount": 3,
+        "destinationCount": 1,
+        "totalCombinations": 3,
+        "neededRoutes": 3,
+        "wastedCombinations": 0,
+        "neededResults": 210,
+        "wastedResults": 0,
+        "utilizationPercent": "21.0"
+      },
+      "breakdown": [
+        {
+          "origin": "FRA",
+          "destination": "ATL",
+          "perDay": 7,
+          "total": 98
+        },
+        {
+          "origin": "MUC",
+          "destination": "ATL",
+          "perDay": 4,
+          "total": 56
+        },
+        {
+          "origin": "MXP",
+          "destination": "ATL",
+          "perDay": 4,
+          "total": 56
+        }
+      ]
+    }
+  ]
+}

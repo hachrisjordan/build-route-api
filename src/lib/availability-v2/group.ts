@@ -9,6 +9,20 @@ export async function groupAndDeduplicate(mergedMap: Map<string, MergedEntry>): 
   // Initialize city groups to get city codes
   await initializeCityGroups();
   
+  // Pre-compute all unique airport city codes to avoid repeated lookups
+  const cityCodeCache = new Map<string, string>();
+  const uniqueAirports = new Set<string>();
+  
+  for (const entry of mergedMap.values()) {
+    uniqueAirports.add(entry.originAirport);
+    uniqueAirports.add(entry.destinationAirport);
+  }
+  
+  // Cache all city code lookups once
+  for (const airport of uniqueAirports) {
+    cityCodeCache.set(airport, getAirportCityCode(airport));
+  }
+  
   const finalGroupedMap = new Map<string, GroupedResult>();
 
   for (const entry of mergedMap.values()) {
@@ -16,9 +30,9 @@ export async function groupAndDeduplicate(mergedMap: Map<string, MergedEntry>): 
     const alliance = ALLIANCE_MAP.get(flightPrefix);
     if (!alliance) continue;
 
-    // Get city codes for airports (if no city group, city = airport)
-    const originCity = getAirportCityCode(entry.originAirport);
-    const destinationCity = getAirportCityCode(entry.destinationAirport);
+    // Use cached city codes (if no city group, city = airport)
+    const originCity = cityCodeCache.get(entry.originAirport)!;
+    const destinationCity = cityCodeCache.get(entry.destinationAirport)!;
 
     const groupKey = `${entry.originAirport}|${entry.destinationAirport}|${entry.date}|${alliance}`;
     const existing = finalGroupedMap.get(groupKey);
@@ -47,6 +61,14 @@ export async function groupAndDeduplicate(mergedMap: Map<string, MergedEntry>): 
           JCount: entry.JCount,
           FCount: entry.FCount,
           distance: entry.distance,
+          YFare: [...entry.YFare], // Copy array for safety in grouping phase
+          WFare: [...entry.WFare],
+          JFare: [...entry.JFare],
+          FFare: [...entry.FFare],
+          YPartner: entry.YPartner,
+          WPartner: entry.WPartner,
+          JPartner: entry.JPartner,
+          FPartner: entry.FPartner,
         }]
       });
     } else {
@@ -66,6 +88,14 @@ export async function groupAndDeduplicate(mergedMap: Map<string, MergedEntry>): 
         JCount: entry.JCount,
         FCount: entry.FCount,
         distance: entry.distance,
+        YFare: entry.YFare, // Direct reference - arrays are already copied in merge
+        WFare: entry.WFare,
+        JFare: entry.JFare,
+        FFare: entry.FFare,
+        YPartner: entry.YPartner,
+        WPartner: entry.WPartner,
+        JPartner: entry.JPartner,
+        FPartner: entry.FPartner,
       });
     }
   }
@@ -83,6 +113,16 @@ export async function groupAndDeduplicate(mergedMap: Map<string, MergedEntry>): 
         existingFlight.WCount += flight.WCount;
         existingFlight.JCount += flight.JCount;
         existingFlight.FCount += flight.FCount;
+        // Combine fare classes efficiently (keep duplicates)
+        if (flight.YFare.length > 0) existingFlight.YFare.push(...flight.YFare);
+        if (flight.WFare.length > 0) existingFlight.WFare.push(...flight.WFare);
+        if (flight.JFare.length > 0) existingFlight.JFare.push(...flight.JFare);
+        if (flight.FFare.length > 0) existingFlight.FFare.push(...flight.FFare);
+        // Combine partner booleans using OR logic (if any flight has partner=true, result is true)
+        existingFlight.YPartner = existingFlight.YPartner || flight.YPartner;
+        existingFlight.WPartner = existingFlight.WPartner || flight.WPartner;
+        existingFlight.JPartner = existingFlight.JPartner || flight.JPartner;
+        existingFlight.FPartner = existingFlight.FPartner || flight.FPartner;
         if (!existingFlight.Aircraft || existingFlight.Aircraft.trim() === '') {
           existingFlight.Aircraft = flight.Aircraft;
         }

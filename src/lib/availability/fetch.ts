@@ -20,18 +20,27 @@ export interface AvailabilityTaskResult {
   data: any;
 }
 
+export interface RouteGroupWithDateRange {
+  routeId: string;
+  dateRange?: { start: string; end: string };
+}
+
 export async function fetchAvailabilityForGroups(
-  routeGroups: string[],
+  routeGroups: string[] | RouteGroupWithDateRange[],
   params: AvailabilityFetchParams
 ): Promise<{ results: AvailabilityTaskResult[]; minRateLimitRemaining: number | null; minRateLimitReset: number | null }> {
   let minRateLimitRemaining: number | null = null;
   let minRateLimitReset: number | null = null;
 
-  const availabilityTasks = routeGroups.map((routeId) => async () => {
+  const availabilityTasks = routeGroups.map((group) => async () => {
+    // Support both string[] and RouteGroupWithDateRange[] formats
+    const routeId = typeof group === 'string' ? group : group.routeId;
+    const dateRange = typeof group === 'string' ? undefined : group.dateRange;
+    
     const bodyParams: Record<string, any> = {
       routeId,
-      startDate: params.startDate,
-      endDate: params.endDate,
+      startDate: dateRange?.start || params.startDate,
+      endDate: dateRange?.end || params.endDate,
       binbin: params.binbin, // Always fetch pricing data for build-itineraries
       ...(params.cabin ? { cabin: params.cabin } : {}),
       ...(params.carriers ? { carriers: params.carriers } : {}),

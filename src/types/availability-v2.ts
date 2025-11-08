@@ -27,6 +27,10 @@ export interface ProcessedTrip {
   Source: string;
   Cabin: string;
   ThresholdCount: number;
+  YFare: string[];
+  WFare: string[];
+  JFare: string[];
+  FFare: string[];
 }
 
 export interface MergedEntry {
@@ -45,6 +49,14 @@ export interface MergedEntry {
   WCount: number;
   JCount: number;
   FCount: number;
+  YFare: string[];
+  WFare: string[];
+  JFare: string[];
+  FFare: string[];
+  YPartner: boolean;
+  WPartner: boolean;
+  JPartner: boolean;
+  FPartner: boolean;
 }
 
 export interface FlightEntry {
@@ -58,6 +70,14 @@ export interface FlightEntry {
   JCount: number;
   FCount: number;
   distance: number;
+  YFare: string[];
+  WFare: string[];
+  JFare: string[];
+  FFare: string[];
+  YPartner: boolean;
+  WPartner: boolean;
+  JPartner: boolean;
+  FPartner: boolean;
 }
 
 export interface GroupedResult {

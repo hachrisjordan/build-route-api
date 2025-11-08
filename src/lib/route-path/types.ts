@@ -77,6 +77,7 @@ export interface RouteCalculationInput {
   supabase: SupabaseClient;
   cacheService: ICacheService;
   sharedPathsKey?: string;
+  binbin?: boolean;
 }
 
 export interface RouteCalculationResult {

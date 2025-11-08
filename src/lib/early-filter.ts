@@ -4,7 +4,6 @@ import { getHaversineDistance } from '@/lib/route-helpers';
 
 export function filterUnreliableSegments(
   segmentPool: Record<string, AvailabilityGroup[]>,
-  reliability: Record<string, { min_count: number; exemption?: string }>,
   origin: string,
   destination: string,
   minReliabilityPercent: number,
@@ -25,19 +24,11 @@ export function filterUnreliableSegments(
         if (isOriginOrDestinationSegment) {
           const minReliability = Math.max(0, Math.min(100, minReliabilityPercent)) / 100;
           const maxUnreliableAllowed = (1 - minReliability) * directDistanceMiles * 2;
-          const airlineCodeOD = flight.FlightNumbers.slice(0, 2).toUpperCase();
-          const relOD = reliability[airlineCodeOD];
-          const minCountOD = relOD?.min_count ?? 1;
-          const exemptionOD = relOD?.exemption || '';
-          const minYOD = exemptionOD.includes('Y') ? 1 : minCountOD;
-          const minWOD = exemptionOD.includes('W') ? 1 : minCountOD;
-          const minJOD = exemptionOD.includes('J') ? 1 : minCountOD;
-          const minFOD = exemptionOD.includes('F') ? 1 : minCountOD;
           const isReliableOD = (
-            flight.YCount >= minYOD ||
-            flight.WCount >= minWOD ||
-            flight.JCount >= minJOD ||
-            flight.FCount >= minFOD
+            flight.YPartner ||
+            flight.WPartner ||
+            flight.JPartner ||
+            flight.FPartner
           );
           if (!isReliableOD && typeof segOrigin === 'string' && typeof segDestination === 'string') {
             const oAp = airportByIata[segOrigin];
@@ -53,19 +44,11 @@ export function filterUnreliableSegments(
           continue;
         }
 
-        const airlineCode = flight.FlightNumbers.slice(0, 2).toUpperCase();
-        const rel = reliability[airlineCode];
-        const minCount = rel?.min_count ?? 1;
-        const exemption = rel?.exemption || '';
-        const minY = exemption.includes('Y') ? 1 : minCount;
-        const minW = exemption.includes('W') ? 1 : minCount;
-        const minJ = exemption.includes('J') ? 1 : minCount;
-        const minF = exemption.includes('F') ? 1 : minCount;
         const isReliable = (
-          flight.YCount >= minY ||
-          flight.WCount >= minW ||
-          flight.JCount >= minJ ||
-          flight.FCount >= minF
+          flight.YPartner ||
+          flight.WPartner ||
+          flight.JPartner ||
+          flight.FPartner
         );
         if (isReliable) filteredFlights.push(flight);
       }
@@ -80,23 +63,13 @@ export function filterUnreliableSegments(
   return filtered;
 }
 
-export function isUnreliableFlight(
-  flight: AvailabilityFlight,
-  reliability: Record<string, { min_count: number; exemption?: string }>
-) {
-  const code = flight.FlightNumbers.slice(0, 2).toUpperCase();
-  const rel = reliability[code];
-  const min = rel?.min_count ?? 1;
-  const exemption = rel?.exemption || '';
-  const minY = exemption.includes('Y') ? 1 : min;
-  const minW = exemption.includes('W') ? 1 : min;
-  const minJ = exemption.includes('J') ? 1 : min;
-  const minF = exemption.includes('F') ? 1 : min;
+export function isUnreliableFlight(flight: AvailabilityFlight) {
+  // A flight is unreliable only when ALL Partner fields are false
   return (
-    (flight.YCount < minY) &&
-    (flight.WCount < minW) &&
-    (flight.JCount < minJ) &&
-    (flight.FCount < minF)
+    !flight.YPartner &&
+    !flight.WPartner &&
+    !flight.JPartner &&
+    !flight.FPartner
   );
 }
 

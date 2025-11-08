@@ -3,9 +3,8 @@ import type { AvailabilityFlight } from '@/types/availability';
 export function filterReliableItineraries(
   itineraries: Record<string, Record<string, string[][]>>,
   flights: Map<string, AvailabilityFlight>,
-  reliability: Record<string, { min_count: number; exemption?: string }>,
   minReliabilityPercent: number,
-  isUnreliableFlight: (f: AvailabilityFlight, rel: Record<string, { min_count: number; exemption?: string }>) => boolean
+  isUnreliableFlight: (f: AvailabilityFlight) => boolean
 ) {
   const filtered: Record<string, Record<string, string[][]>> = {};
   const usedFlightUUIDs = new Set<string>();
@@ -20,7 +19,7 @@ export function filterReliableItineraries(
         const flightsArr = itin.map(uuid => flights.get(uuid)).filter(Boolean) as AvailabilityFlight[];
         if (!flightsArr.length) continue;
         const totalDuration = flightsArr.reduce((sum, f) => sum + f.TotalDuration, 0);
-        const unreliableDuration = flightsArr.filter(f => isUnreliableFlight(f, reliability)).reduce((sum, f) => sum + f.TotalDuration, 0);
+        const unreliableDuration = flightsArr.filter(f => isUnreliableFlight(f)).reduce((sum, f) => sum + f.TotalDuration, 0);
         if (unreliableDuration === 0) {
           keptItins.push(itin);
           itin.forEach(uuid => usedFlightUUIDs.add(uuid));

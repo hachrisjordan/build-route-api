@@ -18,16 +18,15 @@ export function getSortValue(
   card: any,
   flights: Record<string, any>,
   sortBy: string,
-  reliability: Record<string, { min_count: number; exemption?: string }>,
   minReliabilityPercent: number,
-  getClassPercentages: (flightsArr: any[], reliability: any, minReliabilityPercent: number) => { y: number; w: number; j: number; f: number }
+  getClassPercentages: (flightsArr: any[], minReliabilityPercent: number) => { y: number; w: number; j: number; f: number }
 ) {
   const flightObjs = card.itinerary.map((id: string) => flights[id]);
   if (sortBy === 'duration') return getTotalDuration(flightObjs);
   if (sortBy === 'departure') return new Date(flightObjs[0].DepartsAt).getTime();
   if (sortBy === 'arrival') return new Date(flightObjs[flightObjs.length - 1].ArrivesAt).getTime();
   if (['y', 'w', 'j', 'f'].includes(sortBy)) {
-    return getClassPercentages(flightObjs, reliability, minReliabilityPercent)[sortBy as 'y' | 'w' | 'j' | 'f'];
+    return getClassPercentages(flightObjs, minReliabilityPercent)[sortBy as 'y' | 'w' | 'j' | 'f'];
   }
   return 0;
 }
@@ -35,7 +34,6 @@ export function getSortValue(
 export function filterSortSearchPaginate(
   cards: Array<{ route: string; date: string; itinerary: string[] }>,
   flights: Record<string, any>,
-  reliability: Record<string, { min_count: number; exemption?: string }>,
   minReliabilityPercent: number,
   query: {
     stops?: number[];
@@ -64,7 +62,7 @@ export function filterSortSearchPaginate(
   },
   getSortValueFn: typeof getSortValue,
   getTotalDurationFn: typeof getTotalDuration,
-  getClassPercentages: (flightsArr: any[], reliability: any, minReliabilityPercent: number) => { y: number; w: number; j: number; f: number }
+  getClassPercentages: (flightsArr: any[], minReliabilityPercent: number) => { y: number; w: number; j: number; f: number }
 ) {
   let result = cards;
   if (query.stops && query.stops.length > 0) {
@@ -97,7 +95,7 @@ export function filterSortSearchPaginate(
     result = result.filter(card => {
       const flightsArr = card.itinerary.map(fid => flights[fid]).filter(Boolean);
       if (flightsArr.length === 0) return false;
-      const { y, w, j, f } = getClassPercentages(flightsArr, reliability, minReliabilityPercent);
+      const { y, w, j, f } = getClassPercentages(flightsArr, minReliabilityPercent);
       return (
         (typeof query.minYPercent !== 'number' || y >= query.minYPercent) &&
         (typeof query.minWPercent !== 'number' || w >= query.minWPercent) &&
@@ -160,8 +158,8 @@ export function filterSortSearchPaginate(
   }
   if (query.sortBy) {
     result = result.sort((a, b) => {
-      const aVal = getSortValueFn(a, flights, query.sortBy!, reliability, minReliabilityPercent, getClassPercentages);
-      const bVal = getSortValueFn(b, flights, query.sortBy!, reliability, minReliabilityPercent, getClassPercentages);
+      const aVal = getSortValueFn(a, flights, query.sortBy!, minReliabilityPercent, getClassPercentages);
+      const bVal = getSortValueFn(b, flights, query.sortBy!, minReliabilityPercent, getClassPercentages);
       if (aVal !== bVal) {
         if (["arrival", "y", "w", "j", "f"].includes(query.sortBy!)) {
           return query.sortOrder === 'asc' ? bVal - aVal : bVal - aVal;

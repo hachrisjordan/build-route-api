@@ -11,28 +11,25 @@ import type { FullRoutePathResult } from '@/types/route';
  */
 export function matchPricingToFlight(
   flight: AvailabilityFlight,
-  pricingPool: Map<string, PricingEntry>,
+  pricingIndex: { byFlightAndRoute: Map<string, PricingEntry[]> },
   toleranceMinutes: number = 5
 ): PricingEntry | null {
+  const flightKey = flight.FlightNumbers.toLowerCase();
+  const routeKey = `${flight.originAirport}-${flight.destinationAirport}`;
+  const combinedKey = `${flightKey}:${routeKey}`;
+
+  // Get only relevant pricing entries (O(1) lookup instead of O(n))
+  const candidates = pricingIndex.byFlightAndRoute.get(combinedKey);
+  if (!candidates || candidates.length === 0) {
+    return null;
+  }
+
   const flightDeparture = new Date(flight.DepartsAt).getTime();
   const flightArrival = new Date(flight.ArrivesAt).getTime();
-  const tolerance = toleranceMinutes * 60 * 1000; // Convert to milliseconds
+  const tolerance = toleranceMinutes * 60 * 1000;
 
-  // Match flight against pricing entries
-
-  for (const pricingEntry of pricingPool.values()) {
-    // Check flight numbers match (case insensitive)
-    if (flight.FlightNumbers.toLowerCase() !== pricingEntry.flightnumbers.toLowerCase()) {
-      continue;
-    }
-
-    // Check airports match
-    if (flight.originAirport !== pricingEntry.departingAirport || 
-        flight.destinationAirport !== pricingEntry.arrivingAirport) {
-      continue;
-    }
-
-    // Check times match within tolerance
+  // Now only iterate through matching candidates (typically 1-3 entries)
+  for (const pricingEntry of candidates) {
     const pricingDeparture = new Date(pricingEntry.DepartsAt).getTime();
     const pricingArrival = new Date(pricingEntry.ArrivesAt).getTime();
 
@@ -55,7 +52,7 @@ export function matchPricingToFlight(
 export function extractSegmentPricing(
   flights: AvailabilityFlight[],
   routeStructure: FullRoutePathResult | null,
-  pricingPool: Map<string, PricingEntry>,
+  pricingIndex: { byFlightAndRoute: Map<string, PricingEntry[]> },
   routeTimings?: {
     O: string | null;
     A: string | null;
@@ -78,40 +75,37 @@ export function extractSegmentPricing(
 
   const pricingIds: string[] = [];
 
-  // Helper to match pricing by route segment info
+  // Helper to match pricing by route segment info using indexed lookup
   const matchPricingBySegment = (segmentFlights: string | null, departureTime: string | null, arrivalTime: string | null): PricingEntry | null => {
     if (!segmentFlights || !departureTime || !arrivalTime) {
       return null;
     }
 
-    // Match pricing by segment info
+    // Extract flight numbers and route from segment flights
+    const flightNumbers = segmentFlights.split(', ')[0]; // Take first flight number
+    if (!flightNumbers) return null;
+    const flightKey = flightNumbers.toLowerCase();
+    
+    // Try to find route by checking all available routes for this flight
+    for (const [combinedKey, candidates] of pricingIndex.byFlightAndRoute) {
+      if (combinedKey.startsWith(`${flightKey}:`)) {
+        // Check if departure time matches (within 5 minutes tolerance)
+        const expectedDeparture = new Date(departureTime).getTime();
+        const expectedArrival = new Date(arrivalTime).getTime();
+        const tolerance = 5 * 60 * 1000; // 5 minutes in milliseconds
 
-    for (const pricingEntry of pricingPool.values()) {
-      // Check if flight numbers match exactly
-      if (pricingEntry.flightnumbers !== segmentFlights) {
-        continue;
+        for (const pricingEntry of candidates) {
+          const pricingDeparture = new Date(pricingEntry.DepartsAt).getTime();
+          const pricingArrival = new Date(pricingEntry.ArrivesAt).getTime();
+          
+          const departureDiff = Math.abs(pricingDeparture - expectedDeparture);
+          const arrivalDiff = Math.abs(pricingArrival - expectedArrival);
+
+          if (departureDiff <= tolerance && arrivalDiff <= tolerance) {
+            return pricingEntry;
+          }
+        }
       }
-
-      // Check if departure time matches (within 5 minutes tolerance)
-      const pricingDeparture = new Date(pricingEntry.DepartsAt).getTime();
-      const expectedDeparture = new Date(departureTime).getTime();
-      const departureDiff = Math.abs(pricingDeparture - expectedDeparture);
-      const tolerance = 5 * 60 * 1000; // 5 minutes in milliseconds
-
-      if (departureDiff > tolerance) {
-        continue;
-      }
-
-      // Check if arrival time matches (within 5 minutes tolerance)
-      const pricingArrival = new Date(pricingEntry.ArrivesAt).getTime();
-      const expectedArrival = new Date(arrivalTime).getTime();
-      const arrivalDiff = Math.abs(pricingArrival - expectedArrival);
-
-      if (arrivalDiff > tolerance) {
-        continue;
-      }
-
-      return pricingEntry;
     }
 
     return null;
@@ -150,13 +144,13 @@ export function extractSegmentPricing(
  */
 export function getAllPricingForItinerary(
   flights: AvailabilityFlight[],
-  pricingPool: Map<string, PricingEntry>
+  pricingIndex: { byFlightAndRoute: Map<string, PricingEntry[]> }
 ): PricingEntry[] {
   const pricingEntries: PricingEntry[] = [];
   const seenIds = new Set<string>();
 
   for (const flight of flights) {
-    const pricing = matchPricingToFlight(flight, pricingPool);
+    const pricing = matchPricingToFlight(flight, pricingIndex);
     if (pricing && !seenIds.has(pricing.id)) {
       pricingEntries.push(pricing);
       seenIds.add(pricing.id);

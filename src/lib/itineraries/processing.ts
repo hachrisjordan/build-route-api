@@ -140,13 +140,13 @@ export function extractRouteTimings(
 
     // Determine which segment this flight belongs to
     // O-A segment: Only if O exists and this flight starts from O
-    if (O && matchesWaypoint(origin, O)) {
+    if (O && origin && matchesWaypoint(origin, O)) {
       oaFlightNumbers.push(flightNumber);
       continue;
     }
 
     // B-D segment: Only if D exists and this flight ends at D
-    if (D && matchesWaypoint(destination, D)) {
+    if (D && destination && matchesWaypoint(destination, D)) {
       bdFlightNumbers.push(flightNumber);
       continue;
     }
@@ -173,7 +173,7 @@ export function extractRouteTimings(
     const destination = flight.destinationAirport;
 
     // O waypoint
-    if (O && matchesWaypoint(origin, O)) {
+    if (O && origin && matchesWaypoint(origin, O)) {
       if (result.ODepartureTime === null) {
         result.ODepartureTime = formatDate(flight.DepartsAt);
       }
@@ -181,26 +181,26 @@ export function extractRouteTimings(
 
     // A waypoint
     if (A) {
-      if (matchesWaypoint(destination, A) && result.AArrivalTime === null) {
+      if (destination && matchesWaypoint(destination, A) && result.AArrivalTime === null) {
         result.AArrivalTime = formatDate(flight.ArrivesAt);
       }
-      if (matchesWaypoint(origin, A) && result.ADepartureTime === null) {
+      if (origin && matchesWaypoint(origin, A) && result.ADepartureTime === null) {
         result.ADepartureTime = formatDate(flight.DepartsAt);
       }
     }
 
     // B waypoint
     if (B) {
-      if (matchesWaypoint(destination, B) && result.BArrivalTime === null) {
+      if (destination && matchesWaypoint(destination, B) && result.BArrivalTime === null) {
         result.BArrivalTime = formatDate(flight.ArrivesAt);
       }
-      if (matchesWaypoint(origin, B) && result.BDepartureTime === null) {
+      if (origin && matchesWaypoint(origin, B) && result.BDepartureTime === null) {
         result.BDepartureTime = formatDate(flight.DepartsAt);
       }
     }
 
     // D waypoint
-    if (D && matchesWaypoint(destination, D)) {
+    if (D && destination && matchesWaypoint(destination, D)) {
       result.DArrivalTime = formatDate(flight.ArrivesAt);
     }
   }
@@ -211,11 +211,10 @@ export function extractRouteTimings(
 export function precomputeItineraryMetadata(
   itineraries: Record<string, Record<string, string[][]>>,
   flights: Record<string, AvailabilityFlight>,
-  reliability: Record<string, { min_count: number; exemption?: string }>,
   minReliabilityPercent: number,
-  getClassPercentages: (flightsArr: any[], reliability: any, minReliabilityPercent: number) => { y: number; w: number; j: number; f: number },
+  getClassPercentages: (flightsArr: any[], minReliabilityPercent: number) => { y: number; w: number; j: number; f: number },
   routeStructureMap?: Map<string, FullRoutePathResult>,
-  pricingPool?: Map<string, PricingEntry>
+  pricingIndex?: { byFlightAndRoute: Map<string, PricingEntry[]> }
 ): OptimizedItinerary[] {
   const optimized: OptimizedItinerary[] = [];
   for (const routeKey of Object.keys(itineraries)) {
@@ -245,7 +244,7 @@ export function precomputeItineraryMetadata(
         const departureTime = new Date(flightObjs[0]!.DepartsAt).getTime();
         const arrivalTime = new Date(flightObjs[flightObjs.length - 1]!.ArrivesAt).getTime();
         const airlineCodes = flightObjs.map(f => f!.FlightNumbers.slice(0, 2).toUpperCase());
-        const classPercentages = getClassPercentages(flightObjs, reliability, minReliabilityPercent);
+        const classPercentages = getClassPercentages(flightObjs, minReliabilityPercent);
         
         // Extract route timings based on O-A-B-D structure
         const routeTimings = extractRouteTimings(flightObjs as AvailabilityFlight[], routeStructure);
@@ -253,8 +252,8 @@ export function precomputeItineraryMetadata(
         // Extract pricing information if pricing pool is available
         let pricingId: string[] | undefined;
         
-        if (pricingPool && routeTimings) {
-          pricingId = extractSegmentPricing(flightObjs as AvailabilityFlight[], routeStructure, pricingPool, routeTimings);
+        if (pricingIndex && routeTimings) {
+          pricingId = extractSegmentPricing(flightObjs as AvailabilityFlight[], routeStructure, pricingIndex, routeTimings);
         }
         
         optimized.push({

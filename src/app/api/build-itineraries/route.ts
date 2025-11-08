@@ -29,12 +29,12 @@ import { buildItinerariesAcrossRoutes } from '../../../lib/itineraries/build';
 import { fetchRoutePaths, RoutePathResponse } from '@/lib/clients/route-path';
 import { parseBuildItinerariesRequest } from '@/lib/http/build-itineraries-request';
 import { getTotalDuration, precomputeItineraryMetadata, optimizedFilterSortSearchPaginate } from '@/lib/itineraries/processing';
+import { calculatePartnerBooleans } from '@/lib/availability-v2/partner-booking';
 
 function getSortValue(
   card: any,
   flights: Record<string, any>,
   sortBy: string,
-  reliability: Record<string, { min_count: number; exemption?: string }>,
   minReliabilityPercent: number
 ) {
   const flightObjs = card.itinerary.map((id: string) => flights[id]);
@@ -114,9 +114,33 @@ export async function POST(req: NextRequest) {
     if (cached) {
       const { itineraries, flights, pricing, routeStructures, minRateLimitRemaining, minRateLimitReset, totalSeatsAeroHttpRequests } = cached;
       const { table: reliabilityTable, map: reliabilityMap } = await getReliabilityData();
+      
+      // Ensure all cached flights have Partner fields calculated
+      for (const flightId in flights) {
+        const flight = flights[flightId];
+        if (flight && (flight.YPartner === undefined || flight.WPartner === undefined || flight.JPartner === undefined || flight.FPartner === undefined)) {
+          const airlineCode = flight.FlightNumbers.slice(0, 2);
+          const partnerBooleans = calculatePartnerBooleans(
+            airlineCode,
+            flight.YFare || [],
+            flight.WFare || [],
+            flight.JFare || [],
+            flight.FFare || [],
+            flight.YCount,
+            flight.WCount,
+            flight.JCount,
+            flight.FCount
+          );
+          flight.YPartner = partnerBooleans.YPartner;
+          flight.WPartner = partnerBooleans.WPartner;
+          flight.JPartner = partnerBooleans.JPartner;
+          flight.FPartner = partnerBooleans.FPartner;
+        }
+      }
+      
       const pricingPoolFromCache = pricing ? new Map(Object.entries(pricing)) : new Map();
       const routeStructureMapFromCache = routeStructures ? new Map(Object.entries(routeStructures)) : undefined;
-      const { total, data, filterMetadata, flightsPage, pricingPage } = buildOptimizedFromCached(itineraries, flights, reliabilityMap, minReliabilityPercent, filterParams, pricingPoolFromCache, routeStructureMapFromCache);
+      const { total, data, filterMetadata, flightsPage, pricingPage } = buildOptimizedFromCached(itineraries, flights, minReliabilityPercent, filterParams, pricingPoolFromCache, routeStructureMapFromCache);
       const response = buildResponse({
         data,
         total,
@@ -162,7 +186,7 @@ export async function POST(req: NextRequest) {
     const baseUrl = buildBaseUrl(req);
 
     // 2. Call create-full-route-path API
-    const routePathData: RoutePathResponse = await fetchRoutePaths(baseUrl, { origin, destination, maxStop });
+    const routePathData: RoutePathResponse = await fetchRoutePaths(baseUrl, { origin, destination, maxStop, binbin });
     const { routes } = routePathData;
     if (!routes || !Array.isArray(routes) || routes.length === 0) {
       return NextResponse.json({ error: 'No eligible routes found' }, { status: 404 });
@@ -184,7 +208,31 @@ export async function POST(req: NextRequest) {
     if (!Array.isArray(routePathData.queryParamsArr) || routePathData.queryParamsArr.length === 0) {
       return NextResponse.json({ error: 'No route groups found in create-full-route-path response' }, { status: 500 });
     }
-    const routeGroups: string[] = routePathData.queryParamsArr;
+    
+    // 3.5. Optimize route groups using star decomposition + aggressive consolidation
+    // Note: Use seatsAeroEndDate (endDate + 3 days) to match what availability-v2 actually fetches
+    const { optimizeRouteGroups } = await import('@/lib/availability-v2/route-optimizer');
+    const { computeSeatsAeroEndDate } = await import('@/lib/availability-v2/date-utils');
+    const seatsAeroEndDate = computeSeatsAeroEndDate(endDate);
+    
+    const optimizedGroups = await optimizeRouteGroups(
+      routePathData.queryParamsArr,
+      startDate,
+      seatsAeroEndDate
+    );
+    
+    // If all routes are cached, we still need to proceed but with empty groups
+    if (optimizedGroups.length === 0) {
+      console.log('[build-itineraries] All routes fully cached, proceeding with cached data only');
+    }
+    
+    // Convert optimized groups to API call format
+    const apiCallGroups = optimizedGroups.map(group => ({
+      routeId: `${group.origins.join('/')}-${group.destinations.join('/')}`,
+      dateRange: group.dateRange
+    }));
+
+    console.log(`[build-itineraries] Optimized ${routePathData.queryParamsArr.length} routes → ${apiCallGroups.length} API calls`);
 
     // Process seats.aero API links
 
@@ -192,7 +240,7 @@ export async function POST(req: NextRequest) {
     // Start performance monitoring
     PERFORMANCE_MONITORING.start();
     
-    const { results: availabilityResults, minRateLimitRemaining: minRateLimitRemainingFetched, minRateLimitReset: minRateLimitResetFetched } = await fetchAvailabilityForGroups(routeGroups, {
+    const { results: availabilityResults, minRateLimitRemaining: minRateLimitRemainingFetched, minRateLimitReset: minRateLimitResetFetched } = await fetchAvailabilityForGroups(apiCallGroups, {
       baseUrl,
       apiKey,
         startDate,
@@ -241,7 +289,7 @@ export async function POST(req: NextRequest) {
     // 5. Build a pool of all segment availabilities and pricing from all responses
     // Extract airport list from route path data for early pricing filtering
     const routeStructure = routePathData.airportList ? { airportList: routePathData.airportList } : undefined;
-    const { segmentPool, pricingPool } = buildSegmentAndPricingPools(availabilityResults as any, routeStructure);
+    const { segmentPool, pricingPool, pricingIndex } = buildSegmentAndPricingPools(availabilityResults as any, routeStructure);
 
     // EARLY FILTERING: Remove unreliable intermediate segments from availability pool
     // This requires reliability data, so fetch it first
@@ -260,7 +308,7 @@ export async function POST(req: NextRequest) {
 
     // Filter segments: remove unreliable intermediate segments but prune long unreliable O/D segments
     const segmentFilterStart = Date.now();
-    const filteredSegmentPool = filterUnreliableSegments(segmentPool, reliabilityMap, origin, destination, minReliabilityPercent, airportMap, directDistanceMiles);
+    const filteredSegmentPool = filterUnreliableSegments(segmentPool, origin, destination, minReliabilityPercent, airportMap, directDistanceMiles);
     performanceMetrics.segmentFiltering = Date.now() - segmentFilterStart;
 
     // PHASE 1 OPTIMIZATION: Pre-compute flight metadata and connection matrices from filtered pool
@@ -304,7 +352,7 @@ export async function POST(req: NextRequest) {
       flightMap,
       connectionMatrix,
       routeToOriginalMap,
-      { parallel: CONCURRENCY_CONFIG.PARALLEL_ROUTE_PROCESSING },
+      { parallel: validRoutes.length > 5 }, // Lower threshold
       { origin, destination }
     );
     Object.assign(output, built.output);
@@ -334,7 +382,7 @@ export async function POST(req: NextRequest) {
     
     // --- SERVER-SIDE RELIABILITY FILTERING ---
     // Use previously fetched reliability data for final itinerary filtering
-    const filteredOutput = filterReliableItineraries(output, flightMap, reliabilityMap, minReliabilityPercent, isUnreliableFlight);
+    const filteredOutput = filterReliableItineraries(output, flightMap, minReliabilityPercent, isUnreliableFlight);
     // Remove empty route keys after filtering
     Object.keys(filteredOutput).forEach((key) => {
       if (!filteredOutput[key] || Object.keys(filteredOutput[key]).length === 0) {
@@ -423,7 +471,7 @@ export async function POST(req: NextRequest) {
     // already cached via cacheFullResponse
     
     // --- Use optimized processing for new data ---
-    const optimizedItineraries = precomputeItineraryMetadata(filteredOutput, Object.fromEntries(flightMap), reliabilityMap, minReliabilityPercent, getClassPercentages, routeStructureMap, pricingPool);
+    const optimizedItineraries = precomputeItineraryMetadata(filteredOutput, Object.fromEntries(flightMap), minReliabilityPercent, getClassPercentages, routeStructureMap, pricingIndex);
     const { total, data } = optimizedFilterSortSearchPaginate(optimizedItineraries, filterParams);
     
     const allFlights = Object.fromEntries(flightMap);

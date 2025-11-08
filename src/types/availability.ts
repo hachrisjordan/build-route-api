@@ -8,6 +8,10 @@ export interface AvailabilityFlight {
   WCount: number;
   JCount: number;
   FCount: number;
+  YPartner: boolean;
+  WPartner: boolean;
+  JPartner: boolean;
+  FPartner: boolean;
   originAirport?: string;
   destinationAirport?: string;
   originCity?: string;

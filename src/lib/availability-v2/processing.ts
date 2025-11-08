@@ -19,6 +19,9 @@ export function processAvailabilityData(
   let totalItems = 0;
   let totalTrips = 0;
   let filteredTrips = 0;
+  
+  // Cache lowercase cabin for comparison (avoid repeated toLowerCase calls)
+  const cabinLower = cabin ? cabin.toLowerCase() : null;
 
   for (const page of pages) {
     if (!page?.data?.length) continue;
@@ -36,22 +39,35 @@ export function processAvailabilityData(
       for (const trip of item.AvailabilityTrips) {
         totalTrips++;
         
-        // Early filtering - skip non-direct flights and old trips
-        if (trip.Stops !== 0) continue;
-        if (trip.UpdatedAt && new Date(trip.UpdatedAt) < sevenDaysAgo) continue;
+        // Combined early exit conditions (fail fast) - optimize for common rejection cases
+        if (trip.Stops !== 0 || 
+            (trip.UpdatedAt && new Date(trip.UpdatedAt) < sevenDaysAgo)) {
+          continue;
+        }
 
-        // Fast cabin and seat filtering
+        // Fast cabin and seat filtering - combine conditions for better branch prediction
         const tripCabin = trip.Cabin?.toLowerCase() || '';
         const remainingSeats = trip.RemainingSeats || 0;
         const seatThreshold = seats === 1 ? 0 : seats;
 
-        // Single condition check
-        if (cabin && tripCabin !== cabin.toLowerCase()) continue;
-        if (remainingSeats < seatThreshold) continue;
+        // Combined condition check with short-circuit evaluation
+        if ((cabinLower && tripCabin !== cabinLower) || 
+            remainingSeats < seatThreshold) {
+          continue;
+        }
 
         filteredTrips++;
         const mileageCost = trip.MileageCost || 0;
         const flightNumbers = trip.FlightNumbers || '';
+        
+        // Extract fare classes from trip
+        const fareClasses = Array.isArray(trip.FareClasses) ? trip.FareClasses : [];
+        
+        // Map fare classes to cabin-specific arrays
+        const yFare = tripCabin === 'economy' ? fareClasses : [];
+        const wFare = tripCabin === 'premium' ? fareClasses : [];
+        const jFare = tripCabin === 'business' ? fareClasses : [];
+        const fFare = tripCabin === 'first' ? fareClasses : [];
 
         // Pre-compute common values
         const originAirport = route.OriginAirport;
@@ -88,6 +104,10 @@ export function processAvailabilityData(
               Source: source,
               Cabin: tripCabin,
               ThresholdCount: thresholdCount,
+              YFare: yFare,
+              WFare: wFare,
+              JFare: jFare,
+              FFare: fFare,
             });
           }
         } else {
@@ -114,6 +134,10 @@ export function processAvailabilityData(
               Source: source,
               Cabin: tripCabin,
               ThresholdCount: thresholdCount,
+              YFare: yFare,
+              WFare: wFare,
+              JFare: jFare,
+              FFare: fFare,
             });
           }
         }

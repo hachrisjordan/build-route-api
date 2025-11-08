@@ -3,12 +3,11 @@ import { createClient } from '@supabase/supabase-js';
 import { SupabaseClient } from '@/lib/route-helpers';
 import { getSupabaseConfig } from '@/lib/env-utils';
 import { ValidationService, ValidatedRouteInput } from './validation';
-import { ErrorHandlerService } from './error-handler';
+import { ErrorHandlerService, RouteError, RouteErrorUtils } from './error-handler';
 import { APIPerformanceMonitor } from './performance';
 import { RoutePathCacheService, createRoutePathCache } from './cache';
 import { BatchProcessorService } from './batch-processor';
 import { RouteCalculatorService } from './calculator';
-import { RouteGroupingService } from './grouping';
 import { ResponseFormatterService } from './response-formatter';
 import { FullRoutePathResult } from '@/types/route';
 import { initializeCityGroups, getCityAirports, isCityCode } from '@/lib/airports/city-groups';
@@ -224,7 +223,8 @@ export class RouteOrchestratorService {
                 cacheService: context.cacheService,
                 sharedPathsKey,
                 originalOrigin: origin,
-                originalDestination: destination
+                originalDestination: destination,
+                binbin: context.validatedData.binbin
               })
             );
           }
@@ -246,7 +246,14 @@ export class RouteOrchestratorService {
       if (result.status === 'fulfilled') {
         allRoutes.push(...result.value.routes);
       } else {
-        console.error('Error processing pair:', result.reason);
+        // Check if it's an operational error (expected/normal behavior like airport not found, no routes)
+        if (RouteErrorUtils.isOperationalError(result.reason)) {
+          // Log operational errors as info, not error - these are normal/expected scenarios
+          console.log(`[route-orchestrator] ${result.reason.message}`);
+        } else {
+          // Log unexpected errors as errors
+          console.error('Error processing pair:', result.reason);
+        }
         if (!anyError) {
           anyError = result.reason;
         }
@@ -271,7 +278,7 @@ export class RouteOrchestratorService {
   }
 
   /**
-   * Process final response with grouping and formatting
+   * Process final response with segment extraction
    */
   private static async processFinalResponse(
     context: RouteOrchestrationContext,
@@ -279,19 +286,25 @@ export class RouteOrchestratorService {
     batchResult: any,
     performanceMonitor: APIPerformanceMonitor
   ): Promise<RouteOrchestrationResult> {
-    performanceMonitor.startAPI('final-grouping');
+    performanceMonitor.startAPI('segment-extraction');
 
     const { allRoutes } = routeResults;
-    const { destinationList } = context.validatedData;
 
-    // Group routes using the grouping service
-    const groupingResult = this.groupRoutes(allRoutes, destinationList);
-    
-    // Generate query parameters
-    const queryParamsArr = ResponseFormatterService.formatQueryParams(groupingResult.finalGroups);
+    // Extract all individual segments from all routes
+    const uniqueSegments = new Set<string>();
+    for (const route of allRoutes) {
+      const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D]
+        .filter((c): c is string => !!c);
+      
+      for (let i = 0; i < codes.length - 1; i++) {
+        const from = codes[i]!;
+        const to = codes[i + 1]!;
+        uniqueSegments.add(`${from}-${to}`);
+      }
+    }
+    const queryParamsArr = Array.from(uniqueSegments).sort();
 
-    performanceMonitor.endAPI('final-grouping', {
-      groupsCount: groupingResult.finalGroups.length,
+    performanceMonitor.endAPI('segment-extraction', {
       queryParamsCount: queryParamsArr.length
     });
 
@@ -312,47 +325,6 @@ export class RouteOrchestratorService {
       queryParamsArr,
       metadata,
       processingTime: performanceMonitor.getTotalTime()
-    };
-  }
-
-  /**
-   * Group routes using the grouping service
-   */
-  private static groupRoutes(
-    allRoutes: FullRoutePathResult[],
-    destinationList: string[]
-  ): {
-    finalGroups: Array<{ keys: string[]; dests: string[] }>;
-  } {
-    // Group segments by departure airport (except those ending at any input destination)
-    const segmentMap: Record<string, Set<string>> = {};
-    // Group segments by destination (for those ending at input destination)
-    const destMap: Record<string, Set<string>> = {};
-
-    for (const route of allRoutes) {
-      const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D]
-        .filter((c): c is string => !!c);
-
-      for (let i = 0; i < codes.length - 1; i++) {
-        const from = codes[i]!;
-        const to = codes[i + 1]!;
-
-        if (destinationList.includes(to)) {
-          if (!destMap[to]) destMap[to] = new Set();
-          destMap[to].add(from);
-        } else {
-          if (!segmentMap[from]) segmentMap[from] = new Set();
-          segmentMap[from].add(to);
-        }
-      }
-    }
-
-    // Use the grouping service for advanced merging
-    const groupingService = new RouteGroupingService();
-    const { groups, queryParams } = groupingService.processRouteGrouping(segmentMap, destMap);
-
-    return {
-      finalGroups: groups
     };
   }
 

@@ -66,7 +66,7 @@ export function getValkeyConfig() {
  * Gets Redis configuration with sanitized environment variables
  */
 export function getRedisConfig() {
-  const host = getSanitizedEnv('REDIS_HOST') || 'redis'; // Docker service name fallback
+  const host = getSanitizedEnv('REDIS_HOST') || 'localhost'; // Default to localhost for local development, use 'redis' for Docker
   const port = parseInt(getSanitizedEnv('REDIS_PORT') || '6379', 10);
   const password = getSanitizedEnv('REDIS_PASSWORD');
   

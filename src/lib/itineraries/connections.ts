@@ -90,12 +90,6 @@ export function buildGroupConnectionMatrix(
   for (const groupA of groupsWithTiming) {
     const validConnections = new Set<string>();
     
-    // Debug: Track VN310 and UA882 specifically
-    const isVN310Group = groupA.group.flights.some(f => f.FlightNumbers === 'VN310' && f.DepartsAt.includes('2025-10-22'));
-    const isUA882Group = groupA.group.flights.some(f => f.FlightNumbers === 'UA882' && f.DepartsAt.includes('2025-10-22'));
-    
-    if (isVN310Group) {
-    }
     
     // Find potential connections - both same airport and same city
     const potentialConnections: GroupWithTiming[] = [];
@@ -112,26 +106,16 @@ export function buildGroupConnectionMatrix(
       }
     }
     
-    if (isVN310Group) {
-    }
     
     for (const groupB of potentialConnections) {
       if (groupA.key === groupB.key) continue;
       
-      const isUA882Potential = groupB.group.flights.some(f => f.FlightNumbers === 'UA882' && f.DepartsAt.includes('2025-10-22'));
-      
-      if (isVN310Group && isUA882Potential) {
-      }
       
       // Determine MCT based on connection type
       const sameAirport = groupA.group.destinationAirport === groupB.group.originAirport;
       const sameCity = !sameAirport && isSameCity(groupA.group.destinationAirport, groupB.group.originAirport);
       const requiredMCT = sameAirport ? minConnectionMinutes : sameCity ? 240 : Infinity;
       
-      if (isVN310Group && isUA882Potential) {
-        console.log(`  Connection type: ${sameAirport ? 'same-airport' : sameCity ? 'cross-airport' : 'different-city'}`);
-        console.log(`  Required MCT: ${requiredMCT} minutes`);
-      }
       
       if (
         groupA.earliestArrivalTime && groupA.latestArrivalTime &&
@@ -140,24 +124,12 @@ export function buildGroupConnectionMatrix(
         const shortestConnection = (groupB.earliestDepartureTime - groupA.latestArrivalTime) / 60000;
         const longestConnection = (groupB.latestDepartureTime - groupA.earliestArrivalTime) / 60000;
         
-        if (isVN310Group && isUA882Potential) {
-          console.log(`  VN310 arrival: ${new Date(groupA.latestArrivalTime).toISOString()}`);
-          console.log(`  UA882 departure: ${new Date(groupB.earliestDepartureTime).toISOString()}`);
-          console.log(`  Connection time: ${shortestConnection.toFixed(1)} minutes`);
-          console.log(`  Valid: ${longestConnection >= requiredMCT && shortestConnection <= 24 * 60}`);
-        }
         
         if (longestConnection >= requiredMCT && shortestConnection <= 24 * 60) {
           validConnections.add(groupB.key);
-          if (isVN310Group && isUA882Potential) {
-          }
-        } else if (isVN310Group && isUA882Potential) {
+        } else if (canGroupsConnect(groupA.group, groupB.group, requiredMCT)) {
+          validConnections.add(groupB.key);
         }
-      } else if (canGroupsConnect(groupA.group, groupB.group, requiredMCT)) {
-        validConnections.add(groupB.key);
-        if (isVN310Group && isUA882Potential) {
-        }
-      } else if (isVN310Group && isUA882Potential) {
       }
     }
     groupConnections.set(groupA.key, validConnections);
@@ -206,14 +178,6 @@ export async function buildConnectionMatrix(
     const connectedGroups = groupConnections.get(fromGroupKey);
     if (!connectedGroups) continue;
 
-    // Debug: Track VN310 and UA882 specifically
-    const isVN310 = flightMeta.originalFlight.FlightNumbers === 'VN310' && 
-                   flightMeta.originalFlight.DepartsAt.includes('2025-10-22');
-    const isUA882 = flightMeta.originalFlight.FlightNumbers === 'UA882' && 
-                   flightMeta.originalFlight.DepartsAt.includes('2025-10-22');
-
-    if (isVN310) {
-    }
 
     for (const toGroupKey of connectedGroups) {
       const groupFlights = groupToFlights.get(toGroupKey);
@@ -231,14 +195,9 @@ export async function buildConnectionMatrix(
         
         const requiredMinConn = sameAirport ? 45 : sameCity ? 240 : Infinity;
         
-        if (isVN310 && isUA882) {
-        }
         
         if (diffMinutes >= requiredMinConn && diffMinutes <= 24 * 60) {
           validConnections.add(toFlightUuid);
-          if (isVN310 && isUA882) {
-          }
-        } else if (isVN310 && isUA882) {
         }
       }
     }

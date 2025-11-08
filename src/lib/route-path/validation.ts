@@ -22,6 +22,7 @@ export interface ValidatedRouteInput {
   originList: string[];
   destinationList: string[];
   pairsCount: number;
+  binbin?: boolean;
 }
 
 /**
@@ -56,7 +57,8 @@ export const routePathValidationSchema = z.object({
     .int('MaxStop must be an integer')
     .min(0, 'MaxStop must be at least 0')
     .max(4, 'MaxStop cannot exceed 4')
-    .default(4)
+    .default(4),
+  binbin: z.boolean().optional()
 });
 
 /**
@@ -149,7 +151,8 @@ export class ValidationService {
           maxStop,
           originList: originListResult.data!,
           destinationList: destinationListResult.data!,
-          pairsCount
+          pairsCount,
+          binbin: parsedData.binbin
         }
       };
     } catch (error) {
