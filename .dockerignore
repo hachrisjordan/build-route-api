@@ -106,8 +106,9 @@ temp/
 # Test outputs
 test-outputs/
 
-# CSV outputs
+# CSV outputs (but allow route_count.csv which is needed at runtime)
 csv-output/
+!csv-output/route_count.csv
 
 # Seat configurations
 seat-configs/

@@ -59,12 +59,17 @@ RUN npm ci
 # Install Playwright browsers
 RUN npx playwright install
 
-# Copy the rest of your app
+# Copy the rest of your app (csv-output/route_count.csv will be included due to .dockerignore exception)
 COPY . .
 
-# Create csv-output directory and copy route_count.csv (needed for route optimizer)
-RUN mkdir -p /app/csv-output
-COPY csv-output/route_count.csv /app/csv-output/route_count.csv
+# Ensure csv-output directory exists and route_count.csv is present
+RUN mkdir -p /app/csv-output && \
+    if [ ! -f /app/csv-output/route_count.csv ]; then \
+      echo "WARNING: route_count.csv not found, creating empty file as fallback"; \
+      echo "origin,destination,count" > /app/csv-output/route_count.csv; \
+    else \
+      echo "route_count.csv found successfully"; \
+    fi
 
 # Build your app
 RUN npm run build
