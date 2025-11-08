@@ -14,6 +14,11 @@ export function matchPricingToFlight(
   pricingIndex: { byFlightAndRoute: Map<string, PricingEntry[]> },
   toleranceMinutes: number = 5
 ): PricingEntry | null {
+  // Guard: Ensure pricingIndex and byFlightAndRoute exist and are valid
+  if (!pricingIndex || !pricingIndex.byFlightAndRoute || !(pricingIndex.byFlightAndRoute instanceof Map)) {
+    return null;
+  }
+
   const flightKey = flight.FlightNumbers.toLowerCase();
   const routeKey = `${flight.originAirport}-${flight.destinationAirport}`;
   const combinedKey = `${flightKey}:${routeKey}`;
@@ -70,6 +75,11 @@ export function extractSegmentPricing(
   }
 ): string[] {
   if (!routeStructure || flights.length === 0 || !routeTimings) {
+    return [];
+  }
+
+  // Guard: Ensure pricingIndex and byFlightAndRoute exist and are valid
+  if (!pricingIndex || !pricingIndex.byFlightAndRoute || !(pricingIndex.byFlightAndRoute instanceof Map)) {
     return [];
   }
 
@@ -146,6 +156,11 @@ export function getAllPricingForItinerary(
   flights: AvailabilityFlight[],
   pricingIndex: { byFlightAndRoute: Map<string, PricingEntry[]> }
 ): PricingEntry[] {
+  // Guard: Ensure pricingIndex and byFlightAndRoute exist and are valid
+  if (!pricingIndex || !pricingIndex.byFlightAndRoute || !(pricingIndex.byFlightAndRoute instanceof Map)) {
+    return [];
+  }
+
   const pricingEntries: PricingEntry[] = [];
   const seenIds = new Set<string>();
 

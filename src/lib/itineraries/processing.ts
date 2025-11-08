@@ -252,7 +252,10 @@ export function precomputeItineraryMetadata(
         // Extract pricing information if pricing pool is available
         let pricingId: string[] | undefined;
         
-        if (pricingIndex && routeTimings) {
+        if (pricingIndex && 
+            pricingIndex.byFlightAndRoute && 
+            pricingIndex.byFlightAndRoute instanceof Map && 
+            routeTimings) {
           pricingId = extractSegmentPricing(flightObjs as AvailabilityFlight[], routeStructure, pricingIndex, routeTimings);
         }
         
