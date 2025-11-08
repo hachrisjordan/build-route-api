@@ -62,6 +62,10 @@ RUN npx playwright install
 # Copy the rest of your app
 COPY . .
 
+# Create csv-output directory and copy route_count.csv (needed for route optimizer)
+RUN mkdir -p /app/csv-output
+COPY csv-output/route_count.csv /app/csv-output/route_count.csv
+
 # Build your app
 RUN npm run build
 ENV NODE_ENV=production
