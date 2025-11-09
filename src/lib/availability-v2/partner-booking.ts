@@ -18,6 +18,7 @@ const PARTNER_FARE_CLASSES: Record<string, string[]> = {
   'JX': ['X', 'P', 'U'],
   'AF': ['X', 'O'],
   'KL': ['X', 'O'],
+  "DL": ['X', 'O'],
   'VA': ['X', 'Z'],
   'QF': ['X', 'U'],
   'TK': ['X', 'I'],
