@@ -3,6 +3,7 @@ import { precomputeItineraryMetadata, optimizedFilterSortSearchPaginate } from '
 import { extractFilterMetadata } from '@/lib/itineraries/filter-metadata';
 import { buildFlightsPage, buildPricingPage } from '@/lib/itineraries/postprocess';
 import { getClassPercentages } from '@/lib/itineraries/class-percentages';
+import { buildPricingIndex } from '@/lib/availability/segment-pool';
 
 export function buildOptimizedFromCached(
   itineraries: Record<string, Record<string, string[][]>>,
@@ -12,13 +13,18 @@ export function buildOptimizedFromCached(
   pricingPool?: Map<string, any>,
   routeStructureMap?: Map<string, any>
 ) {
+  // Convert pricingPool to pricingIndex for proper lookup
+  const pricingIndex = pricingPool && pricingPool.size > 0 
+    ? buildPricingIndex(pricingPool) 
+    : undefined;
+  
   const optimizedItineraries = precomputeItineraryMetadata(
     itineraries,
     flights,
     minReliabilityPercent,
     getClassPercentages,
     routeStructureMap,
-    pricingPool
+    pricingIndex  // Now passes the correct structure!
   );
   const { total, data } = optimizedFilterSortSearchPaginate(optimizedItineraries, filterParams);
   const filterMetadata = extractFilterMetadata(itineraries, flights);
