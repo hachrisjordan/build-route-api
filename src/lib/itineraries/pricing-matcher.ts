@@ -74,15 +74,33 @@ export function extractSegmentPricing(
     DArrivalTime: string | null;
   }
 ): string[] {
-  if (!routeStructure || flights.length === 0 || !routeTimings) {
-    return [];
-  }
-
   // Guard: Ensure pricingIndex and byFlightAndRoute exist and are valid
   if (!pricingIndex || !pricingIndex.byFlightAndRoute || !(pricingIndex.byFlightAndRoute instanceof Map)) {
     return [];
   }
 
+  if (flights.length === 0) {
+    return [];
+  }
+
+  // Handle direct flights (A→B): No route structure or single flight
+  // For direct flights, match pricing directly to each flight
+  if (!routeStructure || !routeTimings || flights.length === 1) {
+    const pricingIds: string[] = [];
+    const seenIds = new Set<string>();
+    
+    for (const flight of flights) {
+      const pricing = matchPricingToFlight(flight, pricingIndex);
+      if (pricing && !seenIds.has(pricing.id)) {
+        pricingIds.push(pricing.id);
+        seenIds.add(pricing.id);
+      }
+    }
+    
+    return pricingIds;
+  }
+
+  // Handle multi-segment routes (O→A→B→D)
   const pricingIds: string[] = [];
 
   // Helper to match pricing by route segment info using indexed lookup

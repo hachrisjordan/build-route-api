@@ -250,13 +250,13 @@ export function precomputeItineraryMetadata(
         const routeTimings = extractRouteTimings(flightObjs as AvailabilityFlight[], routeStructure);
         
         // Extract pricing information if pricing pool is available
+        // For direct flights, routeTimings may be null, but extractSegmentPricing handles that case
         let pricingId: string[] | undefined;
         
         if (pricingIndex && 
             pricingIndex.byFlightAndRoute && 
-            pricingIndex.byFlightAndRoute instanceof Map && 
-            routeTimings) {
-          pricingId = extractSegmentPricing(flightObjs as AvailabilityFlight[], routeStructure, pricingIndex, routeTimings);
+            pricingIndex.byFlightAndRoute instanceof Map) {
+          pricingId = extractSegmentPricing(flightObjs as AvailabilityFlight[], routeStructure, pricingIndex, routeTimings || undefined);
         }
         
         optimized.push({
