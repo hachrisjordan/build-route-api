@@ -13,13 +13,20 @@ export async function getOptimalDateRangeForRoute(
 ): Promise<{ start: string; end: string; needsFetch: boolean }> {
   const dates = generateDateRange(startDate, endDate);
   
+  // Parallel cache reads for all dates
+  const cachePromises = dates.map(date =>
+    getCachedAvailabilityGroup(origin, destination, date)
+  );
+  const cacheResults = await Promise.all(cachePromises);
+  
   let firstMissing: string | null = null;
   let lastMissing: string | null = null;
   
-  // Check each date in cache
+  // Process cache results to find first and last missing dates
   // null = not cached (needs fetch), [] = cached but empty (no fetch needed)
-  for (const date of dates) {
-    const cached = await getCachedAvailabilityGroup(origin, destination, date);
+  for (let i = 0; i < dates.length; i++) {
+    const date = dates[i];
+    const cached = cacheResults[i];
     
     if (cached === null) {
       // Not cached = needs fetch

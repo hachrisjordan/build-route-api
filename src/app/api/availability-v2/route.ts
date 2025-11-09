@@ -98,42 +98,72 @@ export async function POST(req: NextRequest) {
 
     const emptyCachedKeys: string[] = []; // Track empty cache hits
     
+    // Build array of all cache keys to check in parallel
+    const cacheKeys: Array<{ originAirport: string; destinationAirport: string; date: string; key: string }> = [];
     for (const originAirport of uniqueOriginAirports) {
       for (const destinationAirport of uniqueDestinationAirports) {
         for (const date of dates) {
           const key = `${originAirport}-${destinationAirport}-${date}`;
-          
-          // Check availability cache
-          // null = not cached, [] = cached but empty, [items] = cached with results
-          const cached = await getCachedAvailabilityGroup(originAirport, destinationAirport, date);
-          if (cached !== null) {
-            // Cached (either empty or with results)
-            if (cached.length > 0) {
-              cachedGroups.push(...cached);
-              cachedKeys.push(key);
-            } else {
-              // Empty array = cached but no results (don't fetch again)
-              emptyCachedKeys.push(key);
-            }
-          } else {
-            // Not cached = need to fetch
-            missingKeys.push(key);
-          }
+          cacheKeys.push({ originAirport, destinationAirport, date, key });
+        }
+      }
+    }
 
-          // Check pricing cache if binbin=true
-          if (binbin === true) {
-            const cachedPricing = await getCachedPricingGroup(originAirport, destinationAirport, date);
-            if (cachedPricing !== null) {
-              // Cached (either empty or with results)
-              if (cachedPricing.length > 0) {
-                cachedPricingEntries.push(...cachedPricing);
-                cachedPricingKeys.push(key);
-              }
-              // Note: empty pricing cache is fine, we don't track it separately
-            } else {
-              missingPricingKeys.push(key);
-            }
+    // Parallel cache reads for availability
+    const availabilityCachePromises = cacheKeys.map(({ originAirport, destinationAirport, date }) =>
+      getCachedAvailabilityGroup(originAirport, destinationAirport, date)
+    );
+    
+    // Parallel cache reads for pricing (if binbin=true)
+    const pricingCachePromises = binbin === true
+      ? cacheKeys.map(({ originAirport, destinationAirport, date }) =>
+          getCachedPricingGroup(originAirport, destinationAirport, date)
+        )
+      : null;
+
+    // Await all cache reads in parallel
+    const availabilityCacheResults = await Promise.all(availabilityCachePromises);
+    const pricingCacheResults = pricingCachePromises
+      ? await Promise.all(pricingCachePromises)
+      : null;
+
+    // Process availability cache results
+    for (let i = 0; i < cacheKeys.length; i++) {
+      const { key } = cacheKeys[i];
+      const cached = availabilityCacheResults[i];
+      
+      // Check availability cache
+      // null = not cached, [] = cached but empty, [items] = cached with results
+      if (cached !== null) {
+        // Cached (either empty or with results)
+        if (cached.length > 0) {
+          cachedGroups.push(...cached);
+          cachedKeys.push(key);
+        } else {
+          // Empty array = cached but no results (don't fetch again)
+          emptyCachedKeys.push(key);
+        }
+      } else {
+        // Not cached = need to fetch
+        missingKeys.push(key);
+      }
+    }
+
+    // Process pricing cache results (if binbin=true)
+    if (binbin === true && pricingCacheResults) {
+      for (let i = 0; i < cacheKeys.length; i++) {
+        const { key } = cacheKeys[i];
+        const cachedPricing = pricingCacheResults[i];
+        
+        if (cachedPricing !== null) {
+          // Cached (either empty or with results)
+          if (cachedPricing.length > 0) {
+            cachedPricingEntries.push(...cachedPricing);
+            cachedPricingKeys.push(key);
           }
+          // Note: empty pricing cache is fine, we don't track it separately
+        } else {
+          missingPricingKeys.push(key);
         }
       }
     }
