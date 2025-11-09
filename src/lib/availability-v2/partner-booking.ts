@@ -63,8 +63,7 @@ export function isPartnerBookingAllowed(
   }
 
   // For other airlines, any fare class is ok as long as count >= minCount (already checked above)
-  // and at least one fare class exists
-  return fareClasses.length > 0;
+  return true;
 }
 
 /**
@@ -104,4 +103,5 @@ export function calculatePartnerBooleans(
     FPartner: isPartnerBookingAllowed(airlineCode, fFare, fCount),
   };
 }
+
 
