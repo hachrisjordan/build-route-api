@@ -12,6 +12,7 @@ export interface AvailabilityFetchParams {
   united?: boolean;
   concurrency: number;
   binbin?: boolean;
+  maxStop?: number;
 }
 
 export interface AvailabilityTaskResult {
@@ -46,6 +47,7 @@ export async function fetchAvailabilityForGroups(
       ...(params.carriers ? { carriers: params.carriers } : {}),
       ...(params.seats ? { seats: params.seats } : {}),
       ...(params.united ? { united: params.united } : {}),
+      ...(params.maxStop !== undefined ? { maxStop: params.maxStop } : {}),
     };
     
     // Always request pricing data for build-itineraries

@@ -19,13 +19,18 @@ export function matchPricingToFlight(
     return null;
   }
 
-  const flightKey = flight.FlightNumbers.toLowerCase();
-  const routeKey = `${flight.originAirport}-${flight.destinationAirport}`;
+  const flightKey = flight.FlightNumbers.toLowerCase().trim();
+  const routeKey = `${flight.originAirport || ''}-${flight.destinationAirport || ''}`;
   const combinedKey = `${flightKey}:${routeKey}`;
 
   // Get only relevant pricing entries (O(1) lookup instead of O(n))
   const candidates = pricingIndex.byFlightAndRoute.get(combinedKey);
   if (!candidates || candidates.length === 0) {
+    // Debug: Try to find candidates by flight number only or route only
+    // This helps identify if there's a mismatch in flight numbers or routes
+    if (!flight.originAirport || !flight.destinationAirport) {
+      console.log(`[matchPricingToFlight] Flight missing airport info: flight=${flight.FlightNumbers}, originAirport=${flight.originAirport}, destinationAirport=${flight.destinationAirport}`);
+    }
     return null;
   }
 
@@ -94,6 +99,18 @@ export function extractSegmentPricing(
       if (pricing && !seenIds.has(pricing.id)) {
         pricingIds.push(pricing.id);
         seenIds.add(pricing.id);
+      }
+    }
+    
+    // Debug logging for direct flight pricing matching
+    if (flights.length > 0 && pricingIds.length === 0) {
+      const firstFlight = flights[0];
+      if (firstFlight) {
+        const flightKey = firstFlight.FlightNumbers.toLowerCase();
+        const routeKey = `${firstFlight.originAirport}-${firstFlight.destinationAirport}`;
+        const combinedKey = `${flightKey}:${routeKey}`;
+        const candidates = pricingIndex.byFlightAndRoute.get(combinedKey);
+        console.log(`[extractSegmentPricing] Direct flight pricing match: flight=${firstFlight.FlightNumbers}, route=${routeKey}, combinedKey=${combinedKey}, candidates=${candidates?.length || 0}, pricingIndexSize=${pricingIndex.byFlightAndRoute.size}`);
       }
     }
     

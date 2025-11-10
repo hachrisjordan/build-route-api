@@ -9,6 +9,7 @@ export const availabilityV2Schema = z.object({
   seats: z.coerce.number().int().min(1).default(1).optional(),
   united: z.coerce.boolean().default(false).optional(),
   binbin: z.coerce.boolean().default(false).optional(),
+  maxStop: z.coerce.number().int().min(0).max(4).optional(),
 });
 
 export type AvailabilityV2Input = z.infer<typeof availabilityV2Schema>;

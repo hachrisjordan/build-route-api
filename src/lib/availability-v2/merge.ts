@@ -2,6 +2,34 @@ import { getCountMultiplier } from '@/lib/reliability';
 import { ProcessedTrip, MergedEntry } from '@/types/availability-v2';
 import { calculatePartnerBooleans } from './partner-booking';
 
+// Module-level cache for getCountMultiplier
+const multiplierCache = new Map<string, number>();
+
+/**
+ * Memoized count multiplier calculation
+ */
+function getCachedMultiplier(
+  code: string,
+  source: string,
+  cabin: string,
+  reliabilityTable: any[]
+): number {
+  const key = `${code}_${source}_${cabin}`;
+  let result = multiplierCache.get(key);
+  if (result === undefined) {
+    result = getCountMultiplier({ code, source, cabin, reliabilityTable });
+    multiplierCache.set(key, result);
+  }
+  return result;
+}
+
+/**
+ * Clear merge caches to prevent memory bloat
+ */
+export function clearMergeCaches(): void {
+  multiplierCache.clear();
+}
+
 /**
  * Merge processed trips into unique flight entries with accumulated seat counts.
  */
@@ -13,7 +41,8 @@ export function mergeProcessedTrips(
 
   for (const entry of results) {
     const flightNumber = entry.FlightNumbers;
-    const key = `${entry.originAirport}|${entry.destinationAirport}|${entry.date}|${flightNumber}|${entry.Source}`;
+    // Use array join for better performance with multiple concatenations
+    const key = [entry.originAirport, entry.destinationAirport, entry.date, flightNumber, entry.Source].join('|');
     const flightPrefix = flightNumber.slice(0, 2);
     const cabin = entry.Cabin;
     const cabinChar = cabin[0]?.toUpperCase() || '';
@@ -23,7 +52,7 @@ export function mergeProcessedTrips(
         (cabin === 'premium' && entry.WMile > 0) ||
         (cabin === 'business' && entry.JMile > 0) ||
         (cabin === 'first' && entry.FMile > 0)) {
-      const baseMultiplier = getCountMultiplier({ code: flightPrefix, source: entry.Source, cabin: cabinChar, reliabilityTable });
+      const baseMultiplier = getCachedMultiplier(flightPrefix, entry.Source, cabinChar, reliabilityTable);
       const thresholdCount = entry.ThresholdCount || 2;
       cabinCount = baseMultiplier * thresholdCount;
     }
@@ -63,10 +92,10 @@ export function mergeProcessedTrips(
         WCount: wCount,
         JCount: jCount,
         FCount: fCount,
-        YFare: [...entry.YFare], // Copy array since it will be mutated during merging
-        WFare: [...entry.WFare],
-        JFare: [...entry.JFare],
-        FFare: [...entry.FFare],
+        YFare: entry.YFare, // Direct reference for initial, will use concat for merging
+        WFare: entry.WFare,
+        JFare: entry.JFare,
+        FFare: entry.FFare,
         ...partnerBooleans,
       };
       mergedMap.set(key, newEntry);
@@ -82,11 +111,11 @@ export function mergeProcessedTrips(
         existing.FCount += cabinCount;
       }
 
-      // Merge fare classes efficiently - only push if entry has fare classes
-      if (entry.YFare.length > 0) existing.YFare.push(...entry.YFare);
-      if (entry.WFare.length > 0) existing.WFare.push(...entry.WFare);
-      if (entry.JFare.length > 0) existing.JFare.push(...entry.JFare);
-      if (entry.FFare.length > 0) existing.FFare.push(...entry.FFare);
+      // Merge fare classes efficiently - use concat instead of spread operator
+      if (entry.YFare.length > 0) existing.YFare = existing.YFare.concat(entry.YFare);
+      if (entry.WFare.length > 0) existing.WFare = existing.WFare.concat(entry.WFare);
+      if (entry.JFare.length > 0) existing.JFare = existing.JFare.concat(entry.JFare);
+      if (entry.FFare.length > 0) existing.FFare = existing.FFare.concat(entry.FFare);
 
       // Only recalculate partner booleans if counts actually changed (cabinCount > 0)
       // This avoids unnecessary recalculations when merging entries with same cabin

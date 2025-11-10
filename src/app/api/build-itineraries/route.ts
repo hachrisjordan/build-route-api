@@ -250,6 +250,7 @@ export async function POST(req: NextRequest) {
       seats,
       united,
       binbin,
+      maxStop,
       concurrency: CONCURRENCY_CONFIG.AVAILABILITY_CONCURRENT_REQUESTS,
     });
     let minRateLimitRemaining: number | null = minRateLimitRemainingFetched;
@@ -288,8 +289,22 @@ export async function POST(req: NextRequest) {
 
     // 5. Build a pool of all segment availabilities and pricing from all responses
     // Extract airport list from route path data for early pricing filtering
+    // For direct flights (maxStop === 0), pass maxStop to skip filtering
     const routeStructure = routePathData.airportList ? { airportList: routePathData.airportList } : undefined;
-    const { segmentPool, pricingPool, pricingIndex } = buildSegmentAndPricingPools(availabilityResults as any, routeStructure);
+    const { segmentPool, pricingPool, pricingIndex } = buildSegmentAndPricingPools(availabilityResults as any, routeStructure, maxStop);
+    
+    // Log pricing pool status for debugging
+    console.log(`[build-itineraries] Pricing pool populated: ${pricingPool.size} entries, maxStop: ${maxStop}, binbin: ${binbin}`);
+    if (maxStop === 0) {
+      console.log(`[build-itineraries] Direct flights mode (maxStop=0): Route structure O/A/B/D:`, 
+        routeStructure?.airportList ? {
+          O: routeStructure.airportList.O?.length || 0,
+          A: routeStructure.airportList.A?.length || 0,
+          B: routeStructure.airportList.B?.length || 0,
+          D: routeStructure.airportList.D?.length || 0,
+        } : 'undefined'
+      );
+    }
 
     // EARLY FILTERING: Remove unreliable intermediate segments from availability pool
     // This requires reliability data, so fetch it first
@@ -477,6 +492,11 @@ export async function POST(req: NextRequest) {
     const allFlights = Object.fromEntries(flightMap);
     const flightsPage = buildFlightsPage(data as any, allFlights);
     const pricingPage = buildPricingPage(data as any, pricingPool);
+    
+    // Log pricing page status for debugging
+    const itinerariesWithPricing = (data as any[]).filter((item: any) => item.pricingId && item.pricingId.length > 0);
+    console.log(`[build-itineraries] Pricing page: ${Object.keys(pricingPage).length} pricing entries, ${itinerariesWithPricing.length}/${data.length} itineraries have pricingIds`);
+    
     const response = buildResponse({
       data,
       total,

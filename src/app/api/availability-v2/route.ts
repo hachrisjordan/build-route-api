@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(errorResponse, { status: 400 });
     }
     
-    const { routeId, startDate, endDate, cabin, carriers, seats: seatsRaw, united, binbin } = parseResult.data;
+    const { routeId, startDate, endDate, cabin, carriers, seats: seatsRaw, united, binbin, maxStop } = parseResult.data;
     const seats = typeof seatsRaw === 'number' && seatsRaw > 0 ? seatsRaw : REQUEST_CONFIG.DEFAULT_SEATS;
     
     if (united) {
@@ -243,9 +243,14 @@ export async function POST(req: NextRequest) {
       carriers: REQUEST_CONFIG.SUPPORTED_CARRIERS.join('%2C'),
       disable_live_filtering: 'true'
     };
-    // If binbin is false, we include only_direct_flights; default (true) omits this filter
-    if (binbin === false) {
+    // Set only_direct_flights: true if:
+    // 1. binbin is false, OR
+    // 2. maxStop === 0 (direct flights only), even if binbin is true
+    if (binbin === false || maxStop === 0) {
       baseParams.only_direct_flights = 'true';
+      if (maxStop === 0 && binbin === true) {
+        console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} maxStop=0 detected: Setting only_direct_flights=true even though binbin=true`);
+      }
     }
     
     if (cabin) baseParams.cabin = cabin;

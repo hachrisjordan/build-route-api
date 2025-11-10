@@ -36,7 +36,17 @@ const SOURCE_TO_AIRLINE_CODE: Record<string, string> = {
  * Groups by flight number + date combination across multiple sources
  */
 export function processPricingData(pages: any[]): PricingEntry[] {
-  const pricingMap = new Map<string, PricingEntry>();
+  // Use nested Map for O(1) source lookups instead of O(n) array.find()
+  const pricingMap = new Map<string, {
+    id: string;
+    flightnumbers: string;
+    date: string;
+    DepartsAt: string;
+    ArrivesAt: string;
+    departingAirport: string;
+    arrivingAirport: string;
+    pricing: Map<string, PricingSource>;
+  }>();
   
   for (const page of pages) {
     if (!page?.data?.length) continue;
@@ -64,32 +74,14 @@ export function processPricingData(pages: any[]): PricingEntry[] {
         // Create unique key for grouping
         const groupKey = `${flightNumbers}-${itemDate}`;
         
-        // Generate deterministic UUID based on flight numbers + date
-        const id = generateUUID(groupKey);
-        
         // Get or create pricing entry
         let pricingEntry = pricingMap.get(groupKey);
         if (!pricingEntry) {
-          pricingEntry = {
-            id,
-            flightnumbers: flightNumbers,
-            date: itemDate,
-            DepartsAt: departsAt,
-            ArrivesAt: arrivesAt,
-            departingAirport: departingAirport,
-            arrivingAirport: arrivingAirport,
-            pricing: []
-          };
-          pricingMap.set(groupKey, pricingEntry);
-        }
-        
-        // Check if source already exists for this flight/date combo
-        const existingSource = pricingEntry.pricing.find(p => p.source === source);
-        if (existingSource) {
-          // Update existing source with new pricing data
-          updatePricingFields(existingSource, cabin, mileageCost, totalTaxes, taxesCurrency);
-        } else {
-          // Create new source entry
+          // Generate deterministic UUID based on flight numbers + date
+          const id = generateUUID(groupKey);
+          
+          // Create new pricing entry with Map for sources
+          const sourcesMap = new Map<string, PricingSource>();
           const newSource: PricingSource = {
             source,
             YPrice: null,
@@ -102,15 +94,59 @@ export function processPricingData(pages: any[]): PricingEntry[] {
             FTaxes: null,
             TaxesCurrency: taxesCurrency
           };
-          
           updatePricingFields(newSource, cabin, mileageCost, totalTaxes, taxesCurrency);
-          pricingEntry.pricing.push(newSource);
+          sourcesMap.set(source, newSource);
+          
+          pricingEntry = {
+            id,
+            flightnumbers: flightNumbers,
+            date: itemDate,
+            DepartsAt: departsAt,
+            ArrivesAt: arrivesAt,
+            departingAirport: departingAirport,
+            arrivingAirport: arrivingAirport,
+            pricing: sourcesMap
+          };
+          pricingMap.set(groupKey, pricingEntry);
+        } else {
+          // O(1) Map lookup instead of O(n) array.find()
+          const existingSource = pricingEntry.pricing.get(source);
+          if (existingSource) {
+            // Update existing source with new pricing data
+            updatePricingFields(existingSource, cabin, mileageCost, totalTaxes, taxesCurrency);
+          } else {
+            // Create new source entry
+            const newSource: PricingSource = {
+              source,
+              YPrice: null,
+              YTaxes: null,
+              WPrice: null,
+              WTaxes: null,
+              JPrice: null,
+              JTaxes: null,
+              FPrice: null,
+              FTaxes: null,
+              TaxesCurrency: taxesCurrency
+            };
+            updatePricingFields(newSource, cabin, mileageCost, totalTaxes, taxesCurrency);
+            pricingEntry.pricing.set(source, newSource);
+          }
         }
       }
     }
   }
   
-  return Array.from(pricingMap.values());
+  // Convert nested Map structure back to array format for API response
+  return Array.from(pricingMap.values()).map(entry => ({
+    id: entry.id,
+    flightnumbers: entry.flightnumbers,
+    date: entry.date,
+    DepartsAt: entry.DepartsAt,
+    ArrivesAt: entry.ArrivesAt,
+    departingAirport: entry.departingAirport,
+    arrivingAirport: entry.arrivingAirport,
+    pricing: Array.from(entry.pricing.values())
+  }));
 }
 
 /**

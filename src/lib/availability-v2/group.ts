@@ -34,7 +34,8 @@ export async function groupAndDeduplicate(mergedMap: Map<string, MergedEntry>): 
     const originCity = cityCodeCache.get(entry.originAirport)!;
     const destinationCity = cityCodeCache.get(entry.destinationAirport)!;
 
-    const groupKey = `${entry.originAirport}|${entry.destinationAirport}|${entry.date}|${alliance}`;
+    // Use array join for better performance with multiple concatenations
+    const groupKey = [entry.originAirport, entry.destinationAirport, entry.date, alliance].join('|');
     const existing = finalGroupedMap.get(groupKey);
 
     if (!existing) {
@@ -61,10 +62,10 @@ export async function groupAndDeduplicate(mergedMap: Map<string, MergedEntry>): 
           JCount: entry.JCount,
           FCount: entry.FCount,
           distance: entry.distance,
-          YFare: [...entry.YFare], // Copy array for safety in grouping phase
-          WFare: [...entry.WFare],
-          JFare: [...entry.JFare],
-          FFare: [...entry.FFare],
+          YFare: entry.YFare, // Direct reference - we use concat in merge operations
+          WFare: entry.WFare,
+          JFare: entry.JFare,
+          FFare: entry.FFare,
           YPartner: entry.YPartner,
           WPartner: entry.WPartner,
           JPartner: entry.JPartner,
@@ -104,7 +105,8 @@ export async function groupAndDeduplicate(mergedMap: Map<string, MergedEntry>): 
   for (const group of finalGroupedMap.values()) {
     const flightMap = new Map<string, FlightEntry>();
     for (const flight of group.flights) {
-      const flightKey = `${flight.FlightNumbers}|${flight.DepartsAt}|${flight.ArrivesAt}|${flight.TotalDuration}`;
+      // Use array join for better performance
+      const flightKey = [flight.FlightNumbers, flight.DepartsAt, flight.ArrivesAt, flight.TotalDuration].join('|');
       const existingFlight = flightMap.get(flightKey);
       if (!existingFlight) {
         flightMap.set(flightKey, { ...flight });
@@ -113,11 +115,11 @@ export async function groupAndDeduplicate(mergedMap: Map<string, MergedEntry>): 
         existingFlight.WCount += flight.WCount;
         existingFlight.JCount += flight.JCount;
         existingFlight.FCount += flight.FCount;
-        // Combine fare classes efficiently (keep duplicates)
-        if (flight.YFare.length > 0) existingFlight.YFare.push(...flight.YFare);
-        if (flight.WFare.length > 0) existingFlight.WFare.push(...flight.WFare);
-        if (flight.JFare.length > 0) existingFlight.JFare.push(...flight.JFare);
-        if (flight.FFare.length > 0) existingFlight.FFare.push(...flight.FFare);
+        // Combine fare classes efficiently - use concat instead of spread operator
+        if (flight.YFare.length > 0) existingFlight.YFare = existingFlight.YFare.concat(flight.YFare);
+        if (flight.WFare.length > 0) existingFlight.WFare = existingFlight.WFare.concat(flight.WFare);
+        if (flight.JFare.length > 0) existingFlight.JFare = existingFlight.JFare.concat(flight.JFare);
+        if (flight.FFare.length > 0) existingFlight.FFare = existingFlight.FFare.concat(flight.FFare);
         // Combine partner booleans using OR logic (if any flight has partner=true, result is true)
         existingFlight.YPartner = existingFlight.YPartner || flight.YPartner;
         existingFlight.WPartner = existingFlight.WPartner || flight.WPartner;

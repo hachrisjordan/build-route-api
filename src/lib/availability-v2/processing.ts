@@ -3,6 +3,50 @@ import { getDistanceThresholdCount } from '@/lib/airlines/award-thresholds';
 import { getCountMultiplier } from '@/lib/reliability';
 import { ProcessedTrip, ProcessingStats } from '@/types/availability-v2';
 
+// Module-level caches for performance optimization
+const flightNormCache = new Map<string, string>();
+const thresholdCache = new Map<string, number>();
+let callCount = 0;
+
+/**
+ * Memoized flight number normalization
+ */
+function getCachedNormalized(flightNumber: string): string {
+  let normalized = flightNormCache.get(flightNumber);
+  if (!normalized) {
+    normalized = normalizeFlightNumber(flightNumber);
+    flightNormCache.set(flightNumber, normalized);
+  }
+  return normalized;
+}
+
+/**
+ * Memoized threshold calculation with rounded keys to reduce cache size
+ */
+function getCachedThreshold(
+  prefix: string,
+  distance: number,
+  mileage: number,
+  cabin: string
+): number {
+  // Round to reduce cache key space
+  const key = `${prefix}_${Math.floor(distance/100)}_${Math.floor(mileage/1000)}_${cabin}`;
+  let result = thresholdCache.get(key);
+  if (result === undefined) {
+    result = getDistanceThresholdCount(prefix, distance, mileage, cabin);
+    thresholdCache.set(key, result);
+  }
+  return result;
+}
+
+/**
+ * Clear processing caches to prevent memory bloat
+ */
+export function clearProcessingCaches(): void {
+  flightNormCache.clear();
+  thresholdCache.clear();
+}
+
 /**
  * Processes raw availability data with early filtering and mapping
  */
@@ -20,8 +64,17 @@ export function processAvailabilityData(
   let totalTrips = 0;
   let filteredTrips = 0;
   
+  // Periodic cache clearing to prevent memory bloat
+  callCount++;
+  if (callCount % 100 === 0) {
+    clearProcessingCaches();
+  }
+  
   // Cache lowercase cabin for comparison (avoid repeated toLowerCase calls)
   const cabinLower = cabin ? cabin.toLowerCase() : null;
+  
+  // Convert Date to timestamp for faster comparisons
+  const sevenDaysAgoTime = sevenDaysAgo.getTime();
 
   for (const page of pages) {
     if (!page?.data?.length) continue;
@@ -40,9 +93,16 @@ export function processAvailabilityData(
         totalTrips++;
         
         // Combined early exit conditions (fail fast) - optimize for common rejection cases
-        if (trip.Stops !== 0 || 
-            (trip.UpdatedAt && new Date(trip.UpdatedAt) < sevenDaysAgo)) {
+        if (trip.Stops !== 0) {
           continue;
+        }
+        
+        // Use timestamp comparison instead of Date objects for better performance
+        if (trip.UpdatedAt) {
+          const updatedTime = Date.parse(trip.UpdatedAt);
+          if (updatedTime < sevenDaysAgoTime) {
+            continue;
+          }
         }
 
         // Fast cabin and seat filtering - combine conditions for better branch prediction
@@ -81,10 +141,10 @@ export function processAvailabilityData(
           // Multiple flights
           const flightNumbersArr = flightNumbers.split(/,\s*/);
           for (const flightNumber of flightNumbersArr) {
-            const normalizedFlightNumber = normalizeFlightNumber(flightNumber);
+            const normalizedFlightNumber = getCachedNormalized(flightNumber);
             const flightPrefix = normalizedFlightNumber.slice(0, 2);
 
-            const thresholdCount = getDistanceThresholdCount(flightPrefix, distance, mileageCost, tripCabin);
+            const thresholdCount = getCachedThreshold(flightPrefix, distance, mileageCost, tripCabin);
             if (thresholdCount === 0) continue;
 
             results.push({
@@ -112,10 +172,10 @@ export function processAvailabilityData(
           }
         } else {
           // Single flight
-          const normalizedFlightNumber = normalizeFlightNumber(flightNumbers);
+          const normalizedFlightNumber = getCachedNormalized(flightNumbers);
           const flightPrefix = normalizedFlightNumber.slice(0, 2);
 
-          const thresholdCount = getDistanceThresholdCount(flightPrefix, distance, mileageCost, tripCabin);
+          const thresholdCount = getCachedThreshold(flightPrefix, distance, mileageCost, tripCabin);
           if (thresholdCount > 0) {
             results.push({
               originAirport,
