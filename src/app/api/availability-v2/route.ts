@@ -4,7 +4,7 @@ import { validateApiKeyWithResponse } from '@/lib/http/auth';
 import { parseDateRange, generateDateRange } from '@/lib/availability-v2/date-utils';
 import { parseRouteId } from '@/lib/routes/parse-route-id';
 import { createSeatsAeroClient, paginateSearch } from '@/lib/clients/seats-aero';
-import { CONCURRENCY_CONFIG } from '@/lib/concurrency-config';
+import { CONCURRENCY_CONFIG, PERFORMANCE_MONITORING } from '@/lib/concurrency-config';
 import { getSupabaseConfig } from '@/lib/env-utils';
 import { getReliabilityTableCached } from '@/lib/reliability-cache';
 import { processAvailabilityData } from '@/lib/availability-v2/processing';
@@ -30,10 +30,23 @@ export async function POST(req: NextRequest) {
   let parseResult: any = null;
   let seatsAeroRequests = 0;
   
+  // Track active requests for monitoring
+  const activeRequests = (global as any).__activeRequests || 0;
+  (global as any).__activeRequests = activeRequests + 1;
+  
+  // Track memory before request
+  const memBefore = process.memoryUsage();
+  
+  // Increment performance monitoring
+  PERFORMANCE_MONITORING.incrementRequest();
+  
   try {
     // 1. Authentication & Validation
     const { apiKey, errorResponse } = validateApiKeyWithResponse(req);
-    if (errorResponse) return errorResponse;
+    if (errorResponse) {
+      (global as any).__activeRequests = Math.max(0, ((global as any).__activeRequests || 1) - 1);
+      return errorResponse;
+    }
     
     const body = await req.json();
     parseResult = availabilityV2Schema.safeParse(body);
@@ -257,40 +270,93 @@ export async function POST(req: NextRequest) {
     if (carriers) baseParams.carriers = carriers;
 
     const client = createSeatsAeroClient(apiKey!);
+    const fetchStartTime = Date.now();
+    
+    // Use incremental processing callback to track pages as they arrive
+    // (for monitoring and potential future optimization)
     const { pages: allPages, requestCount, rateLimit } = await paginateSearch(
       client,
       API_CONFIG.SEATS_AERO_BASE_URL,
       baseParams,
-      API_CONFIG.MAX_PAGINATION_PAGES
+      API_CONFIG.MAX_PAGINATION_PAGES,
+      (page, pageIndex) => {
+        // Callback for incremental processing - currently used for monitoring
+        // Pages are still accumulated in allPages for processing functions
+        if (pageIndex === 0) {
+          console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} First page received`);
+        }
+      }
     );
     seatsAeroRequests += requestCount;
+    const fetchTime = Date.now();
+    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Fetch: ${fetchTime - fetchStartTime}ms (${requestCount} requests, ${allPages.length} pages)`);
 
-    // 4.5. Pricing Data Processing (if binbin=true)
-    // Note: If we reach here, we didn't return early, so we need to process pricing from allPages
+    // 4.5. Data Processing Pipeline - Process availability and pricing in parallel when both needed
+    const processStartTime = Date.now();
     let pricingData = null;
+    let results: any[] = [];
+    let stats: any = null;
+
     if (binbin === true) {
-      pricingData = processPricingData(allPages);
+      // Parallel processing when both availability and pricing are needed
+      const [availabilityResult, pricingResult] = await Promise.all([
+        Promise.resolve(processAvailabilityData(
+          allPages,
+          cabin,
+          seats,
+          sevenDaysAgo,
+          reliabilityTable
+        )),
+        Promise.resolve(processPricingData(allPages))
+      ]);
+      
+      results = availabilityResult.results;
+      stats = availabilityResult.stats;
+      pricingData = pricingResult;
+      
       // Pricing log is optional - only log if significant
       if (pricingData.length > 0) {
         console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Pricing: ${pricingData.length} entries`);
       }
+    } else {
+      // Only process availability data
+      const availabilityResult = processAvailabilityData(
+        allPages,
+        cabin,
+        seats,
+        sevenDaysAgo,
+        reliabilityTable
+      );
+      results = availabilityResult.results;
+      stats = availabilityResult.stats;
     }
 
-    // 5. Data Processing Pipeline
-    const { results, stats } = processAvailabilityData(
-      allPages,
-      cabin,
-      seats,
-      sevenDaysAgo,
-      reliabilityTable
-    );
+    const processTime = Date.now();
+    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Process: ${processTime - processStartTime}ms (${results.length} results)`);
 
+    // Clear allPages immediately after processing to free memory
+    // This is critical to prevent memory accumulation
+    allPages.length = 0;
+    
+    // Monitor memory after clearing
+    const memAfterClear = process.memoryUsage();
+    const memFreed = (memBefore.heapUsed - memAfterClear.heapUsed) / 1024 / 1024;
+    if (memFreed > 10) { // Only log if significant memory was freed (>10MB)
+      console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Memory: ${Math.round(memAfterClear.heapUsed / 1024 / 1024)}MB (freed ${Math.round(memFreed)}MB)`);
+    }
+
+    const mergeStartTime = Date.now();
     const mergedMap = mergeProcessedTrips(results, reliabilityTable);
+    const mergeTime = Date.now();
+    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Merge: ${mergeTime - mergeStartTime}ms (${mergedMap.size} entries)`);
 
+    const groupStartTime = Date.now();
     const groupedResults = await groupAndDeduplicate(mergedMap);
+    const groupTime = Date.now();
+    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Group: ${groupTime - groupStartTime}ms (${groupedResults.length} groups)`);
     
     // Combined processing stats log
-    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Process: ${stats.totalItems} items, ${stats.filteredTrips}/${stats.totalTrips} trips → ${mergedMap.size} merged → ${groupedResults.length} groups`);
+    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Stats: ${stats.totalItems} items, ${stats.filteredTrips}/${stats.totalTrips} trips → ${mergedMap.size} merged → ${groupedResults.length} groups`);
 
     // 5.5. Save groups to cache (group by originAirport-destinationAirport-date to combine all alliances)
     const groupsByKey = new Map<string, { originAirport: string; destinationAirport: string; date: string; groups: GroupedResult[] }>();
@@ -425,7 +491,8 @@ export async function POST(req: NextRequest) {
     }
 
     // 7. Response Building
-    return buildAvailabilityResponse({
+    const responseStartTime = Date.now();
+    const response = buildAvailabilityResponse({
       groupedResults,
       seatsAeroRequests,
       rateLimit,
@@ -439,8 +506,25 @@ export async function POST(req: NextRequest) {
       startTime,
       pricingData
     });
+    const responseTime = Date.now();
+    
+    // Final timing summary
+    const totalTime = Date.now() - startTime;
+    const memAfter = process.memoryUsage();
+    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Total: ${totalTime}ms | Fetch: ${fetchTime - fetchStartTime}ms | Process: ${processTime - processStartTime}ms | Merge: ${mergeTime - mergeStartTime}ms | Group: ${groupTime - groupStartTime}ms | Response: ${responseTime - responseStartTime}ms | Memory: ${Math.round(memAfter.heapUsed / 1024 / 1024)}MB | Active: ${(global as any).__activeRequests || 0}`);
+    
+    // Decrement active requests
+    (global as any).__activeRequests = Math.max(0, ((global as any).__activeRequests || 1) - 1);
+    
+    return response;
 
   } catch (error: any) {
+    // Decrement active requests on error
+    (global as any).__activeRequests = Math.max(0, ((global as any).__activeRequests || 1) - 1);
+    
+    // Track error in performance monitoring
+    PERFORMANCE_MONITORING.incrementError();
+    
     return handleAvailabilityError(error, req, {
       route: 'availability-v2',
       routeId: parseResult?.data?.routeId,
