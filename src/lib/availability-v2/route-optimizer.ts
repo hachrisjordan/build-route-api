@@ -358,7 +358,7 @@ function packStarsIntoBinsWithDateRanges(
 }
 
 /**
- * Ultra-aggressive consolidation - pack bins until hitting 1000 limit (using actual date ranges)
+ * Ultra-aggressive consolidation - pack bins until hitting 2000 limit (using actual date ranges)
  */
 function consolidateAggressivelyWithDateRanges(
   bins: Bin[],
@@ -433,7 +433,7 @@ export async function optimizeRouteGroups(
   endDate: string
 ): Promise<OptimizedGroup[]> {
   const routeCountData = loadRouteCountData();
-  const MAX_RESULTS = 1000;
+  const MAX_RESULTS = 2000;
   
   console.log(`[route-optimizer] Starting optimization for ${queryParamsArr.length} routes`);
   
