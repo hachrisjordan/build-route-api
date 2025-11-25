@@ -424,6 +424,14 @@ function consolidateAggressivelyWithDateRanges(
 }
 
 /**
+ * Result type for route optimization
+ */
+export interface RouteOptimizationResult {
+  optimizedGroups: OptimizedGroup[];
+  cachedRoutes: string[];
+}
+
+/**
  * Main optimization function
  * Applies star decomposition + ultra-aggressive consolidation with cache awareness
  */
@@ -431,7 +439,7 @@ export async function optimizeRouteGroups(
   queryParamsArr: string[],
   startDate: string,
   endDate: string
-): Promise<OptimizedGroup[]> {
+): Promise<RouteOptimizationResult> {
   const routeCountData = loadRouteCountData();
   const MAX_RESULTS = 4000;
   
@@ -441,20 +449,25 @@ export async function optimizeRouteGroups(
   const routeRanges = await Promise.all(
     queryParamsArr.map(async (route) => {
       const [origin, destination] = route.split('-');
+      if (!origin || !destination) {
+        // Invalid route format, treat as needing fetch
+        return { route, start: startDate, end: endDate, needsFetch: true };
+      }
       const range = await getOptimalDateRangeForRoute(origin, destination, startDate, endDate);
       return { route, ...range };
     })
   );
   
-  // Step 2: Filter out fully cached routes
+  // Step 2: Separate fully cached routes from routes that need fetching
   const uncachedRoutes = routeRanges.filter(r => r.needsFetch);
+  const cachedRoutes = routeRanges.filter(r => !r.needsFetch).map(r => r.route);
   
   if (uncachedRoutes.length === 0) {
-    console.log('[route-optimizer] All routes fully cached, no API calls needed');
-    return [];
+    console.log(`[route-optimizer] All routes fully cached, no API calls needed (${cachedRoutes.length} cached routes)`);
+    return { optimizedGroups: [], cachedRoutes };
   }
   
-  console.log(`[route-optimizer] ${uncachedRoutes.length}/${queryParamsArr.length} routes need fetching`);
+  console.log(`[route-optimizer] ${uncachedRoutes.length}/${queryParamsArr.length} routes need fetching, ${cachedRoutes.length} fully cached`);
   
   // Step 3: Extract just the route strings for decomposition
   const routesToOptimize = uncachedRoutes.map(r => r.route);
@@ -500,11 +513,11 @@ export async function optimizeRouteGroups(
   const avgUtilization = (optimizedGroups.reduce((sum, g) => sum + g.estimatedResults, 0) / 
                           (optimizedGroups.length * MAX_RESULTS) * 100).toFixed(1);
   
-  console.log(`[route-optimizer] Final: ${queryParamsArr.length} routes → ${optimizedGroups.length} API calls`);
-  console.log(`[route-optimizer] Reduction: ${((1 - optimizedGroups.length / queryParamsArr.length) * 100).toFixed(1)}%`);
+  console.log(`[route-optimizer] Final: ${uncachedRoutes.length} routes → ${optimizedGroups.length} API calls`);
+  console.log(`[route-optimizer] Reduction: ${((1 - optimizedGroups.length / uncachedRoutes.length) * 100).toFixed(1)}%`);
   console.log(`[route-optimizer] Needed routes: ${totalNeeded}, Total combos: ${totalCombos}`);
   console.log(`[route-optimizer] Avg utilization: ${avgUtilization}%`);
   
-  return optimizedGroups;
+  return { optimizedGroups, cachedRoutes };
 }
 

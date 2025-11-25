@@ -224,57 +224,105 @@ export async function POST(req: NextRequest) {
     // Note: Use seatsAeroEndDate (endDate + 3 days) to match what availability-v2 actually fetches
     const { optimizeRouteGroups } = await import('@/lib/availability-v2/route-optimizer');
     const { computeSeatsAeroEndDate } = await import('@/lib/availability-v2/date-utils');
+    const { buildAvailabilityResultsFromSegmentCache } = await import('@/lib/availability/segment-cache-builder');
     const seatsAeroEndDate = computeSeatsAeroEndDate(endDate);
     
-    const optimizedGroups = await optimizeRouteGroups(
+    const { optimizedGroups, cachedRoutes } = await optimizeRouteGroups(
       routePathData.queryParamsArr,
       startDate,
       seatsAeroEndDate
     );
-    
-    // If all routes are cached at the segment level, we still need to fetch cached availability responses
-    // Build individual route groups from queryParamsArr so fetchAvailabilityForGroups can retrieve cached responses
-    let apiCallGroups: Array<{ routeId: string; dateRange?: { start: string; end: string } }>;
-    
-    if (optimizedGroups.length === 0) {
-      console.log('[build-itineraries] All routes fully cached at segment level, fetching cached availability responses');
-      // When all segments are cached, create route groups from queryParamsArr
-      // fetchAvailabilityForGroups will retrieve cached responses for these routes
-      apiCallGroups = routePathData.queryParamsArr.map(route => ({
-        routeId: route,
-        dateRange: { start: startDate, end: seatsAeroEndDate }
-      }));
-      console.log(`[build-itineraries] Created ${apiCallGroups.length} route groups from queryParamsArr for cached data retrieval`);
-    } else {
-      // Convert optimized groups to API call format
-      apiCallGroups = optimizedGroups.map(group => ({
-        routeId: `${group.origins.join('/')}-${group.destinations.join('/')}`,
-        dateRange: group.dateRange
-      }));
-      console.log(`[build-itineraries] Optimized ${routePathData.queryParamsArr.length} routes → ${apiCallGroups.length} API calls`);
-    }
 
     // Process seats.aero API links
 
-    // 4. For each group, call availability-v2 in parallel (limit 10 at a time)
+    // 4. Handle three cases: all cached, some cached, none cached
     // Start performance monitoring
     PERFORMANCE_MONITORING.start();
     
-    const { results: availabilityResults, minRateLimitRemaining: minRateLimitRemainingFetched, minRateLimitReset: minRateLimitResetFetched } = await fetchAvailabilityForGroups(apiCallGroups, {
-      baseUrl,
-      apiKey,
+    let availabilityResults: Array<{ routeId: string; error: boolean; data: any }>;
+    let minRateLimitRemaining: number | null = null;
+    let minRateLimitReset: number | null = null;
+    let totalSeatsAeroHttpRequests = 0;
+
+    // Case 1: All routes cached (optimizedGroups.length === 0)
+    if (optimizedGroups.length === 0) {
+      console.log(`[build-itineraries] All routes fully cached at segment level (${cachedRoutes.length} routes), building from segment cache`);
+      availabilityResults = await buildAvailabilityResultsFromSegmentCache(
+        cachedRoutes,
         startDate,
         endDate,
-      cabin,
-      carriers,
-      seats,
-      united,
-      binbin,
-      maxStop,
-      concurrency: CONCURRENCY_CONFIG.AVAILABILITY_CONCURRENT_REQUESTS,
-    });
-    let minRateLimitRemaining: number | null = minRateLimitRemainingFetched;
-    let minRateLimitReset: number | null = minRateLimitResetFetched;
+        seatsAeroEndDate,
+        binbin || false
+      );
+      console.log(`[build-itineraries] Built availability results from segment-level cache for ${cachedRoutes.length} routes`);
+    }
+    // Case 2: Some routes cached, some need fetching (optimizedGroups.length > 0 && cachedRoutes.length > 0)
+    else if (cachedRoutes.length > 0) {
+      console.log(`[build-itineraries] Mixed cache state: ${cachedRoutes.length} routes cached, ${optimizedGroups.length} groups need fetching`);
+      
+      // Fetch uncached routes via API
+      const apiCallGroups = optimizedGroups.map(group => ({
+        routeId: `${group.origins.join('/')}-${group.destinations.join('/')}`,
+        dateRange: group.dateRange
+      }));
+      
+      const { results: fetchedResults, minRateLimitRemaining: fetchedMinRateLimit, minRateLimitReset: fetchedMinRateReset } = await fetchAvailabilityForGroups(apiCallGroups, {
+        baseUrl,
+        apiKey,
+        startDate,
+        endDate,
+        cabin,
+        carriers,
+        seats,
+        united,
+        binbin,
+        maxStop,
+        concurrency: CONCURRENCY_CONFIG.AVAILABILITY_CONCURRENT_REQUESTS,
+      });
+
+      // Build cached routes from segment cache
+      const cachedResults = await buildAvailabilityResultsFromSegmentCache(
+        cachedRoutes,
+        startDate,
+        endDate,
+        seatsAeroEndDate,
+        binbin || false
+      );
+
+      // Merge results: fetched first, then cached
+      availabilityResults = [...fetchedResults, ...cachedResults];
+      minRateLimitRemaining = fetchedMinRateLimit;
+      minRateLimitReset = fetchedMinRateReset;
+      
+      console.log(`[build-itineraries] Merged results: ${fetchedResults.length} fetched + ${cachedResults.length} cached = ${availabilityResults.length} total`);
+    }
+    // Case 3: All routes need fetching (cachedRoutes.length === 0)
+    else {
+      console.log(`[build-itineraries] All routes need fetching (${optimizedGroups.length} optimized groups)`);
+      
+      const apiCallGroups = optimizedGroups.map(group => ({
+        routeId: `${group.origins.join('/')}-${group.destinations.join('/')}`,
+        dateRange: group.dateRange
+      }));
+      
+      const { results: fetchedResults, minRateLimitRemaining: fetchedMinRateLimit, minRateLimitReset: fetchedMinRateReset } = await fetchAvailabilityForGroups(apiCallGroups, {
+        baseUrl,
+        apiKey,
+        startDate,
+        endDate,
+        cabin,
+        carriers,
+        seats,
+        united,
+        binbin,
+        maxStop,
+        concurrency: CONCURRENCY_CONFIG.AVAILABILITY_CONCURRENT_REQUESTS,
+      });
+
+      availabilityResults = fetchedResults;
+      minRateLimitRemaining = fetchedMinRateLimit;
+      minRateLimitReset = fetchedMinRateReset;
+    }
     
     // Log performance metrics
     PERFORMANCE_MONITORING.logMetrics();
@@ -283,7 +331,7 @@ export async function POST(req: NextRequest) {
     // Availability fetch completed
 
     // Sum up the total number of actual seats.aero HTTP requests (including paginated)
-    let totalSeatsAeroHttpRequests = 0;
+    // Only count requests from fetched results (cached results have seatsAeroRequests = 0)
     for (const result of availabilityResults) {
       if (
         !result.error &&
