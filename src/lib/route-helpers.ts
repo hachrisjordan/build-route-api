@@ -249,7 +249,11 @@ async function fetchPathsByMaxStopBatch(
   }
 
   const { data, error } = await query;
-  if (error || !data) return [];
+  if (error) {
+    console.error(`[fetchPathsBySubregionsBatch] Query error for maxStop=${maxStop}, offset=${offset}:`, error);
+    return [];
+  }
+  if (!data) return [];
   return data as unknown as Path[];
 }
 
@@ -363,7 +367,11 @@ async function fetchPathsBySubregionsBatch(
   }
 
   const { data, error } = await query;
-  if (error || !data) return [];
+  if (error) {
+    console.error(`[fetchPathsBySubregionsBatch] Query error for maxStop=${maxStop}, offset=${offset}:`, error);
+    return [];
+  }
+  if (!data) return [];
   return data as unknown as Path[];
 }
 
@@ -394,13 +402,23 @@ export async function fetchPathsBySubregions(
 
   const { count, error: countError } = await countQuery;
   
-  if (countError || count === null) {
+  if (countError) {
+    console.error(`[fetchPathsBySubregions] Count query error for maxStop=${maxStop}:`, countError);
     console.warn('Failed to get count, falling back to single batch');
     const defaultBatchSize = batchSize || CONCURRENCY_CONFIG.DATABASE_BATCH_SIZE;
     return fetchPathsBySubregionsBatch(supabase, originSubregions, destinationSubregions, maxStop, 0, defaultBatchSize);
   }
   
-  if (count === 0) return [];
+  if (count === null) {
+    console.warn('[fetchPathsBySubregions] Count is null, falling back to single batch');
+    const defaultBatchSize = batchSize || CONCURRENCY_CONFIG.DATABASE_BATCH_SIZE;
+    return fetchPathsBySubregionsBatch(supabase, originSubregions, destinationSubregions, maxStop, 0, defaultBatchSize);
+  }
+  
+  if (count === 0) {
+    console.log(`[fetchPathsBySubregions] No paths found for maxStop=${maxStop}, originSubregions=[${originSubregions.join(',')}], destinationSubregions=[${destinationSubregions.join(',')}]`);
+    return [];
+  }
   
   // Use dynamic batch sizing based on dataset size for better performance
   const optimalBatchSize = batchSize || calculateOptimalBatchSize(count);

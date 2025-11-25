@@ -433,7 +433,7 @@ export async function optimizeRouteGroups(
   endDate: string
 ): Promise<OptimizedGroup[]> {
   const routeCountData = loadRouteCountData();
-  const MAX_RESULTS = 2000;
+  const MAX_RESULTS = 4000;
   
   console.log(`[route-optimizer] Starting optimization for ${queryParamsArr.length} routes`);
   

@@ -232,18 +232,27 @@ export async function POST(req: NextRequest) {
       seatsAeroEndDate
     );
     
-    // If all routes are cached, we still need to proceed but with empty groups
-    if (optimizedGroups.length === 0) {
-      console.log('[build-itineraries] All routes fully cached, proceeding with cached data only');
-    }
+    // If all routes are cached at the segment level, we still need to fetch cached availability responses
+    // Build individual route groups from queryParamsArr so fetchAvailabilityForGroups can retrieve cached responses
+    let apiCallGroups: Array<{ routeId: string; dateRange?: { start: string; end: string } }>;
     
-    // Convert optimized groups to API call format
-    const apiCallGroups = optimizedGroups.map(group => ({
-      routeId: `${group.origins.join('/')}-${group.destinations.join('/')}`,
-      dateRange: group.dateRange
-    }));
-
-    console.log(`[build-itineraries] Optimized ${routePathData.queryParamsArr.length} routes → ${apiCallGroups.length} API calls`);
+    if (optimizedGroups.length === 0) {
+      console.log('[build-itineraries] All routes fully cached at segment level, fetching cached availability responses');
+      // When all segments are cached, create route groups from queryParamsArr
+      // fetchAvailabilityForGroups will retrieve cached responses for these routes
+      apiCallGroups = routePathData.queryParamsArr.map(route => ({
+        routeId: route,
+        dateRange: { start: startDate, end: seatsAeroEndDate }
+      }));
+      console.log(`[build-itineraries] Created ${apiCallGroups.length} route groups from queryParamsArr for cached data retrieval`);
+    } else {
+      // Convert optimized groups to API call format
+      apiCallGroups = optimizedGroups.map(group => ({
+        routeId: `${group.origins.join('/')}-${group.destinations.join('/')}`,
+        dateRange: group.dateRange
+      }));
+      console.log(`[build-itineraries] Optimized ${routePathData.queryParamsArr.length} routes → ${apiCallGroups.length} API calls`);
+    }
 
     // Process seats.aero API links
 
@@ -357,14 +366,30 @@ export async function POST(req: NextRequest) {
     performanceMetrics.flightConnectionMatrix = Date.now() - flightConnectionStart;
 
     // 6. Pre-filter routes based on segment availability (fail-fast optimization)
+    // Skip pre-filtering in region mode - routes are already validated by subregion query
     const preFilterStart = Date.now();
-    const { allRoutes, validRoutes } = prefilterValidRoutes(processedRoutes as FullRoutePathResult[], filteredSegmentPool);
+    let allRoutes: FullRoutePathResult[];
+    let validRoutes: FullRoutePathResult[];
+    
+    if (region) {
+      // In region mode, skip pre-filtering since routes are already validated
+      allRoutes = processedRoutes as FullRoutePathResult[];
+      validRoutes = allRoutes;
+      console.log(`[build-itineraries] Skipping route pre-filtering in region mode (${allRoutes.length} routes)`);
+    } else {
+      const prefilterResult = prefilterValidRoutes(processedRoutes as FullRoutePathResult[], filteredSegmentPool);
+      allRoutes = prefilterResult.allRoutes;
+      validRoutes = prefilterResult.validRoutes;
+      console.log(`[build-itineraries] Route pre-filtering: ${allRoutes.length} → ${validRoutes.length} routes`);
+    }
     
     const preFilterTime = Date.now() - preFilterStart;
     performanceMetrics.routePreFiltering = preFilterTime;
     // Route pre-filtering completed
 
     // 7. Optimized parallel route processing
+    console.log(`[build-itineraries] Starting itinerary building with ${validRoutes.length} valid routes, maxStop=${maxStop}, region=${region}`);
+    
     const output: Record<string, Record<string, string[][]>> = {};
     const flightMap = new Map<string, AvailabilityFlight>();
     const itineraryBuildStart = Date.now();
@@ -375,6 +400,7 @@ export async function POST(req: NextRequest) {
     if (maxStop === 0) {
       const direct = await buildDirectItineraries(originStr, destinationStr, filteredSegmentPool, flightMap);
       Object.assign(output, direct);
+      console.log(`[build-itineraries] Built ${Object.keys(output).length} direct route groups from ${validRoutes.length} routes`);
     } else {
     
     // Build itineraries across routes (parallel or sequential)
@@ -390,6 +416,7 @@ export async function POST(req: NextRequest) {
     Object.assign(output, built.output);
     itineraryMetrics = built.metrics;
     routeStructureMap = built.routeStructureMap;
+    console.log(`[build-itineraries] Built ${Object.keys(output).length} route groups from ${validRoutes.length} routes`);
     } // End of else block for maxStop > 0
 
     // NOTE: While composeItineraries deduplicates within its own results, 

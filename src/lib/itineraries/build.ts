@@ -3,6 +3,7 @@ import type { FullRoutePathResult } from '@/types/route';
 import type { AvailabilityFlight, AvailabilityGroup } from '@/types/availability';
 import { composeItineraries } from '@/lib/itineraries/construction';
 import { isCityCode, getCityAirports, getAirportCityCode } from '@/lib/airports/city-groups';
+import { isUnreliableFlight } from '@/lib/early-filter';
 
 export interface ItineraryMetrics {
   phases: {
@@ -78,6 +79,9 @@ for (let i = 0; i < codes.length - 1; i++) {
         const [from, to] = segments[i]!;
         const segmentFlights: AvailabilityGroup[] = [];
         
+        // Check if this is the h1-h2 segment (connection between hubs)
+        const isH1H2Segment = route.h1 && route.h2 && from === route.h1 && to === route.h2;
+        
         // Collect all flights for this segment by expanding city codes
         const fromAirports = isCityCode(from) ? getCityAirports(from) : [from];
         const toAirports = isCityCode(to) ? getCityAirports(to) : [to];
@@ -86,7 +90,26 @@ for (let i = 0; i < codes.length - 1; i++) {
           for (const toAirport of toAirports) {
             const segKey = `${fromAirport}-${toAirport}`;
             const avail = segmentAvailability[segKey] || [];
-            segmentFlights.push(...avail);
+            
+            if (isH1H2Segment) {
+              // Filter out unreliable flights for h1-h2 segment
+              const filteredAvail = avail.map(group => {
+                const reliableFlights = group.flights.filter(flight => !isUnreliableFlight(flight));
+                
+                if (reliableFlights.length === 0) {
+                  return null; // No reliable flights in this group
+                }
+                
+                return {
+                  ...group,
+                  flights: reliableFlights
+                };
+              }).filter((group): group is AvailabilityGroup => group !== null);
+              
+              segmentFlights.push(...filteredAvail);
+            } else {
+              segmentFlights.push(...avail);
+            }
           }
         }
         
@@ -294,6 +317,9 @@ for (let i = 0; i < codes.length - 1; i++) {
         const [from, to] = segments[i]!;
         const segmentFlights: AvailabilityGroup[] = [];
         
+        // Check if this is the h1-h2 segment (connection between hubs)
+        const isH1H2Segment = route.h1 && route.h2 && from === route.h1 && to === route.h2;
+        
         // Collect all flights for this segment by expanding city codes
         const fromAirports = isCityCode(from) ? getCityAirports(from) : [from];
         const toAirports = isCityCode(to) ? getCityAirports(to) : [to];
@@ -302,7 +328,26 @@ for (let i = 0; i < codes.length - 1; i++) {
           for (const toAirport of toAirports) {
             const segKey = `${fromAirport}-${toAirport}`;
             const avail = segmentAvailability[segKey] || [];
-            segmentFlights.push(...avail);
+            
+            if (isH1H2Segment) {
+              // Filter out unreliable flights for h1-h2 segment
+              const filteredAvail = avail.map(group => {
+                const reliableFlights = group.flights.filter(flight => !isUnreliableFlight(flight));
+                
+                if (reliableFlights.length === 0) {
+                  return null; // No reliable flights in this group
+                }
+                
+                return {
+                  ...group,
+                  flights: reliableFlights
+                };
+              }).filter((group): group is AvailabilityGroup => group !== null);
+              
+              segmentFlights.push(...filteredAvail);
+            } else {
+              segmentFlights.push(...avail);
+            }
           }
         }
         
