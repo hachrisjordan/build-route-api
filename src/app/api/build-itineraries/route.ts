@@ -81,6 +81,11 @@ export async function POST(req: NextRequest) {
     const seats = typeof requestData.seats === 'number' && requestData.seats > 0 ? requestData.seats : 1;
     const united = requestData.united || false;
     const binbin = requestData.binbin ?? false;
+    const region = requestData.region ?? false;
+    
+    // Normalize origin/destination for API calls (convert arrays to strings if needed)
+    const originStr = Array.isArray(origin) ? origin.join('/') : origin;
+    const destinationStr = Array.isArray(destination) ? destination.join('/') : destination;
     
     if (united) {
       // United parameter enabled - will adjust seat counts for UA flights based on pz table data
@@ -102,14 +107,14 @@ export async function POST(req: NextRequest) {
     const filterParams = buildFilterParamsFromUrl(req.url);
 
     // --- Try optimized cache first (includes filter parameters) ---
-    const optimizedCacheKey = getOptimizedCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united, binbin }, filterParams);
+    const optimizedCacheKey = getOptimizedCacheKey({ origin: originStr, destination: destinationStr, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united, binbin, region }, filterParams);
     let cachedOptimized = await getCachedOptimizedItineraries(optimizedCacheKey);
     if (cachedOptimized) {
       return NextResponse.json(cachedOptimized);
     }
 
     // --- Fallback to original cache for raw data ---
-    const cacheKey = getCacheKey({ origin, destination, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united });
+    const cacheKey = getCacheKey({ origin: originStr, destination: destinationStr, maxStop, startDate, endDate, cabin, carriers, minReliabilityPercent, seats, united, region });
     let cached = await getCachedItineraries(cacheKey);
     if (cached) {
       const { itineraries, flights, pricing, routeStructures, minRateLimitRemaining, minRateLimitReset, totalSeatsAeroHttpRequests } = cached;
@@ -186,7 +191,13 @@ export async function POST(req: NextRequest) {
     const baseUrl = buildBaseUrl(req);
 
     // 2. Call create-full-route-path API
-    const routePathData: RoutePathResponse = await fetchRoutePaths(baseUrl, { origin, destination, maxStop, binbin });
+    const routePathData: RoutePathResponse = await fetchRoutePaths(baseUrl, { 
+      origin: region ? origin : originStr, 
+      destination: region ? destination : destinationStr, 
+      maxStop, 
+      binbin,
+      region
+    });
     const { routes } = routePathData;
     if (!routes || !Array.isArray(routes) || routes.length === 0) {
       return NextResponse.json({ error: 'No eligible routes found' }, { status: 404 });
@@ -312,18 +323,24 @@ export async function POST(req: NextRequest) {
     const { table: reliabilityTable, map: reliabilityMap } = await getReliabilityData();
     performanceMetrics.reliabilityCache = Date.now() - reliabilityStart;
     
-    // Compute direct distance for O/D threshold and prepare airport cache
-    const { airportMap, directDistanceMiles } = await getAirportData(
-      origin,
-      destination,
-      segmentPool,
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
+    // Compute direct distance for O/D threshold and prepare airport cache (skip in region mode)
+    let airportMap: Record<string, any> = {};
+    let directDistanceMiles = 0;
+    if (!region) {
+      const airportData = await getAirportData(
+        originStr,
+        destinationStr,
+        segmentPool,
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      );
+      airportMap = airportData.airportMap;
+      directDistanceMiles = airportData.directDistanceMiles;
+    }
 
-    // Filter segments: remove unreliable intermediate segments but prune long unreliable O/D segments
+    // Filter segments: remove unreliable intermediate segments but prune long unreliable O/D segments (skip in region mode)
     const segmentFilterStart = Date.now();
-    const filteredSegmentPool = filterUnreliableSegments(segmentPool, origin, destination, minReliabilityPercent, airportMap, directDistanceMiles);
+    const filteredSegmentPool = region ? segmentPool : filterUnreliableSegments(segmentPool, originStr, destinationStr, minReliabilityPercent, airportMap, directDistanceMiles);
     performanceMetrics.segmentFiltering = Date.now() - segmentFilterStart;
 
     // PHASE 1 OPTIMIZATION: Pre-compute flight metadata and connection matrices from filtered pool
@@ -356,7 +373,7 @@ export async function POST(req: NextRequest) {
     
     // Special handling for direct flights (maxStop=0)
     if (maxStop === 0) {
-      const direct = await buildDirectItineraries(origin, destination, filteredSegmentPool, flightMap);
+      const direct = await buildDirectItineraries(originStr, destinationStr, filteredSegmentPool, flightMap);
       Object.assign(output, direct);
     } else {
     
@@ -368,7 +385,7 @@ export async function POST(req: NextRequest) {
       connectionMatrix,
       routeToOriginalMap,
       { parallel: validRoutes.length > 5 }, // Lower threshold
-      { origin, destination }
+      { origin: originStr, destination: destinationStr, region }
     );
     Object.assign(output, built.output);
     itineraryMetrics = built.metrics;

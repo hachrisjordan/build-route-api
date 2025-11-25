@@ -216,9 +216,28 @@ export class BatchProcessorService {
     destinationList: string[],
     maxStop: number,
     cacheService: RoutePathCacheService,
-    performanceMonitor: APIPerformanceMonitor
+    performanceMonitor: APIPerformanceMonitor,
+    region?: boolean
   ): Promise<BatchProcessingResult> {
     const startTime = performance.now();
+    
+    // In region mode, skip airport and intra-routes fetching
+    if (region === true) {
+      return {
+        airportsFetched: 0,
+        regionCombinations: new Map(),
+        sharedPathsData: {},
+        intraRoutePairs: [],
+        globalIntraRoutesData: {},
+        processingStats: {
+          airportsTime: 0,
+          regionAnalysisTime: 0,
+          pathsFetchTime: 0,
+          intraRoutesAnalysisTime: 0,
+          intraRoutesFetchTime: 0,
+        }
+      };
+    }
     
     // Step 1: Pre-fetch all airports
     const airportsFetched = await this.preFetchAirports(

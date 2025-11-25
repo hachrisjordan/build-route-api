@@ -145,6 +145,24 @@ export class RouteOrchestratorService {
     context: RouteOrchestrationContext,
     performanceMonitor: APIPerformanceMonitor
   ): Promise<any> {
+    // In region mode, skip city expansion and batch processing
+    if (context.validatedData.region === true) {
+      return {
+        airportsFetched: 0,
+        regionCombinations: new Map(),
+        sharedPathsData: {},
+        intraRoutePairs: [],
+        globalIntraRoutesData: {},
+        processingStats: {
+          airportsTime: 0,
+          regionAnalysisTime: 0,
+          pathsFetchTime: 0,
+          intraRoutesAnalysisTime: 0,
+          intraRoutesFetchTime: 0,
+        }
+      };
+    }
+    
     // Initialize city groups first
     await initializeCityGroups();
 
@@ -168,14 +186,15 @@ export class RouteOrchestratorService {
       }
     }
 
-    const batchResult = await BatchProcessorService.processBatchData(
-      context.supabase,
-      expandedOriginList,
-      expandedDestinationList,
-      context.validatedData.maxStop,
-      context.cacheService,
-      performanceMonitor
-    );
+      const batchResult = await BatchProcessorService.processBatchData(
+        context.supabase,
+        expandedOriginList,
+        expandedDestinationList,
+        context.validatedData.maxStop,
+        context.cacheService,
+        performanceMonitor,
+        context.validatedData.region
+      );
 
     console.log(`Batch processing completed: ${batchResult.airportsFetched} airports, ${batchResult.regionCombinations.size} region combinations, ${Object.keys(batchResult.sharedPathsData).length} shared path groups`);
 
@@ -197,36 +216,55 @@ export class RouteOrchestratorService {
     const { originList, destinationList, maxStop } = context.validatedData;
     const pairPromises = [];
 
-    // Create route calculation promises for all pairs
-    for (const origin of originList) {
-      for (const destination of destinationList) {
-        // Expand city codes to airports
-        const originAirports = isCityCode(origin) ? getCityAirports(origin) : [origin];
-        const destinationAirports = isCityCode(destination) ? getCityAirports(destination) : [destination];
+    // Handle region mode vs airport mode
+    if (context.validatedData.region === true) {
+      // Region mode: process all subregions at once (originList and destinationList are already arrays of subregions)
+      const calculator = new RouteCalculatorService();
+      pairPromises.push(
+        calculator.calculateFullRoutePath({
+          origin: originList[0] || '', // Used for identifier construction in calculator
+          destination: destinationList[0] || '', // Used for identifier construction in calculator
+          maxStop,
+          supabase: context.supabase,
+          cacheService: context.cacheService,
+          binbin: context.validatedData.binbin,
+          region: true,
+          originSubregions: originList,
+          destinationSubregions: destinationList
+        })
+      );
+    } else {
+      // Airport mode: expand city codes and process airport pairs
+      for (const origin of originList) {
+        for (const destination of destinationList) {
+          // Expand city codes to airports
+          const originAirports = isCityCode(origin) ? getCityAirports(origin) : [origin];
+          const destinationAirports = isCityCode(destination) ? getCityAirports(destination) : [destination];
 
-        // Calculate routes for all airport combinations
-        for (const originAirport of originAirports) {
-          for (const destinationAirport of destinationAirports) {
-            const sharedPathsKey = BatchProcessorService.calculateSharedPathKey(
-              originAirport,
-              destinationAirport,
-              context.cacheService
-            );
+          // Calculate routes for all airport combinations
+          for (const originAirport of originAirports) {
+            for (const destinationAirport of destinationAirports) {
+              const sharedPathsKey = BatchProcessorService.calculateSharedPathKey(
+                originAirport,
+                destinationAirport,
+                context.cacheService
+              );
 
-            const calculator = new RouteCalculatorService();
-            pairPromises.push(
-              calculator.calculateFullRoutePath({
-                origin: originAirport,
-                destination: destinationAirport,
-                maxStop,
-                supabase: context.supabase,
-                cacheService: context.cacheService,
-                sharedPathsKey,
-                originalOrigin: origin,
-                originalDestination: destination,
-                binbin: context.validatedData.binbin
-              })
-            );
+              const calculator = new RouteCalculatorService();
+              pairPromises.push(
+                calculator.calculateFullRoutePath({
+                  origin: originAirport,
+                  destination: destinationAirport,
+                  maxStop,
+                  supabase: context.supabase,
+                  cacheService: context.cacheService,
+                  sharedPathsKey,
+                  originalOrigin: origin,
+                  originalDestination: destination,
+                  binbin: context.validatedData.binbin
+                })
+              );
+            }
           }
         }
       }
@@ -241,10 +279,14 @@ export class RouteOrchestratorService {
     // Process results
     const allRoutes: FullRoutePathResult[] = [];
     let anyError: Error | null = null;
+    let totalQueryParams = 0;
 
     for (const result of pairResults) {
       if (result.status === 'fulfilled') {
         allRoutes.push(...result.value.routes);
+        if (result.value.queryParamsArr) {
+          totalQueryParams += result.value.queryParamsArr.length;
+        }
       } else {
         // Check if it's an operational error (expected/normal behavior like airport not found, no routes)
         if (RouteErrorUtils.isOperationalError(result.reason)) {
@@ -261,6 +303,9 @@ export class RouteOrchestratorService {
     }
 
     console.log(`Total routes found: ${allRoutes.length}`);
+    if (totalQueryParams > 0) {
+      console.log(`Query params from calculator: ${totalQueryParams}`);
+    }
     console.log(`Intra route cache size: ${context.cacheService.cache.intraRoute.size}`);
     console.log(`Path cache size: ${context.cacheService.cache.path.size}`);
 

@@ -20,6 +20,9 @@ export interface RouteCalculationInput {
   originalOrigin?: string; // Original input (could be city code)
   originalDestination?: string; // Original input (could be city code)
   binbin?: boolean;
+  region?: boolean;
+  originSubregions?: string[]; // For region mode
+  destinationSubregions?: string[]; // For region mode
 }
 
 /**
@@ -50,8 +53,24 @@ export class RouteCalculatorService {
    * Calculate full route path for a given origin-destination pair
    */
   async calculateFullRoutePath(input: RouteCalculationInput): Promise<RouteCalculationResult> {
-    const { origin, destination, maxStop, supabase, cacheService, sharedPathsKey, originalOrigin, originalDestination, binbin } = input;
-    const performanceMonitor = new RoutePerformanceMonitor(`${origin}-${destination}`);
+    const { origin, destination, maxStop, supabase, cacheService, sharedPathsKey, originalOrigin, originalDestination, binbin, region, originSubregions, destinationSubregions } = input;
+    
+    // Create route identifier - in region mode, show all subregions; otherwise use origin-destination
+    let routeIdentifier: string;
+    if (region === true && originSubregions && destinationSubregions) {
+      const originLabel = originSubregions.length > 1 ? `[${originSubregions.join(',')}]` : originSubregions[0] || '';
+      const destinationLabel = destinationSubregions.length > 1 ? `[${destinationSubregions.join(',')}]` : destinationSubregions[0] || '';
+      routeIdentifier = `${originLabel}-${destinationLabel}`;
+    } else {
+      routeIdentifier = `${origin}-${destination}`;
+    }
+    
+    const performanceMonitor = new RoutePerformanceMonitor(routeIdentifier);
+    
+    // Handle region mode
+    if (region === true && originSubregions && destinationSubregions) {
+      return this.calculateFullRoutePathRegionMode(input, originSubregions, destinationSubregions, performanceMonitor);
+    }
     
     // Get airports from cache (pre-fetched)
     const originAirport = cacheService.cache.airport.get(origin);
@@ -425,5 +444,127 @@ export class RouteCalculatorService {
     performanceMonitor.logRouteSummary();
 
     return { routes: mergedResults, queryParamsArr, cached: false };
+  }
+
+  /**
+   * Calculate full route path for region mode (simplified - only Case 1)
+   */
+  private async calculateFullRoutePathRegionMode(
+    input: RouteCalculationInput,
+    originSubregions: string[],
+    destinationSubregions: string[],
+    performanceMonitor: RoutePerformanceMonitor
+  ): Promise<RouteCalculationResult> {
+    const { maxStop, supabase, cacheService, binbin } = input;
+    
+    // Fetch paths by subregions
+    performanceMonitor.startRoute('data-fetch');
+    const paths = await cacheService.fetchPathsBySubregionsCached(
+      supabase,
+      originSubregions,
+      destinationSubregions,
+      maxStop
+    );
+    performanceMonitor.endRoute('data-fetch', { pathsCount: paths.length });
+
+    const results: FullRoutePathResult[] = [];
+    
+    // Region mode: Only process Case 1 (direct paths)
+    // Paths are already filtered by type based on maxStop in fetchPathsBySubregions
+    performanceMonitor.startRoute('case1-processing');
+    for (const p of paths) {
+      if (!p.origin || !p.destination) continue;
+      
+      results.push({
+        O: null,
+        A: p.origin,
+        h1: p.h1 ?? null,
+        h2: p.h2 ?? null,
+        B: p.destination,
+        D: null,
+        all1: null,
+        all2: p.alliance,
+        all3: null,
+        cumulativeDistance: p.totalDistance,
+        caseType: 'case1',
+      });
+    }
+    performanceMonitor.endRoute('case1-processing', { pathsCount: results.length });
+
+    if (results.length === 0) {
+      throw ErrorHandlerService.createNoRoutesFoundError('region', 'region', maxStop);
+    }
+
+    // In region mode, paths are already filtered by type in the database query
+    // Only ensure unique airports (paths already satisfy maxStop constraint via type filtering)
+    performanceMonitor.startRoute('filtering');
+    const filteredResults = results.filter(route => {
+      const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D]
+        .filter(x => x !== null && typeof x === 'string' && x.trim() !== '');
+      const uniqueCodes = new Set(codes);
+      // In region mode, paths are pre-filtered by type matching maxStop, so just check uniqueness
+      return uniqueCodes.size === codes.length;
+    });
+    performanceMonitor.endRoute('filtering', { 
+      inputCount: results.length, 
+      outputCount: filteredResults.length 
+    });
+
+    // Explode all combinations of all2
+    performanceMonitor.startRoute('explosion');
+    const explodedResults: any[] = [];
+    for (const route of filteredResults) {
+      const all2Arr = toArray(route.all2);
+      const all2Vals = all2Arr.length ? all2Arr : [null];
+      
+      for (const a2 of all2Vals) {
+        explodedResults.push({
+          O: route.O,
+          A: route.A,
+          h1: route.h1,
+          h2: route.h2,
+          B: route.B,
+          D: route.D,
+          all1: [],
+          all2: a2 !== null ? [a2] : [],
+          all3: [],
+          cumulativeDistance: route.cumulativeDistance,
+          caseType: route.caseType,
+        });
+      }
+    }
+    performanceMonitor.endRoute('explosion', { 
+      inputCount: filteredResults.length, 
+      outputCount: explodedResults.length 
+    });
+
+    // Group segments for query params
+    performanceMonitor.startRoute('grouping');
+    const segmentMap: Record<string, Set<string>> = {};
+    const destMap: Record<string, Set<string>> = {};
+    
+    for (const route of explodedResults) {
+      const codes = [route.O, route.A, route.h1, route.h2, route.B, route.D].filter((c): c is string => !!c);
+      for (let i = 0; i < codes.length - 1; i++) {
+        const from = codes[i]!;
+        const to = codes[i + 1]!;
+        if (!segmentMap[from]) segmentMap[from] = new Set();
+        segmentMap[from].add(to);
+      }
+    }
+
+    const groupingService = new RouteGroupingService();
+    const maxComboLimit = binbin === true ? 30 : 60;
+    const { queryParams, groups } = groupingService.processRouteGrouping(segmentMap, destMap, maxComboLimit);
+    const queryParamsArr = queryParams;
+
+    performanceMonitor.endRoute('grouping', { 
+      queryParamsCount: queryParamsArr.length,
+      groupsCount: groups.length,
+      routesCount: explodedResults.length
+    });
+    performanceMonitor.logRouteSummary();
+
+    return { routes: explodedResults, queryParamsArr, cached: false };
   }
 }

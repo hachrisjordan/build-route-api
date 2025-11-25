@@ -212,7 +212,25 @@ export class RoutePerformanceMonitor extends PerformanceMonitor {
    */
   logRouteSummary(): void {
     const totalTime = this.getTotalTime();
-    // Route processing completed
+    const entries = this.getEntries()
+      .filter(entry => entry.duration !== undefined)
+      .sort((a, b) => (b.duration || 0) - (a.duration || 0));
+    
+    console.log(`[${this.routeId}] Route processing completed in ${totalTime.toFixed(2)}ms`);
+    
+    if (entries.length > 0) {
+      const topOperations = entries.slice(0, 3);
+      const breakdown = topOperations
+        .map(entry => {
+          const percentage = ((entry.duration || 0) / totalTime * 100).toFixed(1);
+          const opName = entry.name.replace(`${this.routeId}-`, '');
+          return `${opName}=${entry.duration?.toFixed(2)}ms (${percentage}%)`;
+        })
+        .join(', ');
+      if (breakdown) {
+        console.log(`[${this.routeId}] Top operations: ${breakdown}`);
+      }
+    }
   }
 }
 

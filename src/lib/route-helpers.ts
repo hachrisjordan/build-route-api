@@ -335,6 +335,113 @@ export async function fetchPathsByMaxStop(
   return allPaths;
 }
 
+// Helper function to fetch paths by subregions in batches
+async function fetchPathsBySubregionsBatch(
+  supabase: SupabaseClient,
+  originSubregions: string[],
+  destinationSubregions: string[],
+  maxStop: number,
+  offset: number,
+  limit: number
+): Promise<Path[]> {
+  // Select only needed columns for better performance
+  let query = supabase
+    .from('path')
+    .select('type,origin,destination,h1,h2,alliance,totalDistance')
+    .in('originsubregion', originSubregions)
+    .in('destinationsubregion', destinationSubregions)
+    .order('totalDistance', { ascending: true })
+    .range(offset, offset + limit - 1);
+
+  // Filter by path type based on maxStop
+  if (maxStop === 0) {
+    query = query.eq('type', 'A-B');
+  } else if (maxStop === 1) {
+    query = query.in('type', ['A-B', 'A-H-B']);
+  } else if (maxStop === 2) {
+    query = query.in('type', ['A-B', 'A-H-B', 'A-H-H-B']);
+  }
+
+  const { data, error } = await query;
+  if (error || !data) return [];
+  return data as unknown as Path[];
+}
+
+// Fetch paths by subregions with batching and parallel processing
+export async function fetchPathsBySubregions(
+  supabase: SupabaseClient,
+  originSubregions: string[],
+  destinationSubregions: string[],
+  maxStop: number,
+  batchSize?: number,
+  maxConcurrentBatches?: number
+): Promise<Path[]> {
+  // First, get the total count to determine how many batches we need
+  let countQuery = supabase
+    .from('path')
+    .select('*', { count: 'exact', head: true })
+    .in('originsubregion', originSubregions)
+    .in('destinationsubregion', destinationSubregions);
+
+  // Apply type filter for count query
+  if (maxStop === 0) {
+    countQuery = countQuery.eq('type', 'A-B');
+  } else if (maxStop === 1) {
+    countQuery = countQuery.in('type', ['A-B', 'A-H-B']);
+  } else if (maxStop === 2) {
+    countQuery = countQuery.in('type', ['A-B', 'A-H-B', 'A-H-H-B']);
+  }
+
+  const { count, error: countError } = await countQuery;
+  
+  if (countError || count === null) {
+    console.warn('Failed to get count, falling back to single batch');
+    const defaultBatchSize = batchSize || CONCURRENCY_CONFIG.DATABASE_BATCH_SIZE;
+    return fetchPathsBySubregionsBatch(supabase, originSubregions, destinationSubregions, maxStop, 0, defaultBatchSize);
+  }
+  
+  if (count === 0) return [];
+  
+  // Use dynamic batch sizing based on dataset size for better performance
+  const optimalBatchSize = batchSize || calculateOptimalBatchSize(count);
+  const optimalConcurrency = maxConcurrentBatches || calculateOptimalConcurrency(count);
+  
+  console.log(`Fetching ${count} paths by subregions in batches of ${optimalBatchSize} with ${optimalConcurrency} concurrent batches`);
+  
+  // Calculate number of batches needed
+  const totalBatches = Math.ceil(count / optimalBatchSize);
+  const allPaths: Path[] = [];
+  
+  // Process batches in parallel with concurrency limit
+  for (let i = 0; i < totalBatches; i += optimalConcurrency) {
+    const batchPromises = [];
+    
+    // Create batch promises for current chunk
+    for (let j = 0; j < optimalConcurrency && i + j < totalBatches; j++) {
+      const batchIndex = i + j;
+      const offset = batchIndex * optimalBatchSize;
+      batchPromises.push(
+        fetchPathsBySubregionsBatch(supabase, originSubregions, destinationSubregions, maxStop, offset, optimalBatchSize)
+      );
+    }
+    
+    // Wait for current chunk of batches to complete
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Add results to allPaths
+    batchResults.forEach(paths => {
+      allPaths.push(...paths);
+    });
+    
+    // Optional: Add a small delay between chunks to prevent overwhelming the database
+    if (i + optimalConcurrency < totalBatches) {
+      await new Promise(resolve => setTimeout(resolve, 5)); // Reduced delay
+    }
+  }
+  
+  return allPaths;
+}
+
 // Utility function to calculate optimal batch size based on dataset size
 function calculateOptimalBatchSize(totalCount: number): number {
   if (totalCount <= 10000) return 10000;

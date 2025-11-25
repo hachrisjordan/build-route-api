@@ -26,7 +26,7 @@ export async function buildItinerariesAcrossRoutes(
   connectionMatrix: Map<string, Set<string>>,
   routeToOriginalMap: Map<FullRoutePathResult, FullRoutePathResult>,
   options: { parallel: boolean } = { parallel: false },
-  originalSearchParams?: { origin: string; destination: string }
+  originalSearchParams?: { origin: string; destination: string; region?: boolean }
 ) {
   const output: Record<string, Record<string, string[][]>> = {};
   const routeStructureMap = new Map<string, FullRoutePathResult>();
@@ -148,7 +148,8 @@ for (let i = 0; i < codes.length - 1; i++) {
           const rebuiltRouteKey = routeParts.join('-');
           
           // Validate that the rebuilt route matches the original search criteria
-          if (originalSearchParams) {
+          // Skip validation in region mode since routes are already filtered by subregion in PATH query
+          if (originalSearchParams && !originalSearchParams.region) {
             const { origin, destination } = originalSearchParams;
             const routeOrigin = routeParts[0];
             const routeDestination = routeParts[routeParts.length - 1];
@@ -363,7 +364,8 @@ for (let i = 0; i < codes.length - 1; i++) {
           const rebuiltRouteKey = routeParts.join('-');
           
           // Validate that the rebuilt route matches the original search criteria
-          if (originalSearchParams) {
+          // Skip validation in region mode since routes are already filtered by subregion in PATH query
+          if (originalSearchParams && !originalSearchParams.region) {
             const { origin, destination } = originalSearchParams;
             const routeOrigin = routeParts[0];
             const routeDestination = routeParts[routeParts.length - 1];

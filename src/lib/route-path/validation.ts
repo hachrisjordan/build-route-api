@@ -23,6 +23,7 @@ export interface ValidatedRouteInput {
   destinationList: string[];
   pairsCount: number;
   binbin?: boolean;
+  region?: boolean;
 }
 
 /**
@@ -44,21 +45,41 @@ const MULTI_AIRPORT_REGEX = /^([A-Z]{3})(\/[A-Z]{3})*$/;
  * Enhanced schema for route path validation
  */
 export const routePathValidationSchema = z.object({
-  origin: z
-    .string()
-    .min(1, 'Origin is required')
-    .regex(MULTI_AIRPORT_REGEX, 'Origin must be valid airport/city codes separated by slashes (e.g., LAX or TYO/NYC)'),
-  destination: z
-    .string()
-    .min(1, 'Destination is required')
-    .regex(MULTI_AIRPORT_REGEX, 'Destination must be valid airport/city codes separated by slashes (e.g., JFK or TYO/NYC)'),
+  origin: z.union([
+    z.string()
+      .min(1, 'Origin is required')
+      .regex(MULTI_AIRPORT_REGEX, 'Origin must be valid airport/city codes separated by slashes (e.g., LAX or TYO/NYC)'),
+    z.array(z.string().min(1, 'Subregion cannot be empty'))
+  ]),
+  destination: z.union([
+    z.string()
+      .min(1, 'Destination is required')
+      .regex(MULTI_AIRPORT_REGEX, 'Destination must be valid airport/city codes separated by slashes (e.g., JFK or TYO/NYC)'),
+    z.array(z.string().min(1, 'Subregion cannot be empty'))
+  ]),
   maxStop: z
     .number()
     .int('MaxStop must be an integer')
     .min(0, 'MaxStop must be at least 0')
     .max(4, 'MaxStop cannot exceed 4')
     .default(4),
-  binbin: z.boolean().optional()
+  binbin: z.boolean().optional(),
+  region: z.boolean().optional()
+}).refine((data) => {
+  // When region=true, origin and destination must be arrays
+  if (data.region === true) {
+    if (!Array.isArray(data.origin) || !Array.isArray(data.destination)) {
+      return false;
+    }
+    // When region=true, maxStop must be between 0-2
+    if (data.maxStop > 2) {
+      return false;
+    }
+  }
+  return true;
+}, {
+  message: "When region=true, origin and destination must be arrays and maxStop must be between 0-2",
+  path: ["region"]
 });
 
 /**
@@ -103,29 +124,85 @@ export class ValidationService {
    */
   static processInputData(parsedData: z.infer<typeof routePathValidationSchema>): ValidationResult<ValidatedRouteInput> {
     try {
-      // Extract and validate origin list
-      const originListResult = this.parseAirportList(parsedData.origin, 'origin');
-      if (!originListResult.success) {
-        return {
-          success: false,
-          error: originListResult.error
-        };
-      }
+      const region = parsedData.region === true;
+      
+      // Handle region mode vs airport mode
+      let originList: string[];
+      let destinationList: string[];
+      let originStr: string;
+      let destinationStr: string;
 
-      // Extract and validate destination list
-      const destinationListResult = this.parseAirportList(parsedData.destination, 'destination');
-      if (!destinationListResult.success) {
-        return {
-          success: false,
-          error: destinationListResult.error
-        };
+      if (region) {
+        // Region mode: origin and destination are arrays of subregions
+        if (!Array.isArray(parsedData.origin) || !Array.isArray(parsedData.destination)) {
+          const zodError = new z.ZodError([
+            {
+              code: 'custom',
+              message: 'When region=true, origin and destination must be arrays',
+              path: ['origin', 'destination']
+            }
+          ]);
+          return {
+            success: false,
+            error: zodError
+          };
+        }
+        
+        originList = parsedData.origin;
+        destinationList = parsedData.destination;
+        originStr = parsedData.origin.join('/');
+        destinationStr = parsedData.destination.join('/');
+        
+        // Validate maxStop for region mode (0-2)
+        if (parsedData.maxStop > 2) {
+          const zodError = new z.ZodError([
+            {
+              code: 'custom',
+              message: 'When region=true, maxStop must be between 0-2',
+              path: ['maxStop']
+            }
+          ]);
+          return {
+            success: false,
+            error: zodError
+          };
+        }
+      } else {
+        // Airport mode: parse airport/city codes
+        const originListResult = this.parseAirportList(
+          Array.isArray(parsedData.origin) ? parsedData.origin.join('/') : parsedData.origin, 
+          'origin'
+        );
+        if (!originListResult.success) {
+          return {
+            success: false,
+            error: originListResult.error
+          };
+        }
+
+        const destinationListResult = this.parseAirportList(
+          Array.isArray(parsedData.destination) ? parsedData.destination.join('/') : parsedData.destination,
+          'destination'
+        );
+        if (!destinationListResult.success) {
+          return {
+            success: false,
+            error: destinationListResult.error
+          };
+        }
+        
+        originList = originListResult.data!;
+        destinationList = destinationListResult.data!;
+        originStr = Array.isArray(parsedData.origin) ? parsedData.origin.join('/') : parsedData.origin;
+        destinationStr = Array.isArray(parsedData.destination) ? parsedData.destination.join('/') : parsedData.destination;
       }
 
       // Validate maxStop
-      const maxStop = Math.max(0, Math.min(4, parsedData.maxStop ?? 4));
+      const maxStopLimit = region ? 2 : 4;
+      const maxStop = Math.max(0, Math.min(maxStopLimit, parsedData.maxStop ?? maxStopLimit));
 
       // Calculate pairs count
-      const pairsCount = originListResult.data!.length * destinationListResult.data!.length;
+      const pairsCount = originList.length * destinationList.length;
 
       // Validate reasonable limits
       if (pairsCount > 100) {
@@ -146,13 +223,14 @@ export class ValidationService {
       return {
         success: true,
         data: {
-          origin: parsedData.origin,
-          destination: parsedData.destination,
+          origin: originStr,
+          destination: destinationStr,
           maxStop,
-          originList: originListResult.data!,
-          destinationList: destinationListResult.data!,
+          originList,
+          destinationList,
           pairsCount,
-          binbin: parsedData.binbin
+          binbin: parsedData.binbin,
+          region
         }
       };
     } catch (error) {

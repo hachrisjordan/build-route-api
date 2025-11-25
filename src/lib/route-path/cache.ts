@@ -7,7 +7,8 @@ import {
   batchFetchAirportsByIata, 
   batchFetchIntraRoutes, 
   globalBatchFetchIntraRoutes,
-  getHaversineDistance
+  getHaversineDistance,
+  fetchPathsBySubregions
 } from '@/lib/route-helpers';
 
 /**
@@ -100,6 +101,31 @@ export class RoutePathCacheService {
       originRegion, 
       destinationRegion, 
       maxDistance
+    );
+    
+    this.cache.path.set(key, paths);
+    return paths;
+  }
+
+  /**
+   * Fetch paths by subregions with cache (for region mode)
+   */
+  async fetchPathsBySubregionsCached(
+    supabase: SupabaseClient,
+    originSubregions: string[],
+    destinationSubregions: string[],
+    maxStop: number
+  ): Promise<Path[]> {
+    const key = `${originSubregions.sort().join(',')}-${destinationSubregions.sort().join(',')}-${maxStop}`;
+    if (this.cache.path.has(key)) {
+      return this.cache.path.get(key)!;
+    }
+    
+    const paths = await fetchPathsBySubregions(
+      supabase,
+      originSubregions,
+      destinationSubregions,
+      maxStop
     );
     
     this.cache.path.set(key, paths);
