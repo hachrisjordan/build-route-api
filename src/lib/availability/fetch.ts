@@ -92,11 +92,20 @@ export async function fetchAvailabilityForGroups(
       await saveAvailabilityV2ResponseToCache(bodyParams, data);
       return { routeId, error: false, data } as AvailabilityTaskResult;
     } catch (err) {
+      console.error(`[FETCH] Task failed for ${routeId}:`, err);
       return { routeId, error: true, data: [] } as AvailabilityTaskResult;
     }
   });
 
+  // Diagnostic logging
+  console.log(`[DEBUG] fetchAvailabilityForGroups: Starting ${availabilityTasks.length} tasks with concurrency ${params.concurrency}`);
+  const poolStartTime = Date.now();
+  
   const results = await pool(availabilityTasks, params.concurrency);
+  
+  const poolDuration = Date.now() - poolStartTime;
+  console.log(`[DEBUG] fetchAvailabilityForGroups: Completed ${results.length} tasks in ${poolDuration}ms (avg: ${(poolDuration / results.length).toFixed(0)}ms per task)`);
+  
   return { results, minRateLimitRemaining, minRateLimitReset };
 }
 

@@ -282,14 +282,11 @@ export async function POST(req: NextRequest) {
       (page, pageIndex) => {
         // Callback for incremental processing - currently used for monitoring
         // Pages are still accumulated in allPages for processing functions
-        if (pageIndex === 0) {
-          console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} First page received`);
-        }
       }
     );
     seatsAeroRequests += requestCount;
     const fetchTime = Date.now();
-    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Fetch: ${fetchTime - fetchStartTime}ms (${requestCount} requests, ${allPages.length} pages)`);
+    const pageCount = allPages.length; // Capture page count before clearing
 
     // 4.5. Data Processing Pipeline - Process availability and pricing in parallel when both needed
     const processStartTime = Date.now();
@@ -332,31 +329,21 @@ export async function POST(req: NextRequest) {
     }
 
     const processTime = Date.now();
-    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Process: ${processTime - processStartTime}ms (${results.length} results)`);
 
     // Clear allPages immediately after processing to free memory
     // This is critical to prevent memory accumulation
     allPages.length = 0;
-    
-    // Monitor memory after clearing
-    const memAfterClear = process.memoryUsage();
-    const memFreed = (memBefore.heapUsed - memAfterClear.heapUsed) / 1024 / 1024;
-    if (memFreed > 10) { // Only log if significant memory was freed (>10MB)
-      console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Memory: ${Math.round(memAfterClear.heapUsed / 1024 / 1024)}MB (freed ${Math.round(memFreed)}MB)`);
-    }
 
     const mergeStartTime = Date.now();
     const mergedMap = mergeProcessedTrips(results, reliabilityTable);
     const mergeTime = Date.now();
-    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Merge: ${mergeTime - mergeStartTime}ms (${mergedMap.size} entries)`);
 
     const groupStartTime = Date.now();
     const groupedResults = await groupAndDeduplicate(mergedMap);
     const groupTime = Date.now();
-    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Group: ${groupTime - groupStartTime}ms (${groupedResults.length} groups)`);
     
-    // Combined processing stats log
-    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Stats: ${stats.totalItems} items, ${stats.filteredTrips}/${stats.totalTrips} trips → ${mergedMap.size} merged → ${groupedResults.length} groups`);
+    // Combined processing stats log with page count
+    console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Stats: ${stats.totalItems} items (${pageCount} Pages), ${stats.filteredTrips}/${stats.totalTrips} trips → ${mergedMap.size} merged → ${groupedResults.length} groups`);
 
     // 5.5. Save groups to cache (group by originAirport-destinationAirport-date to combine all alliances)
     const groupsByKey = new Map<string, { originAirport: string; destinationAirport: string; date: string; groups: GroupedResult[] }>();
@@ -419,11 +406,6 @@ export async function POST(req: NextRequest) {
     
     // Save to cache asynchronously (non-blocking)
     Promise.all(cachePromises)
-      .then(() => {
-        const resultCount = groupsByKey.size;
-        const emptyCount = cachePromises.length - resultCount;
-        console.log(`${LOGGING_CONFIG.PERFORMANCE_PREFIX} Cache: ${cachePromises.length} entries (${resultCount} results, ${emptyCount} empty)`);
-      })
       .catch(err => {
         console.error('[availability-v2] Error saving groups to cache:', err);
       });

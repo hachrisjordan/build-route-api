@@ -7,6 +7,7 @@ import { buildBaseUrl } from '@/lib/http/base-url';
 import { enforceRateLimit } from '@/lib/http/rate-limit-policy';
 import { getAvailableProKey, updateProKeyRemaining } from '@/lib/supabase-admin';
 import { getReliabilityData } from '@/lib/reliability/service';
+import { getReliabilityTableCached } from '@/lib/reliability-cache';
 import { getAirportData } from '@/lib/airports/service';
 import { filterUnreliableSegments, isUnreliableFlight } from '@/lib/early-filter';
 import { fetchAvailabilityForGroups } from '@/lib/availability/fetch';
@@ -235,7 +236,13 @@ export async function POST(req: NextRequest) {
 
     // Process seats.aero API links
 
-    // 4. Handle three cases: all cached, some cached, none cached
+    // 4. Pre-warm reliability cache BEFORE firing all parallel availability-v2 requests
+    // This ensures all parallel requests hit the in-memory cache instead of fetching multiple times
+    console.log(`[build-itineraries] Pre-warming reliability cache before parallel requests...`);
+    await getReliabilityTableCached();
+    console.log(`[build-itineraries] Reliability cache pre-warmed`);
+    
+    // 4.5. Handle three cases: all cached, some cached, none cached
     // Start performance monitoring
     PERFORMANCE_MONITORING.start();
     

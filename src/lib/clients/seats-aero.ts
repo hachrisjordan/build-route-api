@@ -99,6 +99,7 @@ export async function paginateSearch(
 
   // First page (critical - fail if this times out)
   const firstUrl = buildUrl(baseUrl, { ...baseParams });
+  
   try {
     const firstRes = await fetchWithTimeout(
       client,
@@ -128,14 +129,31 @@ export async function paginateSearch(
     }
 
     let hasMore: boolean = firstData.hasMore || false;
-    let cursor: string | null = firstData.cursor || null;
+    // Get cursor from first page - this stays the SAME for all subsequent pages
+    const cursor: string | null = firstData.cursor || null;
+    
+    // Get take value from baseParams (default 1000)
+    const takeValue = parseInt(baseParams.take || '1000', 10);
 
     // Subsequent pages (graceful degradation on timeout)
+    // We already have 1 page, so we can fetch maxPages - 1 more pages
     let pageCount = 0;
-    if (hasMore) {
-      while (hasMore && pageCount < maxPages) {
+    const maxAdditionalPages = maxPages - 1; // Subtract 1 because we already fetched the first page
+    
+    if (hasMore && maxAdditionalPages > 0) {
+      while (hasMore && pageCount < maxAdditionalPages) {
         pageCount++;
-        const params = cursor ? { ...baseParams, cursor } : { ...baseParams, skip: pageCount * 1000 };
+        // According to seats.aero API docs: Use BOTH cursor AND skip together
+        // - cursor: stays the same from first response (maintains consistent ordering)
+        // - skip: increments by take value (skip=1000, skip=2000, skip=3000, etc.)
+        const skipValue = pageCount * takeValue;
+        const params: Record<string, string> = { ...baseParams, skip: skipValue.toString() };
+        
+        // Add cursor if we have it (from first page response)
+        if (cursor) {
+          params.cursor = cursor;
+        }
+        
         const url = buildUrl(baseUrl, params);
         
         try {
@@ -149,7 +167,7 @@ export async function paginateSearch(
           
           // Check if timeout returned null (graceful stop)
           if (!res) {
-            console.warn(`[PERF] Stopping pagination at page ${pageCount} due to timeout. Returning ${pages.length} pages collected.`);
+            console.warn(`[PERF] Stopping pagination at page ${pageCount + 1} (page ${pageCount} after first) due to timeout. Returning ${pages.length} pages collected.`);
             break; // Stop pagination, return what we have
           }
           
@@ -167,11 +185,12 @@ export async function paginateSearch(
           }
           
           hasMore = data.hasMore || false;
-          cursor = data.cursor || cursor;
+          // Note: cursor stays the same from first page - we don't update it
+          // The cursor from first response is used for ALL subsequent pages
           lastResponse = res;
         } catch (err: any) {
           // Non-timeout errors - log and stop
-          console.error(`[PERF] Error fetching page ${pageCount}:`, err.message);
+          console.error(`[PERF] Error fetching page ${pageCount + 1} (page ${pageCount} after first):`, err.message);
           break;
         }
       }

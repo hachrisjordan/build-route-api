@@ -76,7 +76,6 @@ export async function getReliabilityTableCached(): Promise<ReliabilityEntry[]> {
         if ((now - parsedCache.timestamp) < RELIABILITY_CACHE_TTL_MS) {
           // Update in-memory cache
           reliabilityCache = parsedCache;
-          console.log(`[reliability-cache] Redis cache hit (${Date.now() - startTime}ms)`);
           return parsedCache.data;
         }
       }
