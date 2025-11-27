@@ -1,7 +1,8 @@
-import fs from 'fs';
-import path from 'path';
 import { getOptimalDateRangeForRoute, calculateEnvelopeDateRange } from './date-range-optimizer';
 import { generateDateRange } from './date-utils';
+import { loadRouteMetrics } from '@/lib/route-metrics/service';
+import { getAirportCityCode } from '@/lib/airports/city-groups';
+import { initializeCityGroups } from '@/lib/airports/city-groups';
 
 export interface OptimizedGroup {
   origins: string[];
@@ -28,40 +29,58 @@ interface Bin {
 
 // Lazy-loaded route count data
 let routeCountCache: Map<string, number> | null = null;
+let loadPromise: Promise<Map<string, number>> | null = null;
 
 /**
- * Load route count data from CSV
+ * Load route count data from Supabase route_metrics table
+ * Applies city group aggregation on read (normalizes airport codes to city codes)
+ * Uses avg field (rounded to nearest int) instead of count
  */
-function loadRouteCountData(): Map<string, number> {
+async function loadRouteCountData(): Promise<Map<string, number>> {
   if (routeCountCache) {
     return routeCountCache;
   }
-  
-  const routeCountData = new Map<string, number>();
-  
-  try {
-    const csvPath = path.join(process.cwd(), 'csv-output', 'route_count.csv');
-    const csvContent = fs.readFileSync(csvPath, 'utf-8');
-    const lines = csvContent.split('\n').slice(1); // Skip header
-    
-    for (const line of lines) {
-      const [origin, destination, count] = line.trim().split(',');
-      if (origin && destination && count) {
-        routeCountData.set(`${origin},${destination}`, parseInt(count, 10));
-      }
-    }
-    
-    console.log(`[route-optimizer] Loaded ${routeCountData.size} route count entries`);
-  } catch (error) {
-    console.warn('[route-optimizer] Failed to load route_count.csv, using defaults:', error);
+
+  if (loadPromise) {
+    return loadPromise;
   }
-  
-  routeCountCache = routeCountData;
-  return routeCountData;
+
+  loadPromise = (async () => {
+    try {
+      // Ensure city groups are loaded
+      await initializeCityGroups();
+
+      // Load all route metrics from Supabase
+      const allRouteKeys: string[] = []; // We'll load all metrics
+      const routeMetrics = await loadRouteMetrics(allRouteKeys);
+
+      // Apply city group aggregation on read
+      // When querying, we need to normalize airport codes to city codes
+      // Since route_metrics already stores city-aggregated data, we just need to
+      // normalize the keys we're looking up
+      const routeCountData = new Map<string, number>();
+
+      // Copy all metrics to cache (they're already city-aggregated)
+      for (const [key, avg] of routeMetrics) {
+        routeCountData.set(key, avg);
+      }
+
+      console.log(`[route-optimizer] Loaded ${routeCountData.size} route count entries from Supabase`);
+      routeCountCache = routeCountData;
+      return routeCountData;
+    } catch (error) {
+      console.warn('[route-optimizer] Failed to load route metrics from Supabase, using defaults:', error);
+      routeCountCache = new Map<string, number>();
+      return routeCountCache;
+    }
+  })();
+
+  return loadPromise;
 }
 
 /**
  * Calculate estimated results for a set of origin-destination combinations
+ * Applies city group aggregation on read (normalizes airport codes to city codes when looking up)
  */
 function calculateResults(
   origins: string[],
@@ -73,8 +92,12 @@ function calculateResults(
   
   for (const origin of origins) {
     for (const destination of destinations) {
-      const key = `${origin},${destination}`;
-      const perDay = routeCountData.get(key) || 5; // Default to 5 if not found
+      // Normalize to city codes for lookup (city group aggregation on read)
+      const originCity = getAirportCityCode(origin);
+      const destCity = getAirportCityCode(destination);
+      const key = `${originCity},${destCity}`;
+      // Default to 5 if not found, but if avg < 1 it should be at least 1 (handled in loadRouteMetrics)
+      const perDay = routeCountData.get(key) || 5;
       total += perDay * days;
     }
   }
@@ -94,6 +117,10 @@ function buildGraph(routes: string[]): {
   
   for (const route of routes) {
     const [origin, destination] = route.split('-');
+    
+    if (!origin || !destination) {
+      continue; // Skip invalid routes
+    }
     
     if (!originMap.has(origin)) {
       originMap.set(origin, []);
@@ -210,7 +237,10 @@ function splitStar(
     let currentEstimate = 0;
     
     for (const dest of star.destinations) {
-      const perDay = routeCountData.get(`${star.center},${dest}`) || 5;
+      // Normalize to city codes for lookup (city group aggregation on read)
+      const centerCity = getAirportCityCode(star.center);
+      const destCity = getAirportCityCode(dest);
+      const perDay = routeCountData.get(`${centerCity},${destCity}`) || 5;
       const routeTotal = perDay * days;
       
       if (currentEstimate + routeTotal <= maxResults) {
@@ -247,7 +277,10 @@ function splitStar(
     let currentEstimate = 0;
     
     for (const orig of star.origins) {
-      const perDay = routeCountData.get(`${orig},${star.center}`) || 5;
+      // Normalize to city codes for lookup (city group aggregation on read)
+      const origCity = getAirportCityCode(orig);
+      const centerCity = getAirportCityCode(star.center);
+      const perDay = routeCountData.get(`${origCity},${centerCity}`) || 5;
       const routeTotal = perDay * days;
       
       if (currentEstimate + routeTotal <= maxResults) {
@@ -307,7 +340,10 @@ function calculateResultsWithDateRanges(
   // Calculate for all origin-destination combinations
   for (const origin of origins) {
     for (const destination of destinations) {
-      const key = `${origin},${destination}`;
+      // Normalize to city codes for lookup (city group aggregation on read)
+      const originCity = getAirportCityCode(origin);
+      const destCity = getAirportCityCode(destination);
+      const key = `${originCity},${destCity}`;
       const perDay = routeCountData.get(key) || 5;
       total += perDay * days;
     }
@@ -375,19 +411,25 @@ function consolidateAggressivelyWithDateRanges(
   for (let i = 0; i < sortedBins.length; i++) {
     if (used.has(i)) continue;
     
-    let currentOrigins = [...sortedBins[i].origins];
-    let currentDestinations = [...sortedBins[i].destinations];
-    let currentRoutes = [...sortedBins[i].routes];
-    let currentEstimate = sortedBins[i].estimatedResults;
+    const currentBin = sortedBins[i];
+    if (!currentBin) continue;
+    
+    let currentOrigins = [...currentBin.origins];
+    let currentDestinations = [...currentBin.destinations];
+    let currentRoutes = [...currentBin.routes];
+    let currentEstimate = currentBin.estimatedResults;
     const packed = [i];
     
     // Try to pack more bins
     for (let j = i + 1; j < sortedBins.length; j++) {
       if (used.has(j)) continue;
       
-      const newOrigins = new Set([...currentOrigins, ...sortedBins[j].origins]);
-      const newDestinations = new Set([...currentDestinations, ...sortedBins[j].destinations]);
-      const combinedRoutes = [...currentRoutes, ...sortedBins[j].routes];
+      const nextBin = sortedBins[j];
+      if (!nextBin) continue;
+      
+      const newOrigins = new Set([...currentOrigins, ...nextBin.origins]);
+      const newDestinations = new Set([...currentDestinations, ...nextBin.destinations]);
+      const combinedRoutes = [...currentRoutes, ...nextBin.routes];
       
       // Calculate estimate using actual date ranges for all routes
       const estimate = calculateResultsWithDateRanges(
@@ -440,8 +482,10 @@ export async function optimizeRouteGroups(
   startDate: string,
   endDate: string
 ): Promise<RouteOptimizationResult> {
-  const routeCountData = loadRouteCountData();
-  const MAX_RESULTS = 4000;
+  // Ensure city groups are initialized before using getAirportCityCode
+  await initializeCityGroups();
+  const routeCountData = await loadRouteCountData();
+  const MAX_RESULTS = 1000;
   
   console.log(`[route-optimizer] Starting optimization for ${queryParamsArr.length} routes`);
   

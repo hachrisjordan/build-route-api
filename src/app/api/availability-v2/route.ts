@@ -20,6 +20,7 @@ import { AvailabilityV2Request, PricingEntry, GroupedResult } from '@/types/avai
 import { API_CONFIG, REQUEST_CONFIG, PERFORMANCE_CONFIG, LOGGING_CONFIG } from '@/lib/config/availability-v2';
 import { getCachedAvailabilityGroup, saveCachedAvailabilityGroup, getCachedPricingGroup, saveCachedPricingGroup } from '@/lib/availability-v2/cache-helper';
 import { initializeCityGroups, isCityCode, getCityAirports } from '@/lib/airports/city-groups';
+import { updateRouteMetrics } from '@/lib/route-metrics/service';
 
 /**
  * POST /api/availability-v2
@@ -287,6 +288,14 @@ export async function POST(req: NextRequest) {
     seatsAeroRequests += requestCount;
     const fetchTime = Date.now();
     const pageCount = allPages.length; // Capture page count before clearing
+
+    // 4.4. Update route metrics asynchronously (non-blocking)
+    // Capture pages data before processing (allPages will be cleared later)
+    const pagesForMetrics = [...allPages]; // Shallow copy for metrics collection
+    updateRouteMetrics(pagesForMetrics, startDate, seatsAeroEndDate)
+      .catch((error) => {
+        console.error('[availability-v2] Error updating route metrics (non-blocking):', error);
+      });
 
     // 4.5. Data Processing Pipeline - Process availability and pricing in parallel when both needed
     const processStartTime = Date.now();
