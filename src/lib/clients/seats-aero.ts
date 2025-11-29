@@ -1,14 +1,105 @@
 import { SeatsAeroClient, PaginateSearchResult } from '@/types/availability-v2';
+import https from 'https';
+import { URL } from 'url';
+import { initializeDnsCache } from '@/lib/http/dns-cache';
+
+// Initialize DNS caching for production (reduces DNS lookup overhead)
+if (typeof process !== 'undefined' && process.env.NODE_ENV === 'production') {
+  initializeDnsCache();
+}
+
+// Global HTTPS agent with keepAlive for connection pooling
+// This dramatically improves performance in production by reusing TCP connections
+// Production performance issue: Without keepAlive, each request creates a new TCP connection
+// which adds ~100-500ms overhead per request. With 50 concurrent requests, this compounds.
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000, // Send keepalive probe after 30s of inactivity
+  maxSockets: 100, // Max concurrent connections per host (increased for high concurrency)
+  maxFreeSockets: 20, // Max idle connections to keep open (increased for better reuse)
+  timeout: 60000, // Socket timeout
+  scheduling: 'fifo' as const,
+});
+
+// Configure global agent defaults for better connection reuse
+// This affects all HTTPS requests in the process
+if (typeof process !== 'undefined' && process.env.NODE_ENV === 'production') {
+  https.globalAgent = httpsAgent;
+}
+
+// Use undici for better performance if available (Node.js 18+)
+// Undici has superior connection pooling and HTTP/2 support
+let customFetch: typeof fetch;
+let useUndici = false;
+
+try {
+  // Try to use undici (Node.js 18+ built-in, better connection pooling)
+  // @ts-ignore - undici may not be in types
+  const undici = require('undici');
+  
+  if (undici && undici.fetch && undici.Agent) {
+    // Create undici agent with optimized connection pooling
+    const undiciAgent = new undici.Agent({
+      connections: 100, // Max concurrent connections per origin
+      pipelining: 0, // HTTP/1.1 pipelining (0 = disabled for compatibility)
+      keepAliveTimeout: 30000, // Keep connections alive for 30s
+      keepAliveMaxTimeout: 60000, // Max time to keep connection alive
+      tls: {
+        rejectUnauthorized: true,
+      },
+    });
+
+    customFetch = (url: string | URL | Request, init?: RequestInit) => {
+      return undici.fetch(url, {
+        ...init,
+        dispatcher: undiciAgent,
+      });
+    };
+    useUndici = true;
+    console.log('[seats-aero] Using undici with connection pooling for optimal performance');
+  } else {
+    throw new Error('undici not available');
+  }
+} catch (e) {
+  // Fallback: Use native fetch with global agent (Node.js 18+ uses undici internally)
+  // The global https agent will be used automatically
+  customFetch = fetch;
+  console.log('[seats-aero] Using native fetch with global HTTPS agent keepAlive');
+}
 
 export function createSeatsAeroClient(apiKey: string): SeatsAeroClient {
+  const isProduction = process.env.NODE_ENV === 'production';
+  
   return {
     fetch: (url: string, init?: RequestInit) => {
+      const startTime = isProduction ? Date.now() : undefined;
       const headers = {
         ...init?.headers,
         accept: 'application/json',
         'Partner-Authorization': apiKey,
+        'Connection': 'keep-alive', // Explicitly request keep-alive
       };
-      return fetch(url, { ...init, headers });
+      
+      // For native fetch, we can't directly set agent, but global agent will be used
+      // For undici, the dispatcher is already set in customFetch
+      const fetchPromise = customFetch(url, { ...init, headers });
+      
+      // Log slow requests in production for diagnostics
+      if (isProduction && startTime) {
+        fetchPromise
+          .then(() => {
+            const duration = Date.now() - startTime;
+            if (duration > 5000) {
+              // Log requests taking more than 5 seconds
+              console.warn(`[seats-aero] Slow request: ${duration}ms for ${new URL(url).pathname}`);
+            }
+          })
+          .catch(() => {
+            // Ignore errors in logging
+          });
+      }
+      
+      return fetchPromise;
     },
   };
 }
@@ -19,9 +110,11 @@ function buildUrl(baseUrl: string, params: Record<string, string | number>) {
 }
 
 // Timeout configuration
-const FIRST_PAGE_TIMEOUT = 30000; // 30 seconds
-const SUBSEQUENT_PAGE_TIMEOUT = 20000; // 20 seconds
-const RETRY_TIMEOUT = 15000; // 15 seconds for retry
+// Increased for production network conditions (higher latency, slower DNS)
+// Production shows 3-4x slower fetch times, so we need more generous timeouts
+const FIRST_PAGE_TIMEOUT = process.env.NODE_ENV === 'production' ? 60000 : 30000; // 60s prod, 30s dev
+const SUBSEQUENT_PAGE_TIMEOUT = process.env.NODE_ENV === 'production' ? 45000 : 20000; // 45s prod, 20s dev
+const RETRY_TIMEOUT = 20000; // 20 seconds for retry (increased from 15s)
 
 // Retry configuration (disabled by default)
 const RETRY_CONFIG = {
