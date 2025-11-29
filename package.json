@@ -51,6 +51,7 @@
         "redis": "^5.6.1",
         "requests": "^0.3.0",
         "tough-cookie": "^5.1.2",
+        "undici": "^7.16.0",
         "urllib3": "^0.0.1",
         "uuid": "^11.1.0",
         "winston": "^3.17.0",
