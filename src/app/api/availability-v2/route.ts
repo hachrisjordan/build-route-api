@@ -97,6 +97,15 @@ export async function POST(req: NextRequest) {
     const uniqueOriginAirports = [...new Set(expandToAirports(allOrigins))];
     const uniqueDestinationAirports = [...new Set(expandToAirports(allDestinations))];
     
+    // Generate all searched airport pair combinations for route metrics tracking
+    // This ensures we track routes that were searched but returned zero results
+    const searchedAirportPairs: string[] = [];
+    for (const originAirport of uniqueOriginAirports) {
+      for (const destinationAirport of uniqueDestinationAirports) {
+        searchedAirportPairs.push(`${originAirport},${destinationAirport}`);
+      }
+    }
+    
     // Check cache for extended date range (same as what gets processed: startDate to seatsAeroEndDate)
     const dates = generateDateRange(startDate, seatsAeroEndDate);
 
@@ -292,7 +301,7 @@ export async function POST(req: NextRequest) {
     // 4.4. Update route metrics asynchronously (non-blocking)
     // Capture pages data before processing (allPages will be cleared later)
     const pagesForMetrics = [...allPages]; // Shallow copy for metrics collection
-    updateRouteMetrics(pagesForMetrics, startDate, seatsAeroEndDate)
+    updateRouteMetrics(pagesForMetrics, startDate, seatsAeroEndDate, searchedAirportPairs)
       .catch((error) => {
         console.error('[availability-v2] Error updating route metrics (non-blocking):', error);
       });

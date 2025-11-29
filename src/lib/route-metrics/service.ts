@@ -7,18 +7,21 @@ import { generateDateRange } from '@/lib/availability-v2/date-utils';
  * 
  * Process:
  * 1. Count raw items by airport pairs from allPages
- * 2. Aggregate to city pairs using city group aggregation
- * 3. Calculate day_count from date range
- * 4. Upsert to route_metrics table with cumulative updates
+ * 2. Track missing routes (searched but zero results) if searchedAirportPairs provided
+ * 3. Aggregate to city pairs using city group aggregation
+ * 4. Calculate day_count from date range
+ * 5. Upsert to route_metrics table with cumulative updates
  * 
  * @param allPages Array of pages from seats.aero API response
  * @param startDate Start date string (YYYY-MM-DD)
  * @param seatsAeroEndDate End date string (YYYY-MM-DD)
+ * @param searchedAirportPairs Optional array of airport pairs that were searched (format: "originAirport,destAirport")
  */
 export async function updateRouteMetrics(
   allPages: any[],
   startDate: string,
-  seatsAeroEndDate: string
+  seatsAeroEndDate: string,
+  searchedAirportPairs?: string[]
 ): Promise<void> {
   try {
     // Step 1: Count raw items by airport pairs
@@ -38,18 +41,28 @@ export async function updateRouteMetrics(
       }
     }
 
+    // Step 2: Track missing routes (searched but zero results)
+    if (searchedAirportPairs && searchedAirportPairs.length > 0) {
+      // Initialize all searched pairs with 0 if they don't have results
+      for (const searchedPair of searchedAirportPairs) {
+        if (!airportPairCounts.has(searchedPair)) {
+          airportPairCounts.set(searchedPair, 0);
+        }
+      }
+    }
+
     if (airportPairCounts.size === 0) {
       console.log('[route-metrics] No airport pairs found in data, skipping update');
       return;
     }
 
-    // Step 2: Aggregate to city pairs
+    // Step 3: Aggregate to city pairs
     const cityPairCounts = aggregateAirportPairsToCityPairs(airportPairCounts);
 
-    // Step 3: Calculate day_count
+    // Step 4: Calculate day_count
     const day_count = generateDateRange(startDate, seatsAeroEndDate).length;
 
-    // Step 4: Upsert to Supabase
+    // Step 5: Upsert to Supabase
     const supabase = getSupabaseAdminClient();
     const updates: Array<{ origin: string; destination: string; count: number; day_count: number }> = [];
 

@@ -466,6 +466,58 @@ function consolidateAggressivelyWithDateRanges(
 }
 
 /**
+ * Split a date range into chunks when estimated results exceed MAX_RESULTS
+ * Returns array of date range chunks
+ */
+function splitDateRange(
+  startDate: string,
+  endDate: string,
+  origins: string[],
+  destinations: string[],
+  maxResults: number,
+  routeCountData: Map<string, number>
+): Array<{ start: string; end: string }> {
+  const allDates = generateDateRange(startDate, endDate);
+  const totalDays = allDates.length;
+  
+  if (totalDays === 0) {
+    return [{ start: startDate, end: endDate }];
+  }
+  
+  // Calculate average results per day for all origin-destination combinations
+  let totalPerDay = 0;
+  for (const origin of origins) {
+    for (const destination of destinations) {
+      const originCity = getAirportCityCode(origin);
+      const destCity = getAirportCityCode(destination);
+      const key = `${originCity},${destCity}`;
+      const perDay = routeCountData.get(key) || 5;
+      totalPerDay += perDay;
+    }
+  }
+  
+  // Calculate how many days fit in MAX_RESULTS
+  // Leave some buffer (90% of MAX_RESULTS) to account for variability
+  const maxDaysPerChunk = Math.floor((maxResults * 0.9) / totalPerDay) || 1;
+  
+  // If the date range fits in one chunk, return as-is
+  if (totalDays <= maxDaysPerChunk) {
+    return [{ start: startDate, end: endDate }];
+  }
+  
+  // Split into chunks
+  const chunks: Array<{ start: string; end: string }> = [];
+  
+  for (let i = 0; i < allDates.length; i += maxDaysPerChunk) {
+    const chunkStart = allDates[i]!;
+    const chunkEnd = allDates[Math.min(i + maxDaysPerChunk - 1, allDates.length - 1)]!;
+    chunks.push({ start: chunkStart, end: chunkEnd });
+  }
+  
+  return chunks;
+}
+
+/**
  * Result type for route optimization
  */
 export interface RouteOptimizationResult {
@@ -529,7 +581,7 @@ export async function optimizeRouteGroups(
   console.log(`[route-optimizer] Phase 3: Consolidated ${packedBins.length} → ${consolidatedBins.length} bins`);
   
   // Step 7: Calculate date ranges and recalculate estimates for each optimized group
-  const optimizedGroups: OptimizedGroup[] = consolidatedBins.map(bin => {
+  const initialOptimizedGroups: OptimizedGroup[] = consolidatedBins.map(bin => {
     // Get date ranges for all routes in this bin
     const binRouteRanges = bin.routes
       .map(route => routeRanges.find(r => r.route === route))
@@ -550,6 +602,47 @@ export async function optimizeRouteGroups(
       dateRange
     };
   });
+  
+  // Step 8: Split date ranges for groups that exceed MAX_RESULTS
+  const optimizedGroups: OptimizedGroup[] = [];
+  let dateRangeSplits = 0;
+  
+  for (const group of initialOptimizedGroups) {
+    if (group.estimatedResults <= MAX_RESULTS) {
+      // Fits within limit, use as-is
+      optimizedGroups.push(group);
+    } else {
+      // Split date range into multiple chunks
+      const dateChunks = splitDateRange(
+        group.dateRange.start,
+        group.dateRange.end,
+        group.origins,
+        group.destinations,
+        MAX_RESULTS,
+        routeCountData
+      );
+      
+      dateRangeSplits += dateChunks.length - 1; // Track how many splits we made
+      
+      // Create a separate optimized group for each date chunk
+      for (const chunk of dateChunks) {
+        const chunkDays = generateDateRange(chunk.start, chunk.end).length;
+        const chunkEstimate = calculateResults(group.origins, group.destinations, chunkDays, routeCountData);
+        
+        optimizedGroups.push({
+          origins: group.origins,
+          destinations: group.destinations,
+          routes: group.routes,
+          estimatedResults: chunkEstimate,
+          dateRange: chunk
+        });
+      }
+    }
+  }
+  
+  if (dateRangeSplits > 0) {
+    console.log(`[route-optimizer] Phase 4: Split ${dateRangeSplits} oversized groups by date range → ${optimizedGroups.length} API calls`);
+  }
   
   // Log summary
   const totalNeeded = optimizedGroups.reduce((sum, g) => sum + g.routes.length, 0);
