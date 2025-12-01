@@ -6,11 +6,34 @@ export async function buildDirectItineraries(
   origin: string,
   destination: string,
   filteredSegmentPool: Record<string, AvailabilityGroup[]>,
-  flightMap: Map<string, AvailabilityFlight>
+  flightMap: Map<string, AvailabilityFlight>,
+  region?: boolean
 ): Promise<Record<string, Record<string, string[][]>>> {
   await initializeCityGroups();
   
   const output: Record<string, Record<string, string[][]>> = {};
+  
+  // For region queries, include all segments without filtering
+  // All segments are already direct flights between airports in origin/destination regions
+  if (region) {
+    const segmentKeys = Object.keys(filteredSegmentPool);
+    console.log(`[buildDirectItineraries] Region mode: Processing ${segmentKeys.length} segments without filtering`);
+    for (const [segKey, groups] of Object.entries(filteredSegmentPool)) {
+      const routeKey = segKey;
+      if (!output[routeKey]) output[routeKey] = {};
+      for (const group of groups) {
+        const date = group.date;
+        if (!output[routeKey][date]) output[routeKey][date] = [];
+        for (const flight of group.flights) {
+          const uuid = getFlightUUID(flight);
+          flightMap.set(uuid, flight);
+          output[routeKey][date].push([uuid]);
+        }
+      }
+    }
+    console.log(`[buildDirectItineraries] Region mode: Built ${Object.keys(output).length} route groups from ${segmentKeys.length} segments`);
+    return output;
+  }
   
   // Build acceptable origin/destination airport sets from slash-separated inputs and city codes
   const originCodes = origin.split('/').map(s => s.trim().toUpperCase()).filter(Boolean);

@@ -453,7 +453,7 @@ export async function POST(req: NextRequest) {
     
     // Special handling for direct flights (maxStop=0)
     if (maxStop === 0) {
-      const direct = await buildDirectItineraries(originStr, destinationStr, filteredSegmentPool, flightMap);
+      const direct = await buildDirectItineraries(originStr, destinationStr, filteredSegmentPool, flightMap, region);
       Object.assign(output, direct);
       console.log(`[build-itineraries] Built ${Object.keys(output).length} direct route groups from ${validRoutes.length} routes`);
     } else {

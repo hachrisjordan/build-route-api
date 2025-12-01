@@ -59,3 +59,4 @@ mega-staralliance-output.log
 monitor-mega-batch.js
 monitor-oneworld-batch.js
 fix-oneworld-owned-by.js
+*.ts
