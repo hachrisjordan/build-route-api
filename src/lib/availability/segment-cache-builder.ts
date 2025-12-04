@@ -28,13 +28,14 @@ export async function buildAvailabilityResultsFromSegmentCache(
   const results: AvailabilityTaskResult[] = [];
   const dates = generateDateRange(startDate, seatsAeroEndDate);
 
-  // Process each route
-  for (const route of cachedRoutes) {
+  // Process all routes in parallel for better performance
+  // This was previously sequential, causing ~17s delay for 387 routes
+  const routePromises = cachedRoutes.map(async (route) => {
     const [origin, destination] = route.split('-');
     
     if (!origin || !destination) {
       console.warn(`[segment-cache-builder] Invalid route format: ${route}, skipping`);
-      continue;
+      return null;
     }
 
     // Collect all groups and pricing entries for this route across all dates
@@ -59,7 +60,10 @@ export async function buildAvailabilityResultsFromSegmentCache(
       // Handle availability groups
       if (availabilityGroups === null) {
         missingCacheCount++;
-        console.warn(`[segment-cache-builder] Missing availability cache for ${route} on ${date}`);
+        // Silent warning - only log if significant number missing
+        if (missingCacheCount === dates.length) {
+          console.warn(`[segment-cache-builder] Missing all availability cache for ${route}`);
+        }
       } else if (availabilityGroups.length > 0) {
         // Add groups with date information if needed
         groups.push(...availabilityGroups);
@@ -69,11 +73,6 @@ export async function buildAvailabilityResultsFromSegmentCache(
       if (binbin && pricingData !== null && pricingData.length > 0) {
         pricingEntries.push(...pricingData);
       }
-    }
-
-    // If we have missing cache entries, log a warning but continue with what we have
-    if (missingCacheCount > 0) {
-      console.warn(`[segment-cache-builder] ${missingCacheCount}/${dates.length} dates missing cache for route ${route}`);
     }
 
     // Build result in the format expected by AvailabilityTaskResult
@@ -87,7 +86,17 @@ export async function buildAvailabilityResultsFromSegmentCache(
       }
     };
 
-    results.push(result);
+    return result;
+  });
+
+  // Wait for all routes to be processed in parallel
+  const routeResults = await Promise.all(routePromises);
+  
+  // Filter out null results (invalid routes)
+  for (const result of routeResults) {
+    if (result !== null) {
+      results.push(result);
+    }
   }
 
   const totalGroups = results.reduce((sum, r) => sum + (r.data?.groups?.length || 0), 0);
