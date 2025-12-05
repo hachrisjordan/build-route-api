@@ -52,7 +52,7 @@ export async function updateRouteMetrics(
     }
 
     if (airportPairCounts.size === 0) {
-      console.log('[route-metrics] No airport pairs found in data, skipping update');
+      // Silent skip - no need to log for normal empty results
       return;
     }
 
@@ -83,7 +83,7 @@ export async function updateRouteMetrics(
     }
 
     if (updates.length === 0) {
-      console.log('[route-metrics] No valid city pairs to update');
+      // Silent skip - no need to log for normal empty results
       return;
     }
 
@@ -140,7 +140,12 @@ export async function updateRouteMetrics(
       }
     }
 
-    console.log(`[route-metrics] Updated ${processed}/${updates.length} route metrics`);
+    // Only log if there were errors or if in debug mode
+    // Silent success to avoid log noise - metrics update in background
+    if (processed < updates.length) {
+      console.warn(`[route-metrics] Partially updated: ${processed}/${updates.length} route metrics`);
+    }
+    // Success case: no log (runs in background, non-blocking)
   } catch (error) {
     // Log error but don't throw - this should not block the main request
     console.error('[route-metrics] Error updating route metrics:', error);

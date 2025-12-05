@@ -60,3 +60,4 @@ monitor-mega-batch.js
 monitor-oneworld-batch.js
 fix-oneworld-owned-by.js
 *.ts
+docker-run-app.sh
