@@ -4,6 +4,7 @@ import { createHash } from 'crypto';
 import { saveCompressedJson } from '@/lib/redis/client';
 import { getRedisClient } from '@/lib/cache';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import { getSupabaseAdminClient } from '@/lib/supabase-admin';
 
 const AmExHotelCalendarSchema = z.object({
   hotelId: z.union([z.string(), z.number()]).transform(val => String(val)),
@@ -189,6 +190,57 @@ async function cacheCalendarData(hotelId: string, startDate: string, data: any[]
   await saveCompressedJson(key, data, 86400); // 24 hours TTL
 }
 
+/**
+ * Store a batch of calendar data to Supabase
+ */
+async function storeCalendarBatchToSupabase(
+  batch: Array<{ checkInDate: string; offerPrice: number | null; remainingCount: number }>,
+  hotelId: string
+): Promise<{ success: boolean; stored: number; error?: string }> {
+  try {
+    const supabase = getSupabaseAdminClient();
+
+    // Format data for database
+    const formattedData = batch.map((item) => ({
+      hotel_id: hotelId,
+      check_in_date: item.checkInDate,
+      offer_price: item.offerPrice,
+      remaining_count: item.remainingCount,
+      last_updated: new Date().toISOString(),
+    }));
+
+    // Upsert to Supabase using the unique constraint (hotel_id, check_in_date)
+    const { data, error } = await supabase
+      .from('amex_hotel_calendar_cache')
+      .upsert(formattedData, {
+        onConflict: 'hotel_id,check_in_date',
+        ignoreDuplicates: false,
+      })
+      .select();
+
+    if (error) {
+      console.error('Error storing calendar batch to Supabase:', error);
+      return {
+        success: false,
+        stored: 0,
+        error: error.message,
+      };
+    }
+
+    return {
+      success: true,
+      stored: data?.length || 0,
+    };
+  } catch (error) {
+    console.error('Exception storing calendar batch to Supabase:', error);
+    return {
+      success: false,
+      stored: 0,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
 export async function POST(req: NextRequest) {
   if (req.method !== 'POST') {
     return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
@@ -255,6 +307,8 @@ export async function POST(req: NextRequest) {
     // Process batches with 500ms delay between batches
     let totalSuccessfulCalls = 0;
     let totalFailedCalls = 0;
+    let totalStoredToSupabase = 0;
+    const supabaseErrors: string[] = [];
     
     for (let i = 0; i < totalBatches; i++) {
       const startIndex = i * batchSize;
@@ -269,7 +323,19 @@ export async function POST(req: NextRequest) {
       
       results.push(...batchResults);
       
-      console.log(`Completed batch ${i + 1}/${totalBatches} (${batchResults.length} calls) - Success: ${batchSuccessful}, Failed: ${batchFailed}`);
+      // Store batch to Supabase (remove success field before storing)
+      const batchForStorage = batchResults.map(({ success, ...rest }) => rest);
+      const storageResult = await storeCalendarBatchToSupabase(batchForStorage, hotelId);
+      
+      if (storageResult.success) {
+        totalStoredToSupabase += storageResult.stored;
+        console.log(`Completed batch ${i + 1}/${totalBatches} (${batchResults.length} calls) - Success: ${batchSuccessful}, Failed: ${batchFailed}, Stored to Supabase: ${storageResult.stored}`);
+      } else {
+        const errorMsg = `Batch ${i + 1}/${totalBatches} Supabase storage failed: ${storageResult.error}`;
+        supabaseErrors.push(errorMsg);
+        console.error(errorMsg);
+        console.log(`Completed batch ${i + 1}/${totalBatches} (${batchResults.length} calls) - Success: ${batchSuccessful}, Failed: ${batchFailed}, Supabase storage failed`);
+      }
       
       // Add delay between batches (except for the last batch)
       if (i < totalBatches - 1) {
@@ -285,6 +351,7 @@ export async function POST(req: NextRequest) {
 
     console.log(`Calendar scraping completed for hotel ${hotelId}. Found ${results.filter(r => r.remainingCount > 0).length} days with offers.`);
     console.log(`API Call Summary - Total: ${totalSuccessfulCalls + totalFailedCalls}, Successful: ${totalSuccessfulCalls}, Failed: ${totalFailedCalls}, Success Rate: ${((totalSuccessfulCalls / (totalSuccessfulCalls + totalFailedCalls)) * 100).toFixed(1)}%`);
+    console.log(`Supabase Storage Summary - Total stored: ${totalStoredToSupabase}, Errors: ${supabaseErrors.length}`);
 
     // Remove success field from final response
     const finalResults = results.map(({ success, ...rest }) => rest);
@@ -300,6 +367,11 @@ export async function POST(req: NextRequest) {
         successful: totalSuccessfulCalls,
         failed: totalFailedCalls,
         successRate: parseFloat(((totalSuccessfulCalls / (totalSuccessfulCalls + totalFailedCalls)) * 100).toFixed(1))
+      },
+      supabaseStorageSummary: {
+        totalStored: totalStoredToSupabase,
+        errors: supabaseErrors,
+        success: supabaseErrors.length === 0
       }
     });
 
