@@ -36,14 +36,27 @@ function generateDatePairs(): Array<{ checkIn: string; checkOut: string }> {
 }
 
 /**
+ * Get hotelPrograms value based on program type
+ */
+function getHotelPrograms(program: string | null): string {
+  if (program === 'FHR') {
+    return '20';
+  } else if (program === 'THC') {
+    return '10';
+  }
+  // Fallback to 20 for null, empty, or other values
+  return '20';
+}
+
+/**
  * Build AmEx API URL with query parameters (reused from amex-hotel-offers)
  */
-function buildAmExUrl(checkIn: string, checkOut: string, hotelId: string): string {
+function buildAmExUrl(checkIn: string, checkOut: string, hotelId: string, hotelPrograms: string): string {
   const baseParams = new URLSearchParams({
     availOnly: 'false',
     checkIn,
     checkOut,
-    hotelPrograms: '20',
+    hotelPrograms,
     sortType: 'PREMIUM',
   });
   
@@ -95,9 +108,9 @@ function transformAmExResponse(data: any, checkInDate: string) {
 /**
  * Make a single API call to AmEx for a specific date range
  */
-async function fetchHotelOffer(checkIn: string, checkOut: string, hotelId: string, proxyAgent?: any) {
+async function fetchHotelOffer(checkIn: string, checkOut: string, hotelId: string, hotelPrograms: string, proxyAgent?: any) {
   try {
-    const url = buildAmExUrl(checkIn, checkOut, hotelId);
+    const url = buildAmExUrl(checkIn, checkOut, hotelId, hotelPrograms);
     
     const fetchOptions: any = {
       method: 'GET',
@@ -142,13 +155,14 @@ async function fetchHotelOffer(checkIn: string, checkOut: string, hotelId: strin
 async function processBatch(
   datePairs: Array<{ checkIn: string; checkOut: string }>,
   hotelId: string,
+  hotelPrograms: string,
   startIndex: number,
   batchSize: number,
   proxyAgent?: any
 ) {
   const batch = datePairs.slice(startIndex, startIndex + batchSize);
   const promises = batch.map(({ checkIn, checkOut }) => 
-    fetchHotelOffer(checkIn, checkOut, hotelId, proxyAgent)
+    fetchHotelOffer(checkIn, checkOut, hotelId, hotelPrograms, proxyAgent)
   );
   
   return Promise.all(promises);
@@ -263,6 +277,23 @@ export async function POST(req: NextRequest) {
     const { hotelId } = parsed.data;
     const today = new Date().toISOString().split('T')[0]!;
 
+    // Fetch hotel program from database to determine correct hotelPrograms value
+    const supabase = getSupabaseAdminClient();
+    const { data: hotelData, error: hotelError } = await supabase
+      .from('hotel')
+      .select('program')
+      .eq('hotel_id', hotelId)
+      .single();
+
+    if (hotelError) {
+      console.warn(`Could not fetch hotel program for ${hotelId}, using fallback:`, hotelError.message);
+    }
+
+    const hotelProgram = hotelData?.program || null;
+    const hotelPrograms = getHotelPrograms(hotelProgram);
+    
+    console.log(`Hotel ${hotelId} program: ${hotelProgram || 'null'} -> hotelPrograms: ${hotelPrograms}`);
+
     // Check cache first
     const cachedData = await getCachedCalendarData(hotelId, today);
     if (cachedData) {
@@ -312,7 +343,7 @@ export async function POST(req: NextRequest) {
     
     for (let i = 0; i < totalBatches; i++) {
       const startIndex = i * batchSize;
-      const batchResults = await processBatch(datePairs, hotelId, startIndex, batchSize, proxyAgent);
+      const batchResults = await processBatch(datePairs, hotelId, hotelPrograms, startIndex, batchSize, proxyAgent);
       
       // Count successful vs failed calls in this batch
       const batchSuccessful = batchResults.filter(r => r.success).length;
