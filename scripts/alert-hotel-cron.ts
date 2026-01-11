@@ -363,16 +363,23 @@ async function processAlert(alert: AlertRecord): Promise<{ updated: boolean; pri
       return { updated: false, priceFound: false, emailSent: false };
     }
 
-    // Only update if price decreased (or if there was no previous price)
+    // Only update if price decreased (or if there was no previous price) AND price is within max_amount
     const currentPrice = alert.current_price;
+    const maxAmount = alert.max_amount;
     const isPriceDecrease = currentPrice === null || priceResult.price < currentPrice;
+    const isWithinMaxAmount = maxAmount === null || priceResult.price <= maxAmount;
 
     if (!isPriceDecrease) {
       console.log(`[CRON] Alert ${alert.id}: Price $${priceResult.price} is not lower than current $${currentPrice}, skipping`);
       return { updated: false, priceFound: true, emailSent: false };
     }
 
-    // Price decreased - update the database
+    if (!isWithinMaxAmount) {
+      console.log(`[CRON] Alert ${alert.id}: Price $${priceResult.price} exceeds max_amount $${maxAmount}, not updating current fields`);
+      return { updated: false, priceFound: true, emailSent: false };
+    }
+
+    // Price decreased and within max_amount - update the database
     console.log(`[CRON] Alert ${alert.id}: Price dropped from $${currentPrice} to $${priceResult.price}`);
 
     await updateAlertPrice(

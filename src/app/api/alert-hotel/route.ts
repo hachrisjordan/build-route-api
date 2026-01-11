@@ -111,8 +111,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Immediately check prices
     const priceResult = await checkPricesForAlert(alertData);
 
-    // Update the alert with current price info if found
-    if (priceResult) {
+    // Update the alert with current price info if found AND price is within max_amount
+    let shouldUpdateCurrentFields = false;
+    if (priceResult && priceResult.price <= max_amount) {
+      shouldUpdateCurrentFields = true;
       const { error: updateError } = await supabase
         .from('alert_hotel')
         .update({
@@ -126,14 +128,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       if (updateError) {
         console.error('[alert-hotel] Price update error:', updateError);
         // Don't fail the request, just log the error
+        shouldUpdateCurrentFields = false;
       } else {
         console.log(
           `[alert-hotel] Updated alert ${insertedAlert.id} with price $${priceResult.price}`
         );
       }
+    } else if (priceResult && priceResult.price > max_amount) {
+      console.log(
+        `[alert-hotel] Price $${priceResult.price} exceeds max_amount $${max_amount}, not updating current fields`
+      );
     }
 
-    // Build response
+    // Build response - only include current fields if we actually updated them
     const response: AlertResponse = {
       id: insertedAlert.id,
       email: insertedAlert.email,
@@ -142,10 +149,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       hotels: insertedAlert.hotels,
       date: insertedAlert.date,
       end_date: insertedAlert.end_date,
-      current_price: priceResult?.price ?? null,
-      current_hotel: priceResult?.hotelId ?? null,
-      current_start: priceResult?.checkIn ?? null,
-      current_end: priceResult?.checkOut ?? null,
+      current_price: shouldUpdateCurrentFields ? (priceResult?.price ?? null) : null,
+      current_hotel: shouldUpdateCurrentFields ? (priceResult?.hotelId ?? null) : null,
+      current_start: shouldUpdateCurrentFields ? (priceResult?.checkIn ?? null) : null,
+      current_end: shouldUpdateCurrentFields ? (priceResult?.checkOut ?? null) : null,
     };
 
     return NextResponse.json(response, { status: 201 });
