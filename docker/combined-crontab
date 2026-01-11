@@ -10,5 +10,6 @@
 # CX Availability Scraper - runs every hour at :00
 0 * * * * /app/scripts/run-cx-scraper.sh 
 
-# AmEx Hotel Offers Update - runs daily at midnight UTC
-0 0 * * * /app/node_modules/.bin/tsx /app/scripts/amex-hotel-offers-cron.ts >> /app/batch.log 2>&1
+# Alert Hotel Price Check - runs twice daily at 6am and 6pm UTC
+0 6 * * * /app/node_modules/.bin/tsx /app/scripts/alert-hotel-cron.ts >> /app/batch.log 2>&1
+0 18 * * * /app/node_modules/.bin/tsx /app/scripts/alert-hotel-cron.ts >> /app/batch.log 2>&1
