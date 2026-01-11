@@ -13,7 +13,7 @@ const CreateAlertSchema = z.object({
   hotels: z
     .array(z.number().int().positive())
     .min(1, 'At least one hotel ID is required')
-    .max(50, 'Maximum 50 hotel IDs per alert'),
+    .max(200, 'Maximum 200 hotel IDs per alert'),
   date: z
     .array(
       z

@@ -438,14 +438,11 @@ async function processAlert(alert: AlertRecord): Promise<{ updated: boolean; pri
  * Main cron job function
  */
 async function runCronJob(): Promise<void> {
-  console.log('[CRON] Starting hotel alert price check job...');
-  console.log(`[CRON] Started at: ${new Date().toISOString()}`);
-
   try {
     const alerts = await fetchActiveAlerts();
 
     if (alerts.length === 0) {
-      console.log('[CRON] No active alerts to process');
+      console.log('Alert Hotel Price Check: 0 alerts fired, no errors');
       return;
     }
 
@@ -455,8 +452,6 @@ async function runCronJob(): Promise<void> {
 
     for (let i = 0; i < alerts.length; i++) {
       const alert = alerts[i];
-      console.log(`[CRON] Processing alert ${i + 1}/${alerts.length}`);
-
       const result = await processAlert(alert);
       
       if (result.updated) totalUpdated++;
@@ -469,15 +464,11 @@ async function runCronJob(): Promise<void> {
       }
     }
 
-    console.log('[CRON] Job completed successfully:');
-    console.log(`[CRON] - Total alerts processed: ${alerts.length}`);
-    console.log(`[CRON] - Price drops found & updated: ${totalUpdated}`);
-    console.log(`[CRON] - Prices available: ${totalPricesFound}`);
-    console.log(`[CRON] - Emails sent: ${totalEmailsSent}`);
-    console.log(`[CRON] Finished at: ${new Date().toISOString()}`);
+    // Output single line summary
+    console.log(`Alert Hotel Price Check: ${totalEmailsSent} alerts fired, no errors`);
 
   } catch (error) {
-    console.error('[CRON] Job failed:', error);
+    console.error(`Alert Hotel Price Check: 0 alerts fired, errors: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
 }
@@ -486,11 +477,10 @@ async function runCronJob(): Promise<void> {
 if (require.main === module) {
   runCronJob()
     .then(() => {
-      console.log('[CRON] Cron job finished successfully');
       process.exit(0);
     })
     .catch((error) => {
-      console.error('[CRON] Cron job failed:', error);
+      console.error(`Alert Hotel Price Check: 0 alerts fired, errors: ${error instanceof Error ? error.message : String(error)}`);
       process.exit(1);
     });
 }
