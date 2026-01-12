@@ -79,6 +79,10 @@ interface AlertRecord {
   current_start: string | null;
   current_end: string | null;
   end_date: string | null;
+  past_price: number | null;
+  past_hotel: number | null;
+  past_start: string | null;
+  past_end: string | null;
 }
 
 interface ParsedDateSet {
@@ -304,10 +308,12 @@ async function fetchActiveAlerts(): Promise<AlertRecord[]> {
 }
 
 /**
- * Update alert with new price data
+ * Update alert with new price data atomically
+ * Returns true if the update was successful and the price actually changed
  */
 async function updateAlertPrice(
   alertId: string,
+  expectedCurrentPrice: number | null,
   currentData: {
     price: number | null;
     hotel: number | null;
@@ -315,7 +321,7 @@ async function updateAlertPrice(
     end: string | null;
   },
   newResult: PriceCheckResult | null
-): Promise<void> {
+): Promise<boolean> {
   const supabase = getSupabaseAdminClient();
 
   const updateData: Record<string, any> = {
@@ -339,14 +345,34 @@ async function updateAlertPrice(
     updateData.current_end = null;
   }
 
-  const { error } = await supabase
+  // Use atomic update: only update if current_price hasn't changed since we read it
+  // This prevents race conditions where multiple cron jobs process the same alert
+  let query = supabase
     .from('alert_hotel')
     .update(updateData)
     .eq('id', alertId);
 
+  // Add condition to ensure we only update if price hasn't changed
+  if (expectedCurrentPrice !== null) {
+    query = query.eq('current_price', expectedCurrentPrice);
+  } else {
+    query = query.is('current_price', null);
+  }
+
+  const { data, error } = await query.select('id');
+
   if (error) {
     console.error(`[CRON] Error updating alert ${alertId}:`, error);
+    return false;
   }
+
+  // If no rows were updated, another process already changed the price
+  if (!data || data.length === 0) {
+    console.log(`[CRON] Alert ${alertId}: Atomic update failed - price was already changed by another process`);
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -379,11 +405,30 @@ async function processAlert(alert: AlertRecord): Promise<{ updated: boolean; pri
       return { updated: false, priceFound: true, emailSent: false };
     }
 
-    // Price decreased and within max_amount - update the database
+    // Price decreased and within max_amount - update the database atomically
     console.log(`[CRON] Alert ${alert.id}: Price dropped from $${currentPrice} to $${priceResult.price}`);
 
-    await updateAlertPrice(
+    // Check if we've already processed this exact price drop by checking past_price
+    // If past_price matches what we're about to move to past, we've already processed this
+    if (alert.past_price === currentPrice && 
+        alert.past_hotel === alert.current_hotel &&
+        alert.past_start === alert.current_start &&
+        alert.past_end === alert.current_end &&
+        alert.current_price === priceResult.price &&
+        alert.current_hotel === priceResult.hotelId &&
+        alert.current_start === priceResult.checkIn &&
+        alert.current_end === priceResult.checkOut &&
+        currentPrice !== null) {
+      console.log(`[CRON] Alert ${alert.id}: This price drop was already processed (past_price matches), skipping email`);
+      return { updated: false, priceFound: true, emailSent: false };
+    }
+
+    // Atomically update the database - only succeeds if price hasn't changed since we read it
+    // This prevents race conditions where multiple cron jobs process the same alert
+    console.log(`[CRON] Alert ${alert.id}: Attempting atomic update from $${currentPrice} to $${priceResult.price}`);
+    const updateSuccess = await updateAlertPrice(
       alert.id,
+      currentPrice,
       {
         price: alert.current_price,
         hotel: alert.current_hotel,
@@ -392,6 +437,32 @@ async function processAlert(alert: AlertRecord): Promise<{ updated: boolean; pri
       },
       priceResult
     );
+
+    // If update failed due to race condition, another process already handled this alert
+    if (!updateSuccess) {
+      console.log(`[CRON] Alert ${alert.id}: Atomic update failed - another process already updated (prevented duplicate email)`);
+      return { updated: false, priceFound: true, emailSent: false };
+    }
+    
+    console.log(`[CRON] Alert ${alert.id}: Atomic update successful`);
+
+    // Double-check: Re-read the alert to verify we successfully updated it
+    // This ensures we're the process that made the update
+    const supabase = getSupabaseAdminClient();
+    const { data: verifyAlert } = await supabase
+      .from('alert_hotel')
+      .select('current_price, current_hotel, current_start, current_end, past_price')
+      .eq('id', alert.id)
+      .single();
+
+    // Verify the update was successful and we're the one who did it
+    if (!verifyAlert || 
+        verifyAlert.current_price !== priceResult.price ||
+        verifyAlert.current_hotel !== priceResult.hotelId ||
+        verifyAlert.past_price !== currentPrice) {
+      console.log(`[CRON] Alert ${alert.id}: Verification failed - another process may have updated, skipping email`);
+      return { updated: false, priceFound: true, emailSent: false };
+    }
 
     // Send email notification (only if there was a previous price to compare)
     let emailSent = false;
@@ -436,6 +507,7 @@ async function processAlert(alert: AlertRecord): Promise<{ updated: boolean; pri
 
 /**
  * Main cron job function
+ * Allows concurrent processing of different alerts, but atomic updates prevent duplicate processing of the same alert
  */
 async function runCronJob(): Promise<void> {
   try {
