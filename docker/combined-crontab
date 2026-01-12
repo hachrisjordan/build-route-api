@@ -11,5 +11,5 @@
 0 * * * * /app/scripts/run-cx-scraper.sh 
 
 # Alert Hotel Price Check - runs every hour
-0 * * * /app/node_modules/.bin/tsx /app/scripts/alert-hotel-cron.ts >> /app/batch.log 2>&1
+0 * * * * /app/node_modules/.bin/tsx /app/scripts/alert-hotel-cron.ts >> /app/batch.log 2>&1
 
