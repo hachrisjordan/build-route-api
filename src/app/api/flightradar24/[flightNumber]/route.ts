@@ -29,6 +29,7 @@ export async function GET(
     const { flightNumber } = await params;
     const originIata = searchParams.get('origin');
     const destinationIata = searchParams.get('destination');
+    const ignoreExisting = searchParams.get('ignoreExisting') === 'true' || searchParams.get('forceRefresh') === 'true';
     
     if (!flightNumber) {
       return NextResponse.json({
@@ -36,16 +37,16 @@ export async function GET(
       }, { status: 400 });
     }
     
-    // Check database for existing data first
-    const latestDate = await getLatestDateFromDatabase(flightNumber, originIata, destinationIata);
+    // Check database for existing data first (unless ignoreExisting is true)
+    const latestDate = ignoreExisting ? null : await getLatestDateFromDatabase(flightNumber, originIata, destinationIata);
     
     // Build command arguments for the Python script
     const args = [flightNumber];
     if (originIata) args.push(originIata);
     if (destinationIata) args.push(destinationIata);
     
-    // Add stop_date parameter if we found existing data (for stopping condition only)
-    if (latestDate) {
+    // Add stop_date parameter if we found existing data and not ignoring it (for stopping condition only)
+    if (latestDate && !ignoreExisting) {
       args.push('--stop-date', latestDate);
     }
     

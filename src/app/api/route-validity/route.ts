@@ -79,33 +79,55 @@ async function fetchAirlineId(supabase: any, iata: string): Promise<number | nul
 /**
  * Make request to FlightConnections API
  */
-async function fetchRouteValidity(depId: number, desId: number, airlineId: number): Promise<any> {
-  try {
-    const formData = new URLSearchParams({
-      dep: depId.toString(),
-      des: desId.toString(),
-      id: airlineId.toString(),
-      startDate: '2025',
-      endDate: '2026',
-      lang: 'en',
-    });
+async function fetchRouteValidity(depId: number, desId: number, airlineId: number, retries: number = 3): Promise<any> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const formData = new URLSearchParams({
+        dep: depId.toString(),
+        des: desId.toString(),
+        id: airlineId.toString(),
+        startDate: '2025',
+        endDate: '2026',
+        lang: 'en',
+      });
 
-    const response = await fetch(FLIGHTCONNECTIONS_URL, {
-      method: 'POST',
-      headers: FLIGHTCONNECTIONS_HEADERS,
-      body: formData.toString(),
-    });
+      // Add delay between retries
+      if (attempt > 0) {
+        const delay = attempt * 2000; // 2s, 4s, 6s
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
 
-    if (!response.ok) {
-      throw new Error(`FlightConnections API error: ${response.status} ${response.statusText}`);
+      const response = await fetch(FLIGHTCONNECTIONS_URL, {
+        method: 'POST',
+        headers: FLIGHTCONNECTIONS_HEADERS,
+        body: formData.toString(),
+      });
+
+      // Handle 405 and 429 errors with retry
+      if (response.status === 405 || response.status === 429) {
+        if (attempt < retries - 1) {
+          console.warn(`FlightConnections API returned ${response.status}, retrying... (attempt ${attempt + 1}/${retries})`);
+          continue;
+        }
+        throw new Error(`FlightConnections API error: ${response.status} ${response.statusText} - API may be blocking requests`);
+      }
+
+      if (!response.ok) {
+        throw new Error(`FlightConnections API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      if (attempt === retries - 1) {
+        console.error('Error fetching route validity:', error);
+        throw error;
+      }
+      // Continue to next retry
     }
-
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error('Error fetching route validity:', error);
-    throw error;
   }
+  
+  throw new Error('Failed to fetch route validity after all retries');
 }
 
 /**

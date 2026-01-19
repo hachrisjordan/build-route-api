@@ -300,6 +300,13 @@ class FlightRadar24API:
                 flights = data['result']['response']['data']
                 print(f"✅ Found {len(flights)} flights on page {batch_count}")
                 
+                # Check if this is the last page (current < 90 means no more pages)
+                item_current = data.get('result', {}).get('response', {}).get('item', {}).get('current', len(flights))
+                is_last_page = item_current < 90
+                
+                if is_last_page:
+                    print(f"📄 Last page detected (current={item_current} < 90). Will stop after processing this page.")
+                
                 # Process the flights
                 batch_results = []
                 latest_flight_timestamp = None
@@ -395,6 +402,11 @@ class FlightRadar24API:
                     # All flights were duplicates, go back 45 days
                     current_timestamp -= 45 * 86400
                     print(f"All flights in this batch are duplicates. Jumping back 45 days to: {datetime.fromtimestamp(current_timestamp).strftime('%Y-%m-%d')}")
+                
+                # Check if this was the last page - if so, stop processing
+                if is_last_page:
+                    print(f"✅ Reached last page (current={item_current} < 90). Stopping.")
+                    break
                 
                 # Check if we've reached the latest date from database or 360 days
                 if earliest_date:
