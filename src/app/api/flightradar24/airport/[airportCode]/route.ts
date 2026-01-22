@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { spawn } from 'child_process';
 import { getSupabaseAdminClient } from '@/lib/supabase-admin';
+import {
+  startMonitoring,
+  endMonitoring,
+  monitorChildProcess,
+  logPerformanceMetrics,
+  formatBytes,
+  type PerformanceResult,
+} from '@/lib/performance-monitor';
 
 // Type for the response to match the existing API format
 interface FlightRadarResponse {
@@ -24,11 +32,17 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ airportCode: string }> }
 ) {
+  // Start performance monitoring
+  const startMetrics = startMonitoring();
+  const startTime = Date.now();
+  let pythonProcessMetrics: PerformanceResult['pythonProcess'] | undefined;
+  
   try {
     const { searchParams } = new URL(request.url);
     const { airportCode } = await params;
     const originIata = searchParams.get('origin');
     const destinationIata = searchParams.get('destination');
+    const includeMetrics = searchParams.get('metrics') === 'true';
     
     if (!airportCode) {
       return NextResponse.json({
@@ -41,8 +55,9 @@ export async function GET(
     if (originIata) args.push(originIata);
     if (destinationIata) args.push(destinationIata);
     
-    // Execute the Python script
-    const result = await executePythonScript(args);
+    // Execute the Python script with monitoring
+    const scriptStartTime = Date.now();
+    const { result, pythonProcess, monitoringPromise } = await executePythonScriptWithMonitoring(args);
     
     // Parse the CSV output from Python script
     const flights = parseFlightData(result);
@@ -65,10 +80,85 @@ export async function GET(
       }
     }
     
-    // Return the scraped flights
+    // Wait for Python process monitoring to complete
+    const scriptDuration = Date.now() - scriptStartTime;
+    if (monitoringPromise) {
+      pythonProcessMetrics = await monitoringPromise;
+    }
+    
+    // End performance monitoring
+    const endMetrics = endMonitoring(startMetrics);
+    const duration = Date.now() - startTime;
+    
+    const performanceResult: PerformanceResult = {
+      nodeProcess: {
+        start: startMetrics,
+        end: endMetrics,
+        delta: {
+          cpuUser: endMetrics.cpuUsage.user,
+          cpuSystem: endMetrics.cpuUsage.system,
+          memoryRss: endMetrics.memoryUsage.rss - startMetrics.memoryUsage.rss,
+          memoryHeapUsed: endMetrics.memoryUsage.heapUsed - startMetrics.memoryUsage.heapUsed,
+        },
+      },
+      pythonProcess: pythonProcessMetrics,
+      duration,
+    };
+    
+    // Log performance metrics
+    logPerformanceMetrics(performanceResult);
+    
+    // Return response with optional metrics
+    if (includeMetrics) {
+      return NextResponse.json({
+        flights,
+        metrics: {
+          duration: `${Math.round(duration)} ms`,
+          nodeProcess: {
+            cpu: {
+              user: `${Math.round(performanceResult.nodeProcess.delta.cpuUser / 1000)} ms`,
+              system: `${Math.round(performanceResult.nodeProcess.delta.cpuSystem / 1000)} ms`,
+            },
+            memory: {
+              rssDelta: formatBytes(performanceResult.nodeProcess.delta.memoryRss),
+              heapUsedDelta: formatBytes(performanceResult.nodeProcess.delta.memoryHeapUsed),
+              peakRss: formatBytes(performanceResult.nodeProcess.end.memoryUsage.rss),
+              peakHeapUsed: formatBytes(performanceResult.nodeProcess.end.memoryUsage.heapUsed),
+            },
+          },
+          pythonProcess: pythonProcessMetrics ? {
+            pid: pythonProcessMetrics.pid,
+            peakMemory: pythonProcessMetrics.peakMemory ? formatBytes(pythonProcessMetrics.peakMemory) : undefined,
+            averageCpu: pythonProcessMetrics.averageCpu ? `${pythonProcessMetrics.averageCpu}%` : undefined,
+          } : undefined,
+        },
+      });
+    }
+    
     return NextResponse.json(flights);
     
   } catch (error) {
+    // End monitoring even on error
+    const endMetrics = endMonitoring(startMetrics);
+    const duration = Date.now() - startTime;
+    
+    const performanceResult: PerformanceResult = {
+      nodeProcess: {
+        start: startMetrics,
+        end: endMetrics,
+        delta: {
+          cpuUser: endMetrics.cpuUsage.user,
+          cpuSystem: endMetrics.cpuUsage.system,
+          memoryRss: endMetrics.memoryUsage.rss - startMetrics.memoryUsage.rss,
+          memoryHeapUsed: endMetrics.memoryUsage.heapUsed - startMetrics.memoryUsage.heapUsed,
+        },
+      },
+      pythonProcess: pythonProcessMetrics,
+      duration,
+    };
+    
+    logPerformanceMetrics(performanceResult);
+    
     console.error('FlightRadar Airport API error:', error);
     
     return NextResponse.json({
@@ -79,12 +169,40 @@ export async function GET(
 }
 
 /**
+ * Execute the Python FlightRadar24 airport script with given arguments and monitoring
+ * 
+ * @param args - Command line arguments for the Python script
+ * @returns Promise with result, Python process reference, and monitoring promise
+ */
+async function executePythonScriptWithMonitoring(
+  args: string[]
+): Promise<{
+  result: string;
+  pythonProcess: import('child_process').ChildProcess;
+  monitoringPromise: Promise<PerformanceResult['pythonProcess']>;
+}> {
+  const scriptStartTime = Date.now();
+  
+  // Execute script and get result with process reference
+  const { result, pythonProcess } = await executePythonScript(args);
+  const scriptDuration = Date.now() - scriptStartTime;
+  
+  // Start monitoring (even if process finished, we'll try to get final stats)
+  // Use actual duration + buffer for monitoring window
+  const monitoringPromise = monitorChildProcess(pythonProcess, Math.max(scriptDuration, 1000));
+  
+  return { result, pythonProcess, monitoringPromise };
+}
+
+/**
  * Execute the Python FlightRadar24 airport script with given arguments
  * 
  * @param args - Command line arguments for the Python script
- * @returns Promise<string> - The stdout output from the script
+ * @returns Promise with result and Python process reference
  */
-function executePythonScript(args: string[]): Promise<string> {
+function executePythonScript(
+  args: string[]
+): Promise<{ result: string; pythonProcess: import('child_process').ChildProcess }> {
   return new Promise((resolve, reject) => {
     // Use python3 as the primary command (consistent with Docker setup)
     // Fallback to python if python3 is not available
@@ -129,7 +247,7 @@ function executePythonScript(args: string[]): Promise<string> {
     
     pythonProcess.on('close', (code) => {
       if (code === 0) {
-        resolve(stdout);
+        resolve({ result: stdout, pythonProcess });
       } else {
         reject(new Error(`Python script failed with code ${code}: ${stderr}`));
       }
@@ -176,7 +294,7 @@ function executePythonScript(args: string[]): Promise<string> {
         fallbackProcess.on('close', (code) => {
           if (code === 0) {
             console.log(`[FlightRadar24 Airport] Fallback command succeeded`);
-            resolve(fallbackStdout);
+            resolve({ result: fallbackStdout, pythonProcess: fallbackProcess });
           } else {
             reject(new Error(`Both Python commands failed. Primary: ${error.message}, Fallback: ${fallbackStderr}`));
           }

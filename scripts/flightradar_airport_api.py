@@ -10,6 +10,18 @@ import random
 from typing import Optional, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Fix Windows console encoding for emoji support
+if sys.platform == 'win32':
+    try:
+        # Try to set UTF-8 encoding for stdout/stderr
+        if hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        if hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        # Fallback: use ASCII-safe emoji replacements
+        pass
+
 # Redis imports with graceful fallback
 try:
     import redis
@@ -46,6 +58,28 @@ ALL_VALID_AIRLINES = set()
 for airline_list in AIRLINES.values():
     ALL_VALID_AIRLINES.update(airline_list)
 ALL_VALID_AIRLINES.update(ADDITIONAL_AIRLINES)
+
+def safe_print(message: str):
+    """Print message safely, handling Unicode encoding errors on Windows."""
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        # Replace common emojis with ASCII-safe alternatives
+        replacements = {
+            '🔄': '[REFRESH]',
+            '✅': '[OK]',
+            '⚠️': '[WARNING]',
+            '❌': '[ERROR]',
+            '📄': '[PAGE]',
+            '📅': '[DATE]',
+            '⏰': '[TIME]',
+            '🔍': '[SEARCH]',
+            '📊': '[STATS]'
+        }
+        safe_message = message
+        for emoji, replacement in replacements.items():
+            safe_message = safe_message.replace(emoji, replacement)
+        print(safe_message)
 
 class FlightRadar24AirportAPI:
     BASE_URL = "https://api.flightradar24.com/common/v1/airport.json"
@@ -105,7 +139,6 @@ class FlightRadar24AirportAPI:
                 decode_responses=True,
                 socket_connect_timeout=5,
                 socket_timeout=5,
-                retry_on_timeout=True,
                 health_check_interval=30
             )
             
@@ -162,36 +195,44 @@ class FlightRadar24AirportAPI:
             return False
 
     def _load_tokens(self) -> List[str]:
-        """Load available tokens from Next.js API."""
+        """Load available tokens from Next.js API. Returns empty list if tokens are not available."""
         try:
             # Get API URL from environment or use localhost default
             api_url = os.getenv('API_URL', 'http://localhost:3000')
             token_endpoint = f"{api_url}/api/tokens"
             
-            print(f"🔄 Fetching tokens from API: {token_endpoint}")
+            try:
+                print(f"[INFO] Fetching tokens from API: {token_endpoint}")
+            except UnicodeEncodeError:
+                print(f"[INFO] Fetching tokens from API: {token_endpoint}")
             
             response = self.scraper.get(token_endpoint, headers={
                 'Accept': 'application/json',
                 'User-Agent': 'FlightRadar24-Scraper/1.0'
-            })
+            }, timeout=5)
             response.raise_for_status()
             
             data = response.json()
             if 'tokens' in data and data['tokens']:
                 tokens = data['tokens']
-                print(f"✅ Loaded {len(tokens)} tokens from API")
+                try:
+                    print(f"[OK] Loaded {len(tokens)} tokens from API")
+                except UnicodeEncodeError:
+                    print(f"[OK] Loaded {len(tokens)} tokens from API")
                 return tokens
             else:
-                raise Exception("No tokens returned from API")
+                print("[WARNING] No tokens returned from API")
+                return []
                 
         except Exception as e:
-            print(f"Error: Failed to load tokens from API: {e}")
-            raise Exception("Cannot proceed without valid tokens")
+            print(f"[WARNING] Failed to load tokens from API: {e}")
+            print("[INFO] Continuing without tokens (token parameter will be omitted from requests)")
+            return []
 
-    def _get_next_token(self) -> str:
-        """Get the next token in rotation."""
+    def _get_next_token(self) -> Optional[str]:
+        """Get the next token in rotation. Returns None if no tokens are available."""
         if not self.available_tokens:
-            raise Exception("No tokens available for rotation")
+            return None
             
         token = self.available_tokens[self.current_token_index]
         self.current_token_index = (self.current_token_index + 1) % len(self.available_tokens)
@@ -250,9 +291,12 @@ class FlightRadar24AirportAPI:
                     'plugin-setting[schedule][timestamp]': timestamp,
                     'page': page,
                     'limit': 100,
-                    'fleet': '',
-                    'token': current_token
+                    'fleet': ''
                 }
+                
+                # Only add token parameter if available
+                if current_token:
+                    params['token'] = current_token
                 
                 url = f"{self.BASE_URL}?{'&'.join(f'{k}={v}' for k, v in params.items())}"
                 
@@ -269,44 +313,44 @@ class FlightRadar24AirportAPI:
                 if "402" in error_message or "Payment Required" in error_message:
                     if attempt < max_retries - 1:
                         wait_time = (attempt + 1) * 2  # Exponential backoff: 2s, 4s, 8s
-                        print(f"⚠️  402 Payment Required error on page {page} ({mode}). Retrying in {wait_time}s... (Attempt {attempt + 1}/{max_retries})")
+                        safe_print(f"⚠️  402 Payment Required error on page {page} ({mode}). Retrying in {wait_time}s... (Attempt {attempt + 1}/{max_retries})")
                         time.sleep(wait_time)
                         continue
                     else:
-                        print(f"❌ Failed to fetch page {page} ({mode}) after {max_retries} attempts: 402 error")
+                        safe_print(f"❌ Failed to fetch page {page} ({mode}) after {max_retries} attempts: 402 error")
                         return None
                 
                 # Handle 429 rate limit errors
                 elif "429" in error_message or "Too Many Requests" in error_message:
                     if attempt < max_retries - 1:
                         wait_time = (attempt + 1) * 3  # Longer backoff for rate limits: 3s, 6s, 9s
-                        print(f"⚠️  Rate limit (429) on page {page} ({mode}). Waiting {wait_time}s... (Attempt {attempt + 1}/{max_retries})")
+                        safe_print(f"⚠️  Rate limit (429) on page {page} ({mode}). Waiting {wait_time}s... (Attempt {attempt + 1}/{max_retries})")
                         time.sleep(wait_time)
                         continue
                     else:
-                        print(f"❌ Failed to fetch page {page} ({mode}) after {max_retries} attempts: rate limit")
+                        safe_print(f"❌ Failed to fetch page {page} ({mode}) after {max_retries} attempts: rate limit")
                         return None
                 
                 # Handle timeout and connection errors
                 elif "timeout" in error_message.lower() or "Connection" in error_message or "timed out" in error_message.lower():
                     if attempt < max_retries - 1:
                         wait_time = (attempt + 1) * 2
-                        print(f"⚠️  Network error on page {page} ({mode}). Retrying in {wait_time}s... (Attempt {attempt + 1}/{max_retries})")
+                        safe_print(f"⚠️  Network error on page {page} ({mode}). Retrying in {wait_time}s... (Attempt {attempt + 1}/{max_retries})")
                         time.sleep(wait_time)
                         continue
                     else:
-                        print(f"❌ Failed to fetch page {page} ({mode}) after {max_retries} attempts: network error")
+                        safe_print(f"❌ Failed to fetch page {page} ({mode}) after {max_retries} attempts: network error")
                         return None
                 
                 # For other errors, retry once more
                 else:
                     if attempt < max_retries - 1:
                         wait_time = (attempt + 1) * 2
-                        print(f"⚠️  Error on page {page} ({mode}): {error_message[:100]}. Retrying in {wait_time}s... (Attempt {attempt + 1}/{max_retries})")
+                        safe_print(f"⚠️  Error on page {page} ({mode}): {error_message[:100]}. Retrying in {wait_time}s... (Attempt {attempt + 1}/{max_retries})")
                         time.sleep(wait_time)
                         continue
                     else:
-                        print(f"❌ Failed to fetch page {page} ({mode}) after {max_retries} attempts: {error_message[:100]}")
+                        safe_print(f"❌ Failed to fetch page {page} ({mode}) after {max_retries} attempts: {error_message[:100]}")
                         return None
         
         return None
@@ -316,11 +360,11 @@ class FlightRadar24AirportAPI:
         all_flights = []
         
         # First, fetch page 0 to get total pages
-        print(f"📄 Fetching page 0 for {airport_code} ({mode})...")
+        safe_print(f"📄 Fetching page 0 for {airport_code} ({mode})...")
         page0_data = self._fetch_page_with_retry(airport_code, mode, 0, timestamp)
         
         if not page0_data:
-            print(f"❌ Failed to fetch initial page 0 for {mode}")
+            safe_print(f"❌ Failed to fetch initial page 0 for {mode}")
             return []
         
         # Extract flights from page 0
@@ -329,7 +373,7 @@ class FlightRadar24AirportAPI:
             page0_flights = schedule_data.get('data', [])
             total_pages = schedule_data.get('page', {}).get('total', 0)
             
-            print(f"✅ Page 0: Found {len(page0_flights)} flights, total pages: {total_pages}")
+            safe_print(f"✅ Page 0: Found {len(page0_flights)} flights, total pages: {total_pages}")
             
             # Process page 0 flights
             for flight_item in page0_flights:
@@ -342,7 +386,7 @@ class FlightRadar24AirportAPI:
             
             # Fetch remaining pages concurrently (pages -1 to -[total] inclusive)
             pages_to_fetch = list(range(-1, -(total_pages + 1), -1))  # -1, -2, -3, ..., -total_pages
-            print(f"🔄 Fetching {len(pages_to_fetch)} additional pages concurrently...")
+            safe_print(f"🔄 Fetching {len(pages_to_fetch)} additional pages concurrently...")
             
             # Add small stagger to avoid overwhelming the API
             with ThreadPoolExecutor(max_workers=min(20, len(pages_to_fetch))) as executor:
@@ -372,18 +416,18 @@ class FlightRadar24AirportAPI:
                                     if 'flight' in flight_item:
                                         all_flights.append(flight_item['flight'])
                                 
-                                print(f"✅ Page {page_num} ({completed}/{len(pages_to_fetch)}): Found {len(page_flights)} flights")
+                                safe_print(f"✅ Page {page_num} ({completed}/{len(pages_to_fetch)}): Found {len(page_flights)} flights")
                             except (KeyError, TypeError) as e:
-                                print(f"⚠️  Page {page_num}: Error parsing response: {e}")
+                                safe_print(f"⚠️  Page {page_num}: Error parsing response: {e}")
                         else:
-                            print(f"⚠️  Page {page_num}: Failed to fetch (will continue with other pages)")
+                            safe_print(f"⚠️  Page {page_num}: Failed to fetch (will continue with other pages)")
                     except Exception as e:
-                        print(f"⚠️  Page {page_num}: Exception: {e}")
+                        safe_print(f"⚠️  Page {page_num}: Exception: {e}")
             
-            print(f"✅ Completed fetching all pages for {mode}. Total flights: {len(all_flights)}")
+            safe_print(f"✅ Completed fetching all pages for {mode}. Total flights: {len(all_flights)}")
             
         except (KeyError, TypeError) as e:
-            print(f"❌ Error parsing page 0 response: {e}")
+            safe_print(f"❌ Error parsing page 0 response: {e}")
             return []
         
         return all_flights
@@ -415,26 +459,34 @@ class FlightRadar24AirportAPI:
                     continue
                 
                 # Get aircraft info and filter
-                aircraft_text = flight.get('aircraft', {}).get('model', {}).get('text')
+                # Handle case where aircraft might be None
+                aircraft = flight.get('aircraft') or {}
+                aircraft_model = aircraft.get('model') or {}
+                aircraft_text = aircraft_model.get('text') if isinstance(aircraft_model, dict) else None
+                
                 if not self._is_valid_aircraft(aircraft_text):
                     aircraft_filtered += 1
                     continue
                 
                 scheduled_departure = flight['time']['scheduled']['departure']
                 timezone_offset = flight['airport']['origin']['timezone']['offset']
-                registration = flight['aircraft'].get('registration') or 'N/A'
+                registration = aircraft.get('registration') if isinstance(aircraft, dict) else 'N/A'
+                if not registration:
+                    registration = 'N/A'
                 
                 # For arrivals: destination is the queried airport (doesn't have code in response)
                 # For departures: origin is the queried airport (should have code, but handle missing case)
                 if mode == 'arrivals':
-                    origin_code = flight['airport']['origin'].get('code', {}).get('iata')
+                    origin_code_obj = flight['airport']['origin'].get('code') or {}
+                    origin_code = origin_code_obj.get('iata') if isinstance(origin_code_obj, dict) else None
                     destination_code = airport_code.upper()  # Arrivals: destination is the queried airport
                     if not origin_code:
                         missing_codes += 1
                         continue
                 else:  # departures
                     origin_code = airport_code.upper()  # Departures: origin is the queried airport
-                    destination_code = flight['airport']['destination'].get('code', {}).get('iata')
+                    destination_code_obj = flight['airport']['destination'].get('code') or {}
+                    destination_code = destination_code_obj.get('iata') if isinstance(destination_code_obj, dict) else None
                     if not destination_code:
                         missing_codes += 1
                         continue
@@ -483,7 +535,7 @@ class FlightRadar24AirportAPI:
                 # Skip malformed flight entries
                 error_count += 1
                 if error_count <= 5:  # Only show first 5 errors
-                    print(f"⚠️  Skipping malformed flight: {str(e)[:100]}")
+                    safe_print(f"⚠️  Skipping malformed flight: {str(e)[:100]}")
                 continue
         
         # Print debug info
@@ -515,10 +567,10 @@ class FlightRadar24AirportAPI:
         current_timestamp = self._get_current_timestamp()
         current_date = datetime.fromtimestamp(current_timestamp).strftime('%Y-%m-%d')
         
-        print(f"📅 Today's date: {self.today.strftime('%Y-%m-%d')}")
-        print(f"⏰ Timestamp: {current_timestamp}")
-        print(f"🔍 Airport: {airport_code.upper()}")
-        print(f"📊 Fetching all pages (containing historical flight data)")
+        safe_print(f"📅 Today's date: {self.today.strftime('%Y-%m-%d')}")
+        safe_print(f"⏰ Timestamp: {current_timestamp}")
+        safe_print(f"🔍 Airport: {airport_code.upper()}")
+        safe_print(f"📊 Fetching all pages (containing historical flight data)")
         
         # Track the earliest and latest dates found
         earliest_date = None
@@ -554,12 +606,12 @@ class FlightRadar24AirportAPI:
             flights = self._fetch_airport_pages(airport_code, mode, current_timestamp)
             
             if not flights:
-                print(f"⚠️  No flights found for {mode} at timestamp {current_timestamp}")
+                safe_print(f"⚠️  No flights found for {mode} at timestamp {current_timestamp}")
                 continue
             
             # Process flights
             batch_results = self._process_airport_flights(flights, airport_code, mode, origin_iata, destination_iata)
-            print(f"✅ Processed {len(batch_results)} valid flights from {len(flights)} total flights ({mode})")
+            safe_print(f"✅ Processed {len(batch_results)} valid flights from {len(flights)} total flights ({mode})")
             
             # Track dates and add results
             for result in batch_results:
@@ -593,9 +645,9 @@ class FlightRadar24AirportAPI:
         
         print(f"\n==== Summary ====")
         print(f"📈 Total flights found: {len(all_results)}")
-        print(f"🔍 Unique flights: {len(unique_results)}")
+        safe_print(f"🔍 Unique flights: {len(unique_results)}")
         if earliest_date and latest_date:
-            print(f"📅 Date range: {earliest_date.strftime('%Y-%m-%d')} to {latest_date.strftime('%Y-%m-%d')} ({(latest_date - earliest_date).days + 1} days)")
+            safe_print(f"📅 Date range: {earliest_date.strftime('%Y-%m-%d')} to {latest_date.strftime('%Y-%m-%d')} ({(latest_date - earliest_date).days + 1} days)")
         
         return unique_results
 
