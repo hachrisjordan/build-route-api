@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { getAmExBrowserHeaders } from '@/lib/amex-api-headers';
 
 const AmExHotelOffersSchema = z.object({
   checkIn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Check-in date must be in YYYY-MM-DD format'),
@@ -58,25 +59,6 @@ function buildAmExUrl(checkIn: string, checkOut: string, hotelIds: (string | num
   return fullUrl;
 }
 
-/**
- * Get browser-like headers to mimic real browser behavior
- */
-function getBrowserHeaders() {
-  return {
-    'Accept': '*/*',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Connection': 'keep-alive',
-    'Origin': 'https://www.americanexpress.com',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'same-site',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
-    'sec-ch-ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-  };
-}
-
 export async function POST(req: NextRequest) {
   if (req.method !== 'POST') {
     return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
@@ -104,7 +86,7 @@ export async function POST(req: NextRequest) {
     // Make request to AmEx API with browser-like headers
     const response = await fetch(url, {
       method: 'GET',
-      headers: getBrowserHeaders(),
+      headers: getAmExBrowserHeaders(),
     });
 
     if (!response.ok) {

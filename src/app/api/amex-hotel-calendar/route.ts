@@ -5,6 +5,7 @@ import { saveCompressedJson } from '@/lib/redis/client';
 import { getRedisClient } from '@/lib/cache';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { getSupabaseAdminClient } from '@/lib/supabase-admin';
+import { getAmExBrowserHeaders } from '@/lib/amex-api-headers';
 
 const AmExHotelCalendarSchema = z.object({
   hotelId: z.union([z.string(), z.number()]).transform(val => String(val)),
@@ -65,25 +66,6 @@ function buildAmExUrl(checkIn: string, checkOut: string, hotelId: string, hotelP
 }
 
 /**
- * Get browser-like headers (reused from amex-hotel-offers)
- */
-function getBrowserHeaders() {
-  return {
-    'Accept': '*/*',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Connection': 'keep-alive',
-    'Origin': 'https://www.americanexpress.com',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'same-site',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
-    'sec-ch-ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-  };
-}
-
-/**
  * Transform AmEx API response to extract offer details
  */
 function transformAmExResponse(data: any, checkInDate: string) {
@@ -114,7 +96,7 @@ async function fetchHotelOffer(checkIn: string, checkOut: string, hotelId: strin
     
     const fetchOptions: any = {
       method: 'GET',
-      headers: getBrowserHeaders(),
+      headers: getAmExBrowserHeaders(),
     };
     
     if (proxyAgent) {

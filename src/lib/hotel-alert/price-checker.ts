@@ -1,4 +1,5 @@
 import { differenceInDays, parse, format } from 'date-fns';
+import { getAmExBrowserHeaders } from '@/lib/amex-api-headers';
 
 const AMEX_API_URL = 'https://tlsonlwrappersvcs.americanexpress.com/consumertravel/services/v1/en-US/hotelOffers';
 
@@ -84,25 +85,6 @@ export function parseDateSet(dateValue: number): ParsedDateSet {
 }
 
 /**
- * Get browser-like headers for AmEx API requests
- */
-function getBrowserHeaders(): Record<string, string> {
-  return {
-    'Accept': '*/*',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Connection': 'keep-alive',
-    'Origin': 'https://www.americanexpress.com',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'same-site',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
-    'sec-ch-ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-  };
-}
-
-/**
  * Build AmEx API URL with query parameters
  */
 function buildAmExUrl(checkIn: string, checkOut: string, hotelIds: number[]): string {
@@ -133,7 +115,7 @@ export async function fetchHotelOffers(
   try {
     const response = await fetch(url, {
       method: 'GET',
-      headers: getBrowserHeaders(),
+      headers: getAmExBrowserHeaders(),
     });
 
     if (!response.ok) {
