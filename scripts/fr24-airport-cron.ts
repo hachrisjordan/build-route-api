@@ -1,6 +1,8 @@
 /**
  * FlightRadar24 Airport Cron Job
- * Processes airports sequentially every 12 hours
+ * Processes airports sequentially every 12 hours.
+ * Backend (flightradar_airport_api.py) uses status.generic.eventTime as real arrival
+ * when status text starts with "Landed" and time.real.arrival is missing (avoids N/A ontime).
  */
 
 const AIRPORTS = [

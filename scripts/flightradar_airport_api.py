@@ -497,6 +497,11 @@ class FlightRadar24AirportAPI:
                 # Get scheduled arrival time
                 scheduled_arrival = flight['time']['scheduled'].get('arrival')
                 real_arrival = flight['time']['real'].get('arrival')
+                # Cross-check: if no real arrival but status starts with "Landed", use eventTime as real arrival
+                if not real_arrival and isinstance(status, str) and status.strip().startswith('Landed'):
+                    event_utc = flight.get('status', {}).get('generic', {}).get('eventTime', {}).get('utc')
+                    if event_utc:
+                        real_arrival = event_utc
                 
                 # Handle diverted flights first
                 if 'Diverted to' in status:

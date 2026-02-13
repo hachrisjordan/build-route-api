@@ -14,5 +14,6 @@
 0 * * * * /app/node_modules/.bin/tsx /app/scripts/alert-hotel-cron.ts >> /app/batch.log 2>&1
 
 # FlightRadar24 Airport Data Scraper - runs every 12 hours at 09:00 and 21:00 UTC
+# (Backend uses status.generic.eventTime as real arrival when status starts with "Landed" and time.real.arrival is missing)
 0 9,21 * * * /app/node_modules/.bin/tsx /app/scripts/fr24-airport-cron.ts >> /app/batch.log 2>&1
-0 9,21 * * * /app/node_modules/.bin/tsx /app/scripts/fr24-airport-cron.ts >> /app/batch.log 2>&1
+

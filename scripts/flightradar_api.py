@@ -335,6 +335,13 @@ class FlightRadar24API:
                             real_arrival = flight['time']['real']['arrival']
                             time_diff_minutes = int((real_arrival - scheduled_arrival) / 60)
                             ontime = str(time_diff_minutes)
+                        # Cross-check: if status text starts with "Landed", use eventTime as real arrival
+                        elif (isinstance(status, str) and status.strip().startswith('Landed') and
+                              flight.get('status', {}).get('generic', {}).get('eventTime', {}).get('utc')):
+                            scheduled_arrival = flight['time']['scheduled']['arrival']
+                            real_arrival = flight['status']['generic']['eventTime']['utc']
+                            time_diff_minutes = int((real_arrival - scheduled_arrival) / 60)
+                            ontime = str(time_diff_minutes)
                         else:
                             ontime = 'N/A'
 

@@ -2,8 +2,10 @@
     "name": "build-itinerary-api",
     "version": "1.0.0",
     "private": true,
-    "scripts": {
-        "dev": "next dev",
+"scripts": {
+    "flight-delay-stats": "tsx scripts/flight-delay-stats.ts",
+    "fr24-route-flight-numbers": "tsx scripts/fr24-route-flight-numbers.ts",
+    "dev": "next dev",
         "build": "next build",
         "build:check": "tsc --noEmit && next build",
         "start": "next start",
