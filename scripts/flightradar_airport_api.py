@@ -51,7 +51,7 @@ AIRLINES = {
     'G3': ['G3'],
     'AD': ['AD']
 }
-ADDITIONAL_AIRLINES = ['EI', 'WS', 'VJ', '4Y', 'WK', 'EW', 'FI', 'AZ', 'HO', 'VA', 'EN', 'CZ', 'NK', 'F9', 'G4', 'MX', 'ZH', 'PR']
+ADDITIONAL_AIRLINES = ['QH','9G','EI', 'WS', 'VJ', '4Y', 'WK', 'EW', 'FI', 'AZ', 'HO', 'VA', 'EN', 'CZ', 'NK', 'F9', 'G4', 'MX', 'ZH', 'PR']
 
 # Flatten all airline codes into a single set for quick lookup
 ALL_VALID_AIRLINES = set()
