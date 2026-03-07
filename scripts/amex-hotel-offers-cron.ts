@@ -3,8 +3,9 @@
 require('dotenv').config();
 const { format, addDays } = require('date-fns');
 
-// Import Supabase admin client
+// Import Supabase admin client and AmEx headers (same as working amex-hotel-calendar / FHR)
 const { getSupabaseAdminClient } = require('../src/lib/supabase-admin');
+const { getAmExBrowserHeaders } = require('../src/lib/amex-api-headers');
 
 const AMEX_API_URL = 'https://tlsonlwrappersvcs.americanexpress.com/consumertravel/services/v1/en-US/hotelOffers';
 const BATCH_SIZE = 200;
@@ -34,23 +35,9 @@ interface AmExApiResponse {
 }
 
 /**
- * Get browser-like headers to mimic real browser behavior
+ * Uses shared getAmExBrowserHeaders (same as amex-hotel-calendar FHR). Includes Referer and
+ * AMEX_COOKIE from env when set, which are required to avoid 403 from AmEx API.
  */
-function getBrowserHeaders() {
-  return {
-    'Accept': '*/*',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Connection': 'keep-alive',
-    'Origin': 'https://www.americanexpress.com',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'same-site',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
-    'sec-ch-ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-  };
-}
 
 /**
  * Fetch all hotel IDs from the hotel table
@@ -129,7 +116,7 @@ async function fetchHotelOffersBatch(hotelIds: number[], checkIn: string, checkO
   try {
     const response = await fetch(url, {
       method: 'GET',
-      headers: getBrowserHeaders(),
+      headers: getAmExBrowserHeaders(),
     });
 
     if (!response.ok) {
@@ -156,61 +143,54 @@ async function fetchHotelOffersBatch(hotelIds: number[], checkIn: string, checkO
 }
 
 /**
- * Update hotel record with offer data
+ * Map a single offer to a hotel row for upsert
  */
-async function updateHotelRecord(hotelId: number, offer: HotelOffer): Promise<boolean> {
-  const supabase = getSupabaseAdminClient();
-  
-  try {
-    const updateData = {
-      offer_price: parseFloat(offer.offerDetails.offerPrice) || null,
-      checkin_date: offer.offerDetails.dates.checkInDate || null,
-      checkout_date: offer.offerDetails.dates.checkOutDate || null,
-      remaining_count: offer.offerDetails.remainingCount || null,
-      free_cancellation: offer.offerDetails.freeCancellation || null,
-      list_price: parseFloat(offer.offerDetails.listPrice) || null,
-    };
-
-    const { error } = await supabase
-      .from('hotel')
-      .update(updateData)
-      .eq('hotel_id', hotelId);
-
-    if (error) {
-      console.error(`[CRON] Error updating hotel ${hotelId}:`, error);
-      return false;
-    }
-
-    console.log(`[CRON] Updated hotel ${hotelId} with offer data`);
-    return true;
-    
-  } catch (error) {
-    console.error(`[CRON] Exception updating hotel ${hotelId}:`, error);
-    return false;
-  }
+function offerToRow(offer: HotelOffer): Record<string, unknown> {
+  return {
+    hotel_id: offer.hotelId,
+    offer_price: parseFloat(offer.offerDetails.offerPrice) || null,
+    checkin_date: offer.offerDetails.dates.checkInDate || null,
+    checkout_date: offer.offerDetails.dates.checkOutDate || null,
+    remaining_count: offer.offerDetails.remainingCount ?? null,
+    free_cancellation: offer.offerDetails.freeCancellation ?? null,
+    list_price: parseFloat(offer.offerDetails.listPrice) || null,
+  };
 }
 
 /**
- * Process a batch of hotel offers and update database
+ * Bulk upsert hotel offer data for a batch (one DB round-trip instead of N sequential updates)
+ */
+async function bulkUpsertHotelOffers(offers: HotelOffer[]): Promise<{ updated: number }> {
+  if (offers.length === 0) {
+    return { updated: 0 };
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const rows = offers.map(offerToRow);
+
+  const { error } = await supabase
+    .from('hotel')
+    .upsert(rows, { onConflict: 'hotel_id' });
+
+  if (error) {
+    console.error(`[CRON] Bulk upsert error:`, error);
+    return { updated: 0 };
+  }
+
+  return { updated: offers.length };
+}
+
+/**
+ * Process a batch of hotel offers and update database (single bulk upsert per batch)
  */
 async function processBatch(batch: number[], checkIn: string, checkOut: string): Promise<{ processed: number; updated: number }> {
   console.log(`[CRON] Processing batch of ${batch.length} hotels...`);
-  
-  // Fetch offers for this batch
+
   const offers = await fetchHotelOffersBatch(batch, checkIn, checkOut);
-  
-  let updated = 0;
-  
-  // Update each hotel record
-  for (const offer of offers) {
-    const success = await updateHotelRecord(offer.hotelId, offer);
-    if (success) {
-      updated++;
-    }
-  }
-  
+  const { updated } = await bulkUpsertHotelOffers(offers);
+
   console.log(`[CRON] Batch completed: ${offers.length} offers processed, ${updated} records updated`);
-  
+
   return {
     processed: offers.length,
     updated,
