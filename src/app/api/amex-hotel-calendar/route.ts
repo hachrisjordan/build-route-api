@@ -3,173 +3,34 @@ import { z } from 'zod';
 import { createHash } from 'crypto';
 import { saveCompressedJson } from '@/lib/redis/client';
 import { getRedisClient } from '@/lib/cache';
-import { HttpsProxyAgent } from 'https-proxy-agent';
 import { getSupabaseAdminClient } from '@/lib/supabase-admin';
-import { getAmExBrowserHeaders } from '@/lib/amex-api-headers';
 
 const AmExHotelCalendarSchema = z.object({
-  hotelId: z.union([z.string(), z.number()]).transform(val => String(val)),
+  hotelId: z.union([z.string(), z.number()]).transform((val) => String(val)),
+  nights: z.union([z.string(), z.number()]).optional().transform((val) => (val != null ? Number(val) : undefined)),
+}).transform((data) => {
+  const nights = data.nights != null && Number.isInteger(data.nights) && data.nights >= 1 ? data.nights : 1;
+  return { ...data, nights };
 });
 
-const AMEX_API_URL = 'https://tlsonlwrappersvcs.americanexpress.com/consumertravel/services/v1/en-US/hotelOffers';
-
 /**
- * Generate 360 consecutive date pairs starting from today
+ * Redis cache key for table-backed calendar response (hotelId + nights + today).
  */
-function generateDatePairs(): Array<{ checkIn: string; checkOut: string }> {
-  const pairs = [];
-  const today = new Date();
-  
-  for (let i = 0; i < 360; i++) {
-    const checkInDate = new Date(today);
-    checkInDate.setDate(today.getDate() + i);
-    
-    const checkOutDate = new Date(checkInDate);
-    checkOutDate.setDate(checkInDate.getDate() + 1);
-    
-    pairs.push({
-      checkIn: checkInDate.toISOString().split('T')[0]!,
-      checkOut: checkOutDate.toISOString().split('T')[0]!,
-    });
-  }
-  
-  return pairs;
+function getCalendarCacheKey(hotelId: string, nights: number, startDate: string): string {
+  const hash = createHash('sha256').update(`${hotelId}:${nights}:${startDate}`).digest('hex');
+  return `amex-hotel-calendar:${hotelId}:${nights}:${hash}`;
 }
 
 /**
- * Get hotelPrograms value based on program type
+ * Get cached calendar response (from previous table read).
  */
-function getHotelPrograms(program: string | null): string {
-  if (program === 'FHR') {
-    return '20';
-  } else if (program === 'THC') {
-    return '10';
-  }
-  // Fallback to 20 for null, empty, or other values
-  return '20';
-}
-
-/**
- * Build AmEx API URL with query parameters (reused from amex-hotel-offers)
- */
-function buildAmExUrl(checkIn: string, checkOut: string, hotelId: string, hotelPrograms: string): string {
-  const baseParams = new URLSearchParams({
-    availOnly: 'false',
-    checkIn,
-    checkOut,
-    hotelPrograms,
-    sortType: 'PREMIUM',
-  });
-  
-  const fullUrl = `${AMEX_API_URL}?${baseParams.toString()}&ecom_hotel_ids=${hotelId}`;
-  return fullUrl;
-}
-
-/**
- * Transform AmEx API response to extract offer details
- */
-function transformAmExResponse(data: any, checkInDate: string) {
-  if (!data || !Array.isArray(data.hotels) || data.hotels.length === 0) {
-    return {
-      checkInDate,
-      offerPrice: null,
-      remainingCount: 0,
-    };
-  }
-
-  const hotel = data.hotels[0];
-  const offerDetails = hotel?.offerDetails;
-
-  return {
-    checkInDate,
-    offerPrice: offerDetails?.offerPrice || null,
-    remainingCount: offerDetails?.remainingCount || 0,
-  };
-}
-
-/**
- * Make a single API call to AmEx for a specific date range
- */
-async function fetchHotelOffer(checkIn: string, checkOut: string, hotelId: string, hotelPrograms: string, proxyAgent?: any) {
-  try {
-    const url = buildAmExUrl(checkIn, checkOut, hotelId, hotelPrograms);
-    
-    const fetchOptions: any = {
-      method: 'GET',
-      headers: getAmExBrowserHeaders(),
-    };
-    
-    if (proxyAgent) {
-      fetchOptions.agent = proxyAgent;
-    }
-    
-    const response = await fetch(url, fetchOptions);
-
-    if (!response.ok) {
-      console.error(`AmEx API error for ${checkIn}-${checkOut}: ${response.status} ${response.statusText}`);
-      return {
-        checkInDate: checkIn,
-        offerPrice: null,
-        remainingCount: 0,
-        success: false,
-      };
-    }
-
-    const data = await response.json();
-    return {
-      ...transformAmExResponse(data, checkIn),
-      success: true,
-    };
-  } catch (error) {
-    console.error(`Error fetching offer for ${checkIn}-${checkOut}:`, error);
-    return {
-      checkInDate: checkIn,
-      offerPrice: null,
-      remainingCount: 0,
-      success: false,
-    };
-  }
-}
-
-/**
- * Process a batch of API calls
- */
-async function processBatch(
-  datePairs: Array<{ checkIn: string; checkOut: string }>,
-  hotelId: string,
-  hotelPrograms: string,
-  startIndex: number,
-  batchSize: number,
-  proxyAgent?: any
-) {
-  const batch = datePairs.slice(startIndex, startIndex + batchSize);
-  const promises = batch.map(({ checkIn, checkOut }) => 
-    fetchHotelOffer(checkIn, checkOut, hotelId, hotelPrograms, proxyAgent)
-  );
-  
-  return Promise.all(promises);
-}
-
-/**
- * Get cache key for hotel calendar data
- */
-function getCacheKey(hotelId: string, startDate: string): string {
-  const hash = createHash('sha256').update(`${hotelId}:${startDate}`).digest('hex');
-  return `amex-hotel-calendar:${hotelId}:${hash}`;
-}
-
-/**
- * Get cached hotel calendar data
- */
-async function getCachedCalendarData(hotelId: string, startDate: string) {
+async function getCachedCalendarData(hotelId: string, nights: number, startDate: string) {
   const client = getRedisClient();
   if (!client) return null;
-  
   try {
-    const key = getCacheKey(hotelId, startDate);
+    const key = getCalendarCacheKey(hotelId, nights, startDate);
     const compressed = await client.getBuffer(key);
     if (!compressed) return null;
-    
     const json = require('zlib').gunzipSync(compressed).toString();
     return JSON.parse(json);
   } catch (error) {
@@ -179,62 +40,34 @@ async function getCachedCalendarData(hotelId: string, startDate: string) {
 }
 
 /**
- * Cache hotel calendar data
+ * Cache calendar response from table (24h TTL).
  */
-async function cacheCalendarData(hotelId: string, startDate: string, data: any[]) {
-  const key = getCacheKey(hotelId, startDate);
-  await saveCompressedJson(key, data, 86400); // 24 hours TTL
+async function cacheCalendarData(hotelId: string, nights: number, startDate: string, data: unknown[]) {
+  const key = getCalendarCacheKey(hotelId, nights, startDate);
+  await saveCompressedJson(key, data, 86400);
 }
 
 /**
- * Store a batch of calendar data to Supabase
+ * Map amex_hotel_calendar_cache row to API response shape.
  */
-async function storeCalendarBatchToSupabase(
-  batch: Array<{ checkInDate: string; offerPrice: number | null; remainingCount: number }>,
-  hotelId: string
-): Promise<{ success: boolean; stored: number; error?: string }> {
-  try {
-    const supabase = getSupabaseAdminClient();
-
-    // Format data for database
-    const formattedData = batch.map((item) => ({
-      hotel_id: hotelId,
-      check_in_date: item.checkInDate,
-      offer_price: item.offerPrice,
-      remaining_count: item.remainingCount,
-      last_updated: new Date().toISOString(),
-    }));
-
-    // Upsert to Supabase using the unique constraint (hotel_id, check_in_date)
-    const { data, error } = await supabase
-      .from('amex_hotel_calendar_cache')
-      .upsert(formattedData, {
-        onConflict: 'hotel_id,check_in_date',
-        ignoreDuplicates: false,
-      })
-      .select();
-
-    if (error) {
-      console.error('Error storing calendar batch to Supabase:', error);
-      return {
-        success: false,
-        stored: 0,
-        error: error.message,
-      };
-    }
-
-    return {
-      success: true,
-      stored: data?.length || 0,
-    };
-  } catch (error) {
-    console.error('Exception storing calendar batch to Supabase:', error);
-    return {
-      success: false,
-      stored: 0,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
+function mapCacheRowToCalendarItem(row: {
+  check_in_date: string;
+  check_out_date: string | null;
+  nights: number | null;
+  offer_price: number | null;
+  remaining_count: number | null;
+  free_cancellation: boolean | null;
+  list_price: number | null;
+}) {
+  return {
+    checkInDate: row.check_in_date,
+    checkOutDate: row.check_out_date ?? null,
+    nights: row.nights ?? null,
+    offerPrice: row.offer_price ?? null,
+    remainingCount: row.remaining_count ?? 0,
+    freeCancellation: row.free_cancellation ?? null,
+    listPrice: row.list_price ?? null,
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -248,153 +81,57 @@ export async function POST(req: NextRequest) {
 
     if (!parsed.success) {
       return NextResponse.json(
-        { 
-          error: 'Invalid input', 
-          details: parsed.error.errors 
-        }, 
+        { error: 'Invalid input', details: parsed.error.errors },
         { status: 400 }
       );
     }
 
-    const { hotelId } = parsed.data;
+    const { hotelId, nights } = parsed.data;
     const today = new Date().toISOString().split('T')[0]!;
 
-    // Fetch hotel program from database to determine correct hotelPrograms value
-    const supabase = getSupabaseAdminClient();
-    const { data: hotelData, error: hotelError } = await supabase
-      .from('hotel')
-      .select('program')
-      .eq('hotel_id', hotelId)
-      .single();
-
-    if (hotelError) {
-      console.warn(`Could not fetch hotel program for ${hotelId}, using fallback:`, hotelError.message);
-    }
-
-    const hotelProgram = hotelData?.program || null;
-    const hotelPrograms = getHotelPrograms(hotelProgram);
-    
-    console.log(`Hotel ${hotelId} program: ${hotelProgram || 'null'} -> hotelPrograms: ${hotelPrograms}`);
-
-    // Check cache first
-    const cachedData = await getCachedCalendarData(hotelId, today);
+    // Optional: return Redis-cached response (table-backed)
+    const cachedData = await getCachedCalendarData(hotelId, nights, today);
     if (cachedData) {
-      console.log(`Cache hit for hotel ${hotelId}, returning cached calendar data`);
-      return NextResponse.json({ 
+      return NextResponse.json({
         hotelId,
+        nights,
         data: cachedData,
-        cached: true 
+        cached: true,
       });
     }
 
-    console.log(`Cache miss for hotel ${hotelId}, starting calendar scraping...`);
+    // Read from amex_hotel_calendar_cache (populated by cron)
+    const supabase = getSupabaseAdminClient();
+    const { data: rows, error } = await supabase
+      .from('amex_hotel_calendar_cache')
+      .select('check_in_date, check_out_date, nights, offer_price, remaining_count, free_cancellation, list_price')
+      .eq('hotel_id', hotelId)
+      .eq('nights', nights)
+      .order('check_in_date', { ascending: true });
 
-    // Proxy config (runtime only)
-    const USE_PROXY = false;
-    const proxy_host = process.env.PROXY_HOST;
-    const proxy_port = process.env.PROXY_PORT;
-    const proxy_username = process.env.PROXY_USERNAME;
-    const proxy_password = process.env.PROXY_PASSWORD;
-    if (USE_PROXY && (!proxy_host || !proxy_port || !proxy_username || !proxy_password)) {
-      return NextResponse.json({ 
-        error: 'Proxy configuration is missing. Please set PROXY_HOST, PROXY_PORT, PROXY_USERNAME, and PROXY_PASSWORD in your environment variables.' 
-      }, { status: 500 });
-    }
-    const PROXY_URL = USE_PROXY
-      ? `http://${proxy_username}:${proxy_password}@${proxy_host}:${proxy_port}`
-      : undefined;
-    const proxyAgent = USE_PROXY && PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
-
-    if (proxyAgent) {
-      console.log(`Using proxy: ${proxy_host}:${proxy_port}`);
+    if (error) {
+      console.error('amex-hotel-calendar table read error:', error);
+      return NextResponse.json(
+        { error: 'Failed to read calendar data', details: error.message },
+        { status: 500 }
+      );
     }
 
-    // Generate date pairs for 360 days
-    const datePairs = generateDatePairs();
-    const results = [];
-    const batchSize = 36;
-    const totalBatches = Math.ceil(datePairs.length / batchSize);
+    const data = (rows ?? []).map(mapCacheRowToCalendarItem);
+    await cacheCalendarData(hotelId, nights, today, data);
 
-    console.log(`Processing ${datePairs.length} API calls in ${totalBatches} batches of ${batchSize}`);
-
-    // Process batches with 500ms delay between batches
-    let totalSuccessfulCalls = 0;
-    let totalFailedCalls = 0;
-    let totalStoredToSupabase = 0;
-    const supabaseErrors: string[] = [];
-    
-    for (let i = 0; i < totalBatches; i++) {
-      const startIndex = i * batchSize;
-      const batchResults = await processBatch(datePairs, hotelId, hotelPrograms, startIndex, batchSize, proxyAgent);
-      
-      // Count successful vs failed calls in this batch
-      const batchSuccessful = batchResults.filter(r => r.success).length;
-      const batchFailed = batchResults.filter(r => !r.success).length;
-      
-      totalSuccessfulCalls += batchSuccessful;
-      totalFailedCalls += batchFailed;
-      
-      results.push(...batchResults);
-      
-      // Store batch to Supabase (remove success field before storing)
-      const batchForStorage = batchResults.map(({ success, ...rest }) => rest);
-      const storageResult = await storeCalendarBatchToSupabase(batchForStorage, hotelId);
-      
-      if (storageResult.success) {
-        totalStoredToSupabase += storageResult.stored;
-        console.log(`Completed batch ${i + 1}/${totalBatches} (${batchResults.length} calls) - Success: ${batchSuccessful}, Failed: ${batchFailed}, Stored to Supabase: ${storageResult.stored}`);
-      } else {
-        const errorMsg = `Batch ${i + 1}/${totalBatches} Supabase storage failed: ${storageResult.error}`;
-        supabaseErrors.push(errorMsg);
-        console.error(errorMsg);
-        console.log(`Completed batch ${i + 1}/${totalBatches} (${batchResults.length} calls) - Success: ${batchSuccessful}, Failed: ${batchFailed}, Supabase storage failed`);
-      }
-      
-      // Add delay between batches (except for the last batch)
-      if (i < totalBatches - 1) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-    }
-
-    // Remove success field before caching (not needed in cache)
-    const resultsForCache = results.map(({ success, ...rest }) => rest);
-    
-    // Cache the results
-    await cacheCalendarData(hotelId, today, resultsForCache);
-
-    console.log(`Calendar scraping completed for hotel ${hotelId}. Found ${results.filter(r => r.remainingCount > 0).length} days with offers.`);
-    console.log(`API Call Summary - Total: ${totalSuccessfulCalls + totalFailedCalls}, Successful: ${totalSuccessfulCalls}, Failed: ${totalFailedCalls}, Success Rate: ${((totalSuccessfulCalls / (totalSuccessfulCalls + totalFailedCalls)) * 100).toFixed(1)}%`);
-    console.log(`Supabase Storage Summary - Total stored: ${totalStoredToSupabase}, Errors: ${supabaseErrors.length}`);
-
-    // Remove success field from final response
-    const finalResults = results.map(({ success, ...rest }) => rest);
-    
     return NextResponse.json({
       hotelId,
-      data: finalResults,
+      nights,
+      data,
       cached: false,
-      totalDays: finalResults.length,
-      daysWithOffers: finalResults.filter(r => r.remainingCount > 0).length,
-      apiCallSummary: {
-        total: totalSuccessfulCalls + totalFailedCalls,
-        successful: totalSuccessfulCalls,
-        failed: totalFailedCalls,
-        successRate: parseFloat(((totalSuccessfulCalls / (totalSuccessfulCalls + totalFailedCalls)) * 100).toFixed(1))
-      },
-      supabaseStorageSummary: {
-        totalStored: totalStoredToSupabase,
-        errors: supabaseErrors,
-        success: supabaseErrors.length === 0
-      }
+      totalDays: data.length,
+      daysWithOffers: data.filter((r) => (r.remainingCount ?? 0) > 0).length,
     });
-
   } catch (error) {
     console.error('Error in amex-hotel-calendar POST:', error);
     return NextResponse.json(
-      { 
-        error: 'Internal server error', 
-        details: error instanceof Error ? error.message : 'Unknown error' 
-      }, 
+      { error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }
