@@ -11,10 +11,12 @@ const BATCH_SIZE = 200; // hotels per API request
 const MAX_CALLS_PER_BATCH = 36; // API calls per chunk (then delay)
 const CALENDAR_DAYS = 360; // consecutive date pairs from today (check-in days 0..359)
 const DELAY_BETWEEN_CHUNKS_MS = 500;
+const UPSERT_CHUNK_SIZE = 2000; // rows per DB upsert to avoid statement timeouts
 
-const USAGE = `Usage: npx tsx scripts/amex-hotel-offers-cron.ts <nights>
-  nights  Required. Number of nights per stay (check-out = check-in + nights).
-          Example: 1 = check-in Apr 3, check-out Apr 4; 2 = Apr 3 -> Apr 5.
+const USAGE = `Usage: npx tsx scripts/amex-hotel-offers-cron.ts <nights> | update-hotel-only
+  nights             Run full job: number of nights per stay (check-out = check-in + nights).
+                     Example: 1 = check-in Apr 3, check-out Apr 4; 2 = Apr 3 -> Apr 5.
+  update-hotel-only  Re-run only: update hotel table from cheapest offer per hotel in cache.
 `;
 
 interface HotelRecord {
@@ -227,7 +229,8 @@ function offerToCalendarRow(
 }
 
 /**
- * Bulk upsert into amex_hotel_calendar_cache (onConflict: hotel_id, check_in_date)
+ * Bulk upsert into amex_hotel_calendar_cache (onConflict: hotel_id, check_in_date),
+ * internally chunked to keep each statement under the DB statement timeout.
  */
 async function bulkUpsertCalendarCache(rows: CalendarCacheRow[]): Promise<{ updated: number }> {
   if (rows.length === 0) {
@@ -235,16 +238,23 @@ async function bulkUpsertCalendarCache(rows: CalendarCacheRow[]): Promise<{ upda
   }
 
   const supabase = getSupabaseAdminClient();
-  const { error } = await supabase
-    .from('amex_hotel_calendar_cache')
-    .upsert(rows, { onConflict: 'hotel_id,check_in_date', ignoreDuplicates: false });
+  let totalUpdated = 0;
 
-  if (error) {
-    console.error('[CRON] Bulk upsert amex_hotel_calendar_cache error:', error);
-    return { updated: 0 };
+  for (let i = 0; i < rows.length; i += UPSERT_CHUNK_SIZE) {
+    const slice = rows.slice(i, i + UPSERT_CHUNK_SIZE);
+    const { error } = await supabase
+      .from('amex_hotel_calendar_cache')
+      .upsert(slice, { onConflict: 'hotel_id,check_in_date', ignoreDuplicates: false });
+
+    if (error) {
+      console.error('[CRON] Bulk upsert amex_hotel_calendar_cache error:', error);
+      return { updated: totalUpdated };
+    }
+
+    totalUpdated += slice.length;
   }
 
-  return { updated: rows.length };
+  return { updated: totalUpdated };
 }
 
 /**
@@ -265,80 +275,22 @@ async function purgeCalendarCacheByNights(nights: number): Promise<{ deleted: nu
   return { deleted: data?.length ?? 0 };
 }
 
-/** Row from amex_hotel_calendar_cache for cheapest-offer aggregation */
-interface CalendarCacheRecord {
-  hotel_id: number | string;
-  check_in_date: string;
-  check_out_date: string | null;
-  nights: number | null;
-  offer_price: number | null;
-  remaining_count: number | null;
-  free_cancellation: boolean | null;
-  list_price: number | null;
-}
-
-const CACHE_PAGE_SIZE = 1000; // Supabase default limit; fetch in pages to get all rows
-
 /**
  * Update hotel table from cheapest offer per hotel in amex_hotel_calendar_cache.
  * For each hotel_id, picks the row with minimum offer_price across all nights (all rows in cache).
+ * This is executed inside Postgres via the update_hotel_from_calendar_cheapest() function.
  */
 async function updateHotelTableFromCheapestOffers(): Promise<{ updated: number }> {
   const supabase = getSupabaseAdminClient();
-  const rows: CalendarCacheRecord[] = [];
-  let offset = 0;
-  let hasMore = true;
+  const { data, error } = await supabase.rpc('update_hotel_from_calendar_cheapest');
 
-  while (hasMore) {
-    const { data: page, error: fetchError } = await supabase
-      .from('amex_hotel_calendar_cache')
-      .select('hotel_id, check_in_date, check_out_date, nights, offer_price, remaining_count, free_cancellation, list_price')
-      .range(offset, offset + CACHE_PAGE_SIZE - 1);
-
-    if (fetchError) {
-      console.error('[CRON] Fetch amex_hotel_calendar_cache for hotel update error:', fetchError);
-      return { updated: 0 };
-    }
-    if (page?.length) rows.push(...(page as CalendarCacheRecord[]));
-    hasMore = (page?.length ?? 0) === CACHE_PAGE_SIZE;
-    offset += CACHE_PAGE_SIZE;
-  }
-
-  if (!rows.length) {
+  if (error) {
+    console.error('[CRON] update_hotel_from_calendar_cheapest RPC error:', error);
     return { updated: 0 };
   }
 
-  const byHotel = new Map<number, CalendarCacheRecord>();
-  for (const r of rows) {
-    const hid = typeof r.hotel_id === 'string' ? parseInt(r.hotel_id, 10) : r.hotel_id;
-    if (Number.isNaN(hid)) continue;
-    const current = byHotel.get(hid);
-    const price = r.offer_price ?? Infinity;
-    if (!current || (current.offer_price ?? Infinity) > price) {
-      byHotel.set(hid, r);
-    }
-  }
-
-  const hotelRows = Array.from(byHotel.entries()).map(([hotel_id, r]) => ({
-    hotel_id,
-    offer_price: r.offer_price ?? null,
-    checkin_date: r.check_in_date ?? null,
-    checkout_date: r.check_out_date ?? null,
-    remaining_count: r.remaining_count ?? null,
-    free_cancellation: r.free_cancellation ?? null,
-    list_price: r.list_price ?? null,
-    nights: r.nights ?? null,
-  }));
-
-  const { error: upsertError } = await supabase
-    .from('hotel')
-    .upsert(hotelRows, { onConflict: 'hotel_id' });
-
-  if (upsertError) {
-    console.error('[CRON] Upsert hotel from cheapest offers error:', upsertError);
-    return { updated: 0 };
-  }
-  return { updated: hotelRows.length };
+  const updated = typeof data === 'number' ? data : 0;
+  return { updated };
 }
 
 /** One API call task: (checkIn, checkOut, hotelIds) */
@@ -386,10 +338,13 @@ async function runCronJob(nights: number) {
       }
     }
     const taskChunks = chunkTasks(tasks, MAX_CALLS_PER_BATCH);
-    console.log(`[CRON] Total tasks: ${tasks.length}, chunk count: ${taskChunks.length} (max ${MAX_CALLS_PER_BATCH} calls per chunk)`);
+    console.log(
+      `[CRON] Total tasks: ${tasks.length}, chunk count: ${taskChunks.length} (max ${MAX_CALLS_PER_BATCH} calls per chunk)`
+    );
 
     let totalOffers = 0;
     let totalRowsUpserted = 0;
+    let totalNullOfferPrices = 0;
 
     for (let i = 0; i < taskChunks.length; i++) {
       const chunk = taskChunks[i]!;
@@ -400,17 +355,18 @@ async function runCronJob(nights: number) {
 
       const allOffers = results.flat();
       const rows = chunk.flatMap((task, j) =>
-        (results[j] ?? []).map((offer) =>
-          offerToCalendarRow(offer, task.checkIn, task.checkOut)
-        )
+        (results[j] ?? []).map((offer) => offerToCalendarRow(offer, task.checkIn, task.checkOut))
       );
+
+      const nullOfferPricesInChunk = rows.filter((r) => r.offer_price == null).length;
       const { updated } = await bulkUpsertCalendarCache(rows);
 
       totalOffers += allOffers.length;
       totalRowsUpserted += updated;
+      totalNullOfferPrices += nullOfferPricesInChunk;
 
       console.log(
-        `[CRON] Chunk ${i + 1}/${taskChunks.length}: ${chunk.length} calls, ${allOffers.length} offers, ${updated} rows upserted`
+        `[CRON] Chunk ${i + 1}/${taskChunks.length}: ${chunk.length} calls, ${allOffers.length} offers, ${updated} rows upserted, ${nullOfferPricesInChunk} rows with null offer_price`
       );
 
       if (i < taskChunks.length - 1) {
@@ -421,7 +377,12 @@ async function runCronJob(nights: number) {
     console.log('[CRON] Calendar cache completed:');
     console.log(`[CRON] - Total API calls: ${tasks.length}`);
     console.log(`[CRON] - Total offers: ${totalOffers}`);
-    console.log(`[CRON] - Total rows upserted to amex_hotel_calendar_cache: ${totalRowsUpserted}`);
+    console.log(
+      `[CRON] - Total rows upserted to amex_hotel_calendar_cache: ${totalRowsUpserted}`
+    );
+    console.log(
+      `[CRON] - Total rows with null offer_price (not provided by AmEx): ${totalNullOfferPrices}`
+    );
 
     const { updated: hotelUpdated } = await updateHotelTableFromCheapestOffers();
     console.log(`[CRON] Hotel table updated: ${hotelUpdated} rows (cheapest offer_price per hotel across all nights in cache)`);
@@ -432,25 +393,44 @@ async function runCronJob(nights: number) {
   }
 }
 
-// Run the cron job if this script is executed directly (nights required as first CLI arg)
+// Run the cron job if this script is executed directly (nights or update-hotel-only)
 if (require.main === module) {
-  const nightsArg = process.argv[2];
-  const nights = nightsArg != null ? parseInt(nightsArg, 10) : NaN;
-  if (!Number.isInteger(nights) || nights < 1) {
-    console.error('[CRON] Missing or invalid required argument: nights');
-    console.error(USAGE);
-    process.exit(1);
-  }
+  const arg = process.argv[2];
+  const isUpdateHotelOnly =
+    arg === 'update-hotel-only' || arg === '--update-hotel-only';
 
-  runCronJob(nights)
-    .then(() => {
-      console.log('[CRON] Cron job finished successfully');
-      process.exit(0);
-    })
-    .catch((error) => {
-      console.error('[CRON] Cron job failed:', error);
+  if (isUpdateHotelOnly) {
+    console.log('[CRON] Running only: update hotel table from cheapest offers in cache.');
+    updateHotelTableFromCheapestOffers()
+      .then(({ updated }) => {
+        console.log(
+          `[CRON] Hotel table updated: ${updated} rows (cheapest offer_price per hotel across all nights in cache)`
+        );
+        process.exit(0);
+      })
+      .catch((error) => {
+        console.error('[CRON] update-hotel-only failed:', error);
+        process.exit(1);
+      });
+    // flow never reaches here; promise above exits
+  } else {
+    const nights = arg != null ? parseInt(arg, 10) : NaN;
+    if (!Number.isInteger(nights) || nights < 1) {
+      console.error('[CRON] Missing or invalid required argument: nights');
+      console.error(USAGE);
       process.exit(1);
-    });
+    }
+
+    runCronJob(nights)
+      .then(() => {
+        console.log('[CRON] Cron job finished successfully');
+        process.exit(0);
+      })
+      .catch((error) => {
+        console.error('[CRON] Cron job failed:', error);
+        process.exit(1);
+      });
+  }
 }
 
 module.exports = { runCronJob };
