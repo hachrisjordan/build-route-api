@@ -229,7 +229,7 @@ function offerToCalendarRow(
 }
 
 /**
- * Bulk upsert into amex_hotel_calendar_cache (onConflict: hotel_id, check_in_date),
+ * Bulk upsert into amex_hotel_calendar_cache (onConflict: hotel_id, check_in_date, nights),
  * internally chunked to keep each statement under the DB statement timeout.
  */
 async function bulkUpsertCalendarCache(rows: CalendarCacheRow[]): Promise<{ updated: number }> {
@@ -244,7 +244,10 @@ async function bulkUpsertCalendarCache(rows: CalendarCacheRow[]): Promise<{ upda
     const slice = rows.slice(i, i + UPSERT_CHUNK_SIZE);
     const { error } = await supabase
       .from('amex_hotel_calendar_cache')
-      .upsert(slice, { onConflict: 'hotel_id,check_in_date', ignoreDuplicates: false });
+      .upsert(slice, {
+        onConflict: 'hotel_id,check_in_date,nights',
+        ignoreDuplicates: false,
+      });
 
     if (error) {
       console.error('[CRON] Bulk upsert amex_hotel_calendar_cache error:', error);
@@ -311,12 +314,26 @@ function chunkTasks<T>(array: T[], size: number): T[][] {
  * Main cron job: multi-date calendar with 36 API calls per chunk, writing to amex_hotel_calendar_cache.
  * @param nights - Required. Number of nights per stay (check-out = check-in + nights).
  */
-async function runCronJob(nights: number) {
+interface RunCronOptions {
+  skipPurge?: boolean;
+  maxChunks?: number;
+  skipHotelUpdate?: boolean;
+}
+
+async function runCronJob(nights: number, options: RunCronOptions = {}) {
   console.log(`[CRON] Starting AmEx hotel offers (multi-date calendar) job (nights=${nights})...`);
 
   try {
-    const { deleted } = await purgeCalendarCacheByNights(nights);
-    console.log(`[CRON] Purged ${deleted} rows from amex_hotel_calendar_cache where nights=${nights}`);
+    if (!options.skipPurge) {
+      const { deleted } = await purgeCalendarCacheByNights(nights);
+      console.log(
+        `[CRON] Purged ${deleted} rows from amex_hotel_calendar_cache where nights=${nights}`
+      );
+    } else {
+      console.log(
+        `[CRON] Skipping purge of amex_hotel_calendar_cache for nights=${nights} (testing mode)`
+      );
+    }
 
     const datePairs = generateDatePairs(nights);
     console.log(`[CRON] Generated ${datePairs.length} date pairs (${CALENDAR_DAYS} check-in days from today, ${nights} night(s) per stay)`);
@@ -338,15 +355,19 @@ async function runCronJob(nights: number) {
       }
     }
     const taskChunks = chunkTasks(tasks, MAX_CALLS_PER_BATCH);
+    const maxChunks =
+      typeof options.maxChunks === 'number' && options.maxChunks > 0
+        ? Math.min(options.maxChunks, taskChunks.length)
+        : taskChunks.length;
     console.log(
-      `[CRON] Total tasks: ${tasks.length}, chunk count: ${taskChunks.length} (max ${MAX_CALLS_PER_BATCH} calls per chunk)`
+      `[CRON] Total tasks: ${tasks.length}, chunk count: ${taskChunks.length} (max ${MAX_CALLS_PER_BATCH} calls per chunk, processing ${maxChunks} chunk(s) this run)`
     );
 
     let totalOffers = 0;
     let totalRowsUpserted = 0;
     let totalNullOfferPrices = 0;
 
-    for (let i = 0; i < taskChunks.length; i++) {
+    for (let i = 0; i < maxChunks; i++) {
       const chunk = taskChunks[i]!;
       const callPromises = chunk.map((t) =>
         fetchHotelOffersBatch(t.hotelIds, t.checkIn, t.checkOut, true)
@@ -366,15 +387,15 @@ async function runCronJob(nights: number) {
       totalNullOfferPrices += nullOfferPricesInChunk;
 
       console.log(
-        `[CRON] Chunk ${i + 1}/${taskChunks.length}: ${chunk.length} calls, ${allOffers.length} offers, ${updated} rows upserted, ${nullOfferPricesInChunk} rows with null offer_price`
+        `[CRON] Chunk ${i + 1}/${maxChunks}: ${chunk.length} calls, ${allOffers.length} offers, ${updated} rows upserted, ${nullOfferPricesInChunk} rows with null offer_price`
       );
 
-      if (i < taskChunks.length - 1) {
+      if (i < maxChunks - 1) {
         await new Promise((resolve) => setTimeout(resolve, DELAY_BETWEEN_CHUNKS_MS));
       }
     }
 
-    console.log('[CRON] Calendar cache completed:');
+    console.log('[CRON] Calendar cache completed for this run:');
     console.log(`[CRON] - Total API calls: ${tasks.length}`);
     console.log(`[CRON] - Total offers: ${totalOffers}`);
     console.log(
@@ -384,8 +405,15 @@ async function runCronJob(nights: number) {
       `[CRON] - Total rows with null offer_price (not provided by AmEx): ${totalNullOfferPrices}`
     );
 
-    const { updated: hotelUpdated } = await updateHotelTableFromCheapestOffers();
-    console.log(`[CRON] Hotel table updated: ${hotelUpdated} rows (cheapest offer_price per hotel across all nights in cache)`);
+    if (!options.skipHotelUpdate) {
+      const { updated: hotelUpdated } = await updateHotelTableFromCheapestOffers();
+      console.log(
+        `[CRON] Hotel table updated: ${hotelUpdated} rows (cheapest offer_price per hotel across all nights in cache)`
+      );
+    } else {
+      console.log('[CRON] Skipping hotel table update (testing mode)');
+    }
+
     console.log('[CRON] Job completed successfully.');
   } catch (error) {
     console.error('[CRON] Job failed:', error);
