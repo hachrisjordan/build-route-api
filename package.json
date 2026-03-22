@@ -5,6 +5,7 @@
 "scripts": {
     "flight-delay-stats": "tsx scripts/flight-delay-stats.ts",
     "fr24-route-flight-numbers": "tsx scripts/fr24-route-flight-numbers.ts",
+    "scrape:vn-avail": "tsx scripts/vn-avail-scraper.ts",
     "dev": "next dev",
         "build": "next build",
         "build:check": "tsc --noEmit && next build",
@@ -13,7 +14,8 @@
         "type-check": "tsc --noEmit",
         "analyze": "ANALYZE=true npm run build",
         "audit-deps": "npx depcheck",
-        "security-audit": "npm audit"
+        "security-audit": "npm audit",
+        "test": "vitest run"
     },
     "dependencies": {
         "@sentry/cli": "^2.52.0",
@@ -78,6 +80,7 @@
         "globals": "^16.2.0",
         "tsx": "^4.20.3",
         "typescript": "^5.8.3",
-        "webpack-bundle-analyzer": "^4.10.2"
+        "webpack-bundle-analyzer": "^4.10.2",
+        "vitest": "^2.1.8"
     }
 }

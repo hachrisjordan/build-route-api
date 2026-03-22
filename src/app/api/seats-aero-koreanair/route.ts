@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
     const sevenDaysAgo = subDays(new Date(), 7);
 
     // Define route: Korean domestic routes
-    const route = 'CJU/RSU/KWJ/TAE/ICN/PUS/GMP/CJJ-CJU/RSU/KWJ/TAE/ICN/PUS/GMP/CJJ';
+    const route = 'TAO/DLC/ICN/FUK/OKJ/SHE-TAO/DLC/ICN/FUK/OKJ/SHE';
 
     // Parse route segments
     const segments = route.split('-');

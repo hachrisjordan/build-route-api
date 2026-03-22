@@ -62,3 +62,4 @@ fix-oneworld-owned-by.js
 docker-run-app.sh
 *.sh
 *.txt
+/.artifacts
