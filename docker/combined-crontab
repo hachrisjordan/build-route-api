@@ -21,6 +21,6 @@
 0 9,21 * * * /app/node_modules/.bin/tsx /app/scripts/fr24-airport-cron.ts >> /app/batch.log 2>&1
 0 9,21 * * * /app/node_modules/.bin/tsx /app/scripts/fr24-airport-cron.ts >> /app/batch.log 2>&1
 
-# Google Flights calendar capture - every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
+# Google Flights calendar capture - every 6 hours at 01:00, 07:00, 13:00, 19:00 UTC
 # Chromium to Xvfb :99 (same virtual display as Dockerfile CMD / finnair docker-start.sh), not Chrome --headless
-0 */6 * * * cd /app && env DISPLAY=:99 /opt/venv/bin/python3 scripts/google-flights-calendar-capture.py --origin AKL,AMM,AMS,ARN,ATH,ATL,AUH,AUS,BAH,BER,BEY,BKK,BNA,BNE,BOG,BOM,BOS,BRU,CAI,CAN,CDG,CEB,CGK,CKG,CMB,CMN,CPH,CTS,DEL,DEN,DFW,DOH,DTW,DUB,DUS,DXB,EWR,EZE,FCO,FLL,FRA,GIG,GRU,GVA,HAM,HAN,HEL,HGH,HKG,HND,HNL,IAD,IAH,ICN,IST,JED,JFK,KEF,KUL,LAS,LAX,LGW,LHR,LIM,LIN,LIS,MAD,MCO,MEL,MEX,MIA,MNL,MSP,MSY,MUC,NBO,NRT,ORD,OSL,OTP,PDX,PEK,PER,PHL,PHX,PKX,PMI,PTY,PVG,RDU,RSW,RUH,SAN,SCL,SEA,SFO,SGN,SHA,SIN,SJU,SKG,SLC,STR,SYD,SZX,TFU,TLV,TPA,TPE,VIE,WAW,XMN,YUL,YVR,YYZ,ZAG,ZRH >> /app/google-flights-calendar.log 2>&1
+0 1,7,13,19 * * * cd /app && env DISPLAY=:99 /opt/venv/bin/python3 scripts/google-flights-calendar-capture.py --origin AKL,AMM,AMS,ARN,ATH,ATL,AUH,AUS,BAH,BER,BEY,BKK,BNA,BNE,BOG,BOM,BOS,BRU,CAI,CAN,CDG,CEB,CGK,CKG,CMB,CMN,CPH,CTS,DEL,DEN,DFW,DOH,DTW,DUB,DUS,DXB,EWR,EZE,FCO,FLL,FRA,GIG,GRU,GVA,HAM,HAN,HEL,HGH,HKG,HND,HNL,IAD,IAH,ICN,IST,JED,JFK,KEF,KUL,LAS,LAX,LGW,LHR,LIM,LIN,LIS,MAD,MCO,MEL,MEX,MIA,MNL,MSP,MSY,MUC,NBO,NRT,ORD,OSL,OTP,PDX,PEK,PER,PHL,PHX,PKX,PMI,PTY,PVG,RDU,RSW,RUH,SAN,SCL,SEA,SFO,SGN,SHA,SIN,SJU,SKG,SLC,STR,SYD,SZX,TFU,TLV,TPA,TPE,VIE,WAW,XMN,YUL,YVR,YYZ,ZAG,ZRH >> /app/google-flights-calendar.log 2>&1
