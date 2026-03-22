@@ -10,8 +10,9 @@ with non-JSON prefixes, and with large portions embedded as string fragments).
 
 Heuristic used:
 - Find occurrences of fare price markers shaped like: `[[null,<PRICE>],"CjRIX...`
-- For each marker, look forward and pick the first escaped IATA code: `\"XXX\"`
-  (excluding the origin IATA).
+- For each marker, look forward for the hub airport: `,null,\"DEST\",\"/m/` (Google place id follows).
+  This avoids mis-reading marketing names like `\"JAL\"` or `\"ANA\"` as destinations.
+- If that pattern is missing, fall back to the first escaped `\"XXX\"` (excluding origin IATA).
 - Keep the minimum price per IATA and print sorted-by-price rows.
 """
 
@@ -28,6 +29,8 @@ IATA_RE = re.compile(r"^[A-Z]{3}$")
 # Escaped IATA codes as they appear in this blob: \"LHR\"
 # In the blob it shows up like: \\"LHR\\"
 ESCAPED_IATA_RE = re.compile(r"\\\"([A-Z]{3})\\\"")
+# Hub IATA appears as ,null,"XXX","/m/... after carrier name tokens like "JAL" / "ANA".
+DEST_HUB_RE = re.compile(r",null,\\\"([A-Z]{3})\\\",\\\"/m/")
 
 
 def extract_pairs(body_text: str, origin_iata: str) -> list[tuple[str, int]]:
@@ -49,10 +52,14 @@ def extract_pairs(body_text: str, origin_iata: str) -> list[tuple[str, int]]:
         price = int(m.group(1))
         # Look ahead: we want the first escaped IATA code after the marker.
         window = body_text[m.end() : m.end() + 25000]
-        cm = ESCAPED_IATA_RE.search(window)
-        if not cm:
-            continue
-        iata = cm.group(1)
+        dm = DEST_HUB_RE.search(window)
+        if dm:
+            iata = dm.group(1)
+        else:
+            cm = ESCAPED_IATA_RE.search(window)
+            if not cm:
+                continue
+            iata = cm.group(1)
         if iata == origin_iata:
             continue
         prev = best_price_by_iata.get(iata)

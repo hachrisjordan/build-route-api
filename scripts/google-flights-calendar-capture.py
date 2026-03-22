@@ -25,6 +25,7 @@ Usage:
     # (and the next airport, for handoff planning), then captures allowed continents.
     # stderr prints explore_run_id=<UUID>; use --resume-run-id <UUID> for stable run identity (logged on each pairing row).
     # Pairing status in Supabase is one row per (origin,continent): reruns update that row; resume skips any pair already success.
+    # Use --force-refresh to ignore successful pairings and re-capture everything (e.g. periodic cron refresh).
     # After each successful "Where from" commit, stderr prints one line: ``AMS - Amsterdam (AMS)`` (from live UI text).
 
 Retries / timeouts:
@@ -2167,7 +2168,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Run UUID (from explore_run_id stderr); stored on each pairing row when it changes. "
-            "Resume skips (origin,continent) pairs already marked success in the DB (one row per pair, updated each run)."
+            "Resume skips (origin,continent) pairs already marked success in the DB (one row per pair, updated each run). "
+            "Use --force-refresh to ignore that skip list."
+        ),
+    )
+    parser.add_argument(
+        "--force-refresh",
+        action="store_true",
+        help=(
+            "Re-capture every planned (origin,continent) pairing even if it is already marked success "
+            "in google_flights_explore_pairing_status. Pairing rows are still upserted after each step."
         ),
     )
     parser.add_argument(
@@ -3177,15 +3187,22 @@ def parse_explore_body_to_rows(
     # We only need to anchor on the stable `[[null,<PRICE>],\"CjRI` prefix.
     price_marker_re = re.compile(r"\[\[null,(\d+)\],\\\"CjRI[A-Za-z]")
     escaped_iata_re = re.compile(r"\\\"([A-Z]{3})\\\"")
+    # Fare row embeds marketing airline as a quoted 3-letter token (e.g. \"JAL\", \"ANA\") before
+    # the hub airport: ,null,\"HNL\",\"/m/0dlv0\". Prefer this pattern over the first \"XXX\" hit.
+    dest_hub_re = re.compile(r",null,\\\"([A-Z]{3})\\\",\\\"/m/")
 
     best_price_by_iata: Dict[str, int] = {}
     for m in price_marker_re.finditer(body_text):
         price = int(m.group(1))
         window = body_text[m.end() : m.end() + 25000]
-        cm = escaped_iata_re.search(window)
-        if not cm:
-            continue
-        dest_iata = cm.group(1)
+        dm = dest_hub_re.search(window)
+        if dm:
+            dest_iata = dm.group(1)
+        else:
+            cm = escaped_iata_re.search(window)
+            if not cm:
+                continue
+            dest_iata = cm.group(1)
         if dest_iata == origin_iata:
             continue
         if rows_only is not None and dest_iata not in rows_only:
@@ -3330,7 +3347,11 @@ def main() -> int:
     if args.manual:
         steps_to_run = all_steps[:]
     elif not explore_auto_lazy:
-        done_keys = fetch_successful_pairing_keys(run_id, debug=bool(args.debug))
+        done_keys = (
+            set()
+            if args.force_refresh
+            else fetch_successful_pairing_keys(run_id, debug=bool(args.debug))
+        )
         steps_to_run = [
             s for s in all_steps if (s.origin_iata, s.destination_continent) not in done_keys
         ]
@@ -3354,7 +3375,11 @@ def main() -> int:
     for capture_try in range(1, total_capture_attempts + 1):
         if explore_auto_lazy:
             assert not args.manual
-            done_keys_lazy = fetch_successful_pairing_keys(run_id, debug=bool(args.debug))
+            done_keys_lazy = (
+                set()
+                if args.force_refresh
+                else fetch_successful_pairing_keys(run_id, debug=bool(args.debug))
+            )
             planner = MultiOriginExploreHandoffPlanner(origins, fetch_home_cached)
             all_steps = []
             capturer: Optional[GoogleFlightsCalendarCapture] = None
@@ -3841,7 +3866,11 @@ def main() -> int:
             )
             time.sleep(capture_retry_delay)
             if not args.manual and not explore_auto_lazy:
-                done_keys = fetch_successful_pairing_keys(run_id, debug=bool(args.debug))
+                done_keys = (
+                    set()
+                    if args.force_refresh
+                    else fetch_successful_pairing_keys(run_id, debug=bool(args.debug))
+                )
                 steps_to_run = [
                     s for s in all_steps if (s.origin_iata, s.destination_continent) not in done_keys
                 ]
