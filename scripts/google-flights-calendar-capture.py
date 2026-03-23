@@ -40,10 +40,11 @@ table (same as below), even when `--print-rows` is not set.
 
 Without `--print-rows`, successful runs do not print capture JSON to stdout (use `--save-body` for raw bodies).
 
-With `--print-rows`, rows are `origin,destination,price,roundtrip,j` and, when both airports have
+With `--print-rows`, rows are `origin,destination,price,roundtrip,j` (the 4th field value is `oneway`)
+and, when both airports have
 `latitude`/`longitude` in Supabase `airports`, an extra `cpm` field: cents per mile =
 price (USD) / (effective miles) * 100, where effective miles = one-way haversine miles,
-or *2 that distance when `roundtrip` is `roundtrip` (out-and-back).
+or *2 that distance when the `roundtrip` field value is the literal `roundtrip` (out-and-back).
 If coordinates are missing, the row is left without `cpm` (unchanged 5 fields).
 """
 
@@ -399,6 +400,7 @@ class GoogleFlightsCalendarCapture:
         headless: bool,
         debug: bool,
         force_consent_test: bool = False,
+        select_one_way: bool = False,
     ):
         self.origin = origin
         self.destination = destination
@@ -406,6 +408,8 @@ class GoogleFlightsCalendarCapture:
         self.headless = headless
         self.debug = debug
         self.force_consent_test = force_consent_test
+        self.select_one_way = select_one_way
+        self.trip_type_token = "oneway" if select_one_way else "roundtrip"
         self.driver = None
         self._requests: Dict[str, Dict[str, Any]] = {}
         # When False, Network.requestWillBeSent for GetExploreDestinations is ignored (e.g. after destination-only).
@@ -519,6 +523,19 @@ class GoogleFlightsCalendarCapture:
         options.add_argument("--lang=en-US")
         options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
 
+        # Persist a stable Chrome profile so Google consent is accepted once and doesn't block
+        # every retry/browser session. Your Docker image already mounts/creates CHROME_DATA_DIR.
+        profile_root = os.getenv("CHROME_DATA_DIR") or os.getenv("CHROME_PROFILE_DIR") or "/app/chrome-data"
+        user_data_dir = os.path.join(profile_root, "google-flights-calendar-capture")
+        try:
+            os.makedirs(user_data_dir, exist_ok=True)
+        except Exception:
+            pass
+        options.add_argument(f"--user-data-dir={user_data_dir}")
+        options.add_argument("--profile-directory=Default")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+
         if self.headless:
             options.add_argument("--headless=new")
 
@@ -626,11 +643,25 @@ class GoogleFlightsCalendarCapture:
             self._click_if_present(selectors, timeout=1, label="google_consent")
             time.sleep(0.6)
 
+        # Give the operator a chance to clear consent via noVNC. Do not abort the whole session:
+        # the rest of the flow will either proceed (consent cleared) or time out in a less
+        # disruptive way (without forcing a full browser restart).
+        extra_seconds = int(os.getenv("GOOGLE_CONSENT_EXTRA_WAIT_SECONDS", "180"))
+        extra_deadline = time.time() + max(0, extra_seconds)
+        while time.time() < extra_deadline:
+            if not _is_consent_page():
+                self._log("google consent interstitial cleared (after extra wait)")
+                return
+            # Try one more click attempt in case the first didn't work.
+            self._click_if_present(selectors, timeout=1, label="google_consent_retry")
+            time.sleep(1.0)
+
         self._dump_debug_state("google_consent_not_cleared")
-        raise TimeoutException(
-            "Google consent interstitial did not clear in time. "
-            "Open noVNC and complete consent once for this browser/profile."
+        self._log(
+            "google consent interstitial still present after extra wait; continuing anyway "
+            "(expected to block Explore UI until cleared)."
         )
+        return
 
     def _dismiss_explore_overlays(self) -> None:
         """Close first-run / promo layers that block the sidebar route row."""
@@ -1947,6 +1978,92 @@ class GoogleFlightsCalendarCapture:
 
         self._log("set_business_class done")
 
+    def _set_one_way_trip_type(self) -> None:
+        """
+        Set Explore trip type to "One way".
+
+        Your `visible-comboboxes.json` shows the trip-type combobox at index 0, with the label
+        switching between "Round trip" and "One way".
+        """
+        self._log("set_one_way_trip_type start")
+        self._debug_dump_visible_comboboxes()
+
+        opened = self._click_nth_combobox(0, label="trip_type_open", timeout=6)
+        if not opened:
+            self._dump_debug_state("open_trip_type_failed")
+            raise TimeoutException("Could not open Explore trip type selector.")
+
+        def _current_trip_label() -> str:
+            try:
+                return str(
+                    self.driver.execute_script(
+                        """
+                        const els = Array.from(document.querySelectorAll('[role="combobox"]'))
+                          .filter((el) => {
+                            const r = el.getBoundingClientRect();
+                            return r.width > 0 && r.height > 0;
+                          });
+                        if (!els.length) return '';
+                        const el = els[0];
+                        return (el.innerText || el.textContent || '').trim();
+                        """
+                    )
+                )
+            except Exception:
+                return ""
+
+        deadline = time.time() + 12
+        # Keep trying until the dropdown options exist and the label flips.
+        while time.time() < deadline:
+            try:
+                # Attempt to click a visible "One way" option.
+                did_click = bool(
+                    self.driver.execute_script(
+                        r"""
+                        const isVisible = (el) => {
+                          if (!el) return false;
+                          const r = el.getBoundingClientRect();
+                          return r.width > 0 && r.height > 0;
+                        };
+                        const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                        const candidates = Array.from(document.querySelectorAll('[role="option"],li,[role="menuitem"],button,div,span'))
+                          .filter(isVisible)
+                          .filter((el) => norm(el.innerText || el.textContent).includes('one way'));
+                        // Prefer true option/menu items.
+                        candidates.sort((a, b) => {
+                          const ar = (a.getAttribute && a.getAttribute('role')) || '';
+                          const br = (b.getAttribute && b.getAttribute('role')) || '';
+                          const aScore = (ar === 'option' || ar === 'menuitem' || ar.includes('menuitem')) ? 0 : 1;
+                          const bScore = (br === 'option' || br === 'menuitem' || br.includes('menuitem')) ? 0 : 1;
+                          return aScore - bScore;
+                        });
+                        const el = candidates[0];
+                        if (!el) return false;
+                        try { el.scrollIntoView({block:'center'}); } catch(e) {}
+                        const rect = el.getBoundingClientRect();
+                        const opts = { bubbles:true, cancelable:true, clientX: rect.left + 5, clientY: rect.top + 5 };
+                        el.dispatchEvent(new MouseEvent('mouseover', opts));
+                        el.dispatchEvent(new MouseEvent('mousedown', opts));
+                        el.dispatchEvent(new MouseEvent('mouseup', opts));
+                        el.dispatchEvent(new MouseEvent('click', opts));
+                        return true;
+                        """
+                    )
+                )
+            except Exception:
+                did_click = False
+
+            label = _current_trip_label().lower()
+            if "one way" in label:
+                self._log("trip_type is now One way")
+                return
+
+            # If we clicked something but label didn't flip, keep looping; otherwise wait briefly.
+            time.sleep(0.35 if did_click else 0.45)
+
+        self._dump_debug_state("trip_type_not_one_way")
+        raise TimeoutException("Could not switch Explore trip type to One way.")
+
     def _open_departure_date_picker(self):
         self._log("open_departure_date_picker start")
         clicked = self._click_if_present(
@@ -2228,6 +2345,9 @@ class GoogleFlightsCalendarCapture:
 
         # Explore uses a similar "Where from/to" route picker, but may vary by experiment.
         self._set_business_class()
+        if self.select_one_way:
+            # Select one-way after Business (stable order for your UI variant).
+            self._set_one_way_trip_type()
 
     def capture_for_destination(
         self, destination_continent: str, *, reselect_origin: bool = True
@@ -2429,6 +2549,12 @@ class GoogleFlightsCalendarCapture:
         self._accept_cookie_banner_if_present()
         self._dismiss_explore_overlays()
         self._ensure_currency_usd(timeout=15)
+        if self.select_one_way:
+            try:
+                self._set_one_way_trip_type()
+            except Exception:
+                # Manual mode: user can still complete the flow even if trip type couldn't be flipped.
+                pass
         time.sleep(1)
         self.install_dom_mutation_logger()
         self._dump_debug_state("manual_ready")
@@ -2487,6 +2613,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--headless", action="store_true", help="Run browser in headless mode")
     parser.add_argument("--debug", action="store_true", help="Verbose debug logs + save screenshot/html artifacts")
     parser.add_argument("--manual", action="store_true", help="Open browser for manual actions + log DOM mutations")
+    parser.add_argument(
+        "--one-way",
+        action="store_true",
+        help=(
+            "Select Explore trip type 'One way' (default is 'Round trip'). "
+            "This changes the emitted CSV field and CPM miles denominator to use one-way distance."
+        ),
+    )
     parser.add_argument(
         "--force-consent-test",
         action="store_true",
@@ -2723,10 +2857,11 @@ def fetch_successful_pairing_keys(
     run_id: uuid.UUID,
     *,
     debug: bool = False,
-) -> set[tuple[str, str]]:
-    """`(origin_iata, destination_region)` pairs already marked success (global, not scoped by ``run_id``).
+) -> set[tuple[str, str, str]]:
+    """`(origin_iata, destination_region, trip_type)` pairs already marked success (global, not scoped by ``run_id``).
 
-    The table keeps one row per pair; ``run_id`` is only written when that row is updated.
+    The table keeps one row per (origin_iata, destination_region, trip_type); ``run_id`` is only written
+    when that row is updated.
     """
     try:
         from supabase import create_client
@@ -2744,7 +2879,7 @@ def fetch_successful_pairing_keys(
     try:
         response = (
             client.table(SUPABASE_EXPLORE_PAIRING_STATUS_TABLE)
-            .select("origin_iata,destination_region")
+            .select("origin_iata,destination_region,trip_type")
             .eq("status", "success")
             .execute()
         )
@@ -2758,12 +2893,13 @@ def fetch_successful_pairing_keys(
             f"(run_id context {run_id})",
             file=sys.stderr,
         )
-    out: set[tuple[str, str]] = set()
+    out: set[tuple[str, str, str]] = set()
     for row in getattr(response, "data", None) or []:
         o = (row.get("origin_iata") or "").strip().upper()
         d = (row.get("destination_region") or "").strip()
-        if o and d:
-            out.add((o, d))
+        t = (row.get("trip_type") or "roundtrip").strip().lower()
+        if o and d and t:
+            out.add((o, d, t))
     return out
 
 
@@ -2771,9 +2907,11 @@ def upsert_explore_pairing_status(
     run_id: uuid.UUID,
     origin_iata: str,
     destination_region: str,
+    trip_type: str,
     status: str,
     *,
     error_message: Optional[str] = None,
+    cycle_duration_seconds: Optional[float] = None,
     debug: bool = False,
 ) -> None:
     if status not in ("success", "failed"):
@@ -2794,15 +2932,18 @@ def upsert_explore_pairing_status(
         "run_id": str(run_id),
         "origin_iata": origin_iata.strip().upper(),
         "destination_region": destination_region,
+        "trip_type": trip_type.strip().lower(),
         "status": status,
     }
+    if cycle_duration_seconds is not None:
+        row["cycle_duration_seconds"] = float(cycle_duration_seconds)
     if error_message is not None:
         row["error_message"] = (error_message[:8000] if error_message else None)
     client = create_client(url, key)
-    # One DB row per (origin_iata, destination_region); refresh run_id/status on each capture.
+    # One DB row per (origin_iata, destination_region, trip_type); refresh run_id/status on each capture.
     res = (
         client.table(SUPABASE_EXPLORE_PAIRING_STATUS_TABLE)
-        .upsert(row, on_conflict="origin_iata,destination_region")
+        .upsert(row, on_conflict="origin_iata,destination_region,trip_type")
         .execute()
     )
     status_code = 200
@@ -3199,8 +3340,8 @@ def attach_cent_per_mile_column(
     Append `,cpm` (cent per mile = USD per effective mile * 100) when origin and destination both have
     coordinates in latlon_by_iata; otherwise leave the row as the original 5-field CSV.
 
-    Effective miles: one-way great-circle distance; when the row's `roundtrip` column is the literal
-    `roundtrip`, distance is doubled (out + return) for the per-mile denominator.
+    Effective miles: one-way great-circle distance; when the row's `roundtrip` column value is the
+    literal `roundtrip`, distance is doubled (out + return) for the per-mile denominator.
     """
     origin_key = origin_iata.strip().upper()
     origin_ll = latlon_by_iata.get(origin_key)
@@ -3245,8 +3386,8 @@ def parse_explore_csv_row_for_supabase(line: str) -> Optional[Dict[str, Any]]:
     Convert Explore CSV-ish lines into a Supabase row dict.
 
     Supports both 5-field and 6-field formats:
-      origin,destination,price,roundtrip,j
-      origin,destination,price,roundtrip,j,cpm
+      origin,destination,price,oneway,j
+      origin,destination,price,oneway,j,cpm
     """
     stripped = line.strip()
     if not stripped:
@@ -3341,6 +3482,7 @@ def upsert_explore_output_after_step(
     rows_limit: int,
     supabase_attempts: int,
     supabase_retry_delay: float,
+    trip_type_token: str = "roundtrip",
     debug: bool,
 ) -> bool:
     """
@@ -3358,6 +3500,7 @@ def upsert_explore_output_after_step(
     row_lines = parse_explore_body_to_rows(
         raw_body,
         origin_iata=step.origin_iata,
+        trip_type_token=trip_type_token,
         rows_limit=-1,
         rows_only=rows_only,
     )
@@ -3409,8 +3552,8 @@ def merge_explore_csv_rows(
     rows_only: Optional[set[str]] = None,
 ) -> List[str]:
     """
-    Merge CSV lines `ORIG,DEST,PRICE,roundtrip,j` from multiple captures; keep minimum price per
-    `(ORIG,DEST,roundtrip,j)` (matches Supabase upsert conflict target).
+    Merge CSV lines `ORIG,DEST,PRICE,oneway,j` from multiple captures; keep minimum price per
+    `(ORIG,DEST,roundtrip,j)` (matches Supabase upsert conflict target by column name).
     """
     best_price: Dict[tuple[str, str, str, str], int] = {}
     for line in row_lines:
@@ -3468,14 +3611,21 @@ def save_body_path_for_explore_step(
 def parse_explore_body_to_rows(
     body_text: Optional[str],
     origin_iata: str,
+    *,
+    trip_type_token: str = "roundtrip",
     rows_limit: int = -1,
     rows_only: Optional[set[str]] = None,
 ) -> list[str]:
     """
     Parse Google Travel Explore GetExploreDestinations response body into CSV rows:
-      origin,destination,price,roundtrip,j
+      origin,destination,price,<trip_type_token>,j
+
+    - By default, `<trip_type_token>` is `roundtrip`.
+    - When `trip_type_token="oneway"`, CPM uses one-way miles (no doubling).
+
     (`attach_cent_per_mile_column` may add a 6th field: cpm uses effective miles = haversine mi,
-    or 2x haversine when roundtrip=roundtrip, then price / effective_miles * 100.)
+    or 2x haversine when the `roundtrip` field value is the literal `roundtrip`, then price /
+    effective_miles * 100.)
 
     Note: this is heuristic string parsing; it is designed to match the on-disk body format
     produced by this script's `--save-body`.
@@ -3519,7 +3669,7 @@ def parse_explore_body_to_rows(
 
     out: list[str] = []
     for dest_iata, price in rows_sorted:
-        out.append(f"{origin_iata},{dest_iata},{price},roundtrip,j")
+        out.append(f"{origin_iata},{dest_iata},{price},{trip_type_token},j")
     return out
 
 
@@ -3645,6 +3795,8 @@ def main() -> int:
         print("No Explore steps to run.", file=sys.stderr)
         return 2
 
+    trip_type_token = "oneway" if bool(args.one_way) else "roundtrip"
+
     steps_to_run: List[ExploreStep] = []
     if args.manual:
         steps_to_run = all_steps[:]
@@ -3655,7 +3807,9 @@ def main() -> int:
             else fetch_successful_pairing_keys(run_id, debug=bool(args.debug))
         )
         steps_to_run = [
-            s for s in all_steps if (s.origin_iata, s.destination_continent) not in done_keys
+            s
+            for s in all_steps
+            if (s.origin_iata, s.destination_continent, trip_type_token) not in done_keys
         ]
     if not args.manual and not explore_auto_lazy and not steps_to_run and all_steps:
         print(
@@ -3674,12 +3828,16 @@ def main() -> int:
     capture_retry_delay = max(0.0, float(CAPTURE_RETRY_DELAY_SECONDS))
 
     last_capture_error: Optional[BaseException] = None
+    # When a browser session fails for some (origin, destination_continent) pairs,
+    # retry only those pairs in the next browser session instead of replaying successes.
+    retry_only_keys: Optional[set[tuple[str, str]]] = None
     for capture_try in range(1, total_capture_attempts + 1):
         if explore_auto_lazy:
             assert not args.manual
+            failed_keys_this_try: set[tuple[str, str]] = set()
             done_keys_lazy = (
                 set()
-                if args.force_refresh
+                if args.force_refresh and capture_try == 1
                 else fetch_successful_pairing_keys(run_id, debug=bool(args.debug))
             )
             planner = MultiOriginExploreHandoffPlanner(origins, fetch_home_cached)
@@ -3707,7 +3865,11 @@ def main() -> int:
                     pending = [
                         s
                         for s in seg
-                        if (s.origin_iata, s.destination_continent) not in done_keys_lazy
+                        if (s.origin_iata, s.destination_continent, trip_type_token) not in done_keys_lazy
+                        and (
+                            retry_only_keys is None
+                            or (s.origin_iata, s.destination_continent) in retry_only_keys
+                        )
                     ]
                     if not pending:
                         continue
@@ -3719,17 +3881,22 @@ def main() -> int:
                             headless=bool(args.headless),
                             debug=bool(args.debug),
                             force_consent_test=bool(args.force_consent_test),
+                            select_one_way=bool(args.one_way),
                         )
                         capturer.bootstrap_explore_session()
                     for i, step in enumerate(pending):
                         try:
+                            step_start = time.monotonic()
                             res = capturer.capture_planned_step(step)
                             executed_results.append((step, res))
+                            duration_seconds = time.monotonic() - step_start
                             upsert_explore_pairing_status(
                                 run_id,
                                 step.origin_iata,
                                 step.destination_continent,
+                                trip_type_token,
                                 "success",
+                                cycle_duration_seconds=duration_seconds,
                                 debug=bool(args.debug),
                             )
                             if not upsert_explore_output_after_step(
@@ -3739,17 +3906,25 @@ def main() -> int:
                                 rows_limit=int(args.rows_limit),
                                 supabase_attempts=supabase_attempts,
                                 supabase_retry_delay=supabase_retry_delay,
+                                trip_type_token=capturer.trip_type_token if capturer else "roundtrip",
                                 debug=bool(args.debug),
                             ):
                                 explore_output_upsert_ok = False
                             consecutive_origin_failures = 0
                         except BaseException as step_error:
+                            failed_keys_this_try.add(
+                                (step.origin_iata, step.destination_continent)
+                            )
+                            explore_output_upsert_ok = False
+                            duration_seconds = time.monotonic() - step_start
                             upsert_explore_pairing_status(
                                 run_id,
                                 step.origin_iata,
                                 step.destination_continent,
+                                trip_type_token,
                                 "failed",
                                 error_message=str(step_error),
+                                cycle_duration_seconds=duration_seconds,
                                 debug=bool(args.debug),
                             )
                             if multi_origin_airports and _is_explore_origin_not_set_error(
@@ -3762,10 +3937,14 @@ def main() -> int:
                                     "(earlier step on same origin failed)"
                                 )
                                 for skipped in pending[i + 1 :]:
+                                    failed_keys_this_try.add(
+                                        (skipped.origin_iata, skipped.destination_continent)
+                                    )
                                     upsert_explore_pairing_status(
                                         run_id,
                                         skipped.origin_iata,
                                         skipped.destination_continent,
+                                        trip_type_token,
                                         "failed",
                                         error_message=skip_msg,
                                         debug=bool(args.debug),
@@ -3780,7 +3959,8 @@ def main() -> int:
                                         "consecutive airports failed origin set; retrying browser session."
                                     ) from step_error
                                 break
-                            raise
+                            # Do not abort the browser session; continue with next planned pair.
+                            continue
 
                 if capturer is None:
                     if all_steps:
@@ -3827,6 +4007,7 @@ def main() -> int:
                             parse_explore_body_to_rows(
                                 raw_body,
                                 origin_iata=step.origin_iata,
+                                trip_type_token=capturer.trip_type_token if capturer else "roundtrip",
                                 rows_limit=-1,
                                 rows_only=rows_only_lazy,
                             )
@@ -3920,7 +4101,12 @@ def main() -> int:
                     capturer.close()
 
             if session_exit_code is not None:
-                return session_exit_code
+                if failed_keys_this_try and capture_try < total_capture_attempts:
+                    # Retry only the failing (origin, destination_continent) pairs.
+                    retry_only_keys = failed_keys_this_try
+                    session_exit_code = None
+                else:
+                    return session_exit_code
 
             if capture_try < total_capture_attempts:
                 print(
@@ -3939,17 +4125,30 @@ def main() -> int:
             headless=bool(args.headless),
             debug=bool(args.debug),
             force_consent_test=bool(args.force_consent_test),
+            select_one_way=bool(args.one_way),
         )
         session_exit_code = None
         explore_output_upsert_ok = True
+        failed_keys_this_try: set[tuple[str, str]] = set()
         try:
             rows_only: Optional[set[str]] = None
             if args.rows_only:
                 rows_only = {x.strip().upper() for x in args.rows_only.split(",") if x.strip()}
 
             if args.manual:
+                step_start = time.monotonic()
                 result = capturer.run_manual()
+                manual_duration_seconds = time.monotonic() - step_start
                 executed_results = [(all_steps[0], result)]
+                upsert_explore_pairing_status(
+                    run_id,
+                    all_steps[0].origin_iata,
+                    all_steps[0].destination_continent,
+                    trip_type_token,
+                    "success",
+                    cycle_duration_seconds=manual_duration_seconds,
+                    debug=bool(args.debug),
+                )
                 if not upsert_explore_output_after_step(
                     all_steps[0],
                     result,
@@ -3957,6 +4156,7 @@ def main() -> int:
                     rows_limit=int(args.rows_limit),
                     supabase_attempts=supabase_attempts,
                     supabase_retry_delay=supabase_retry_delay,
+                    trip_type_token=capturer.trip_type_token if capturer else "roundtrip",
                     debug=bool(args.debug),
                 ):
                     explore_output_upsert_ok = False
@@ -3968,13 +4168,17 @@ def main() -> int:
                 while step_idx_nl < len(steps_to_run):
                     step = steps_to_run[step_idx_nl]
                     try:
+                        step_start = time.monotonic()
                         res = capturer.capture_planned_step(step)
                         executed_results.append((step, res))
+                        duration_seconds = time.monotonic() - step_start
                         upsert_explore_pairing_status(
                             run_id,
                             step.origin_iata,
                             step.destination_continent,
+                            trip_type_token,
                             "success",
+                            cycle_duration_seconds=duration_seconds,
                             debug=bool(args.debug),
                         )
                         if not upsert_explore_output_after_step(
@@ -3984,17 +4188,25 @@ def main() -> int:
                             rows_limit=int(args.rows_limit),
                             supabase_attempts=supabase_attempts,
                             supabase_retry_delay=supabase_retry_delay,
+                            trip_type_token=capturer.trip_type_token if capturer else "roundtrip",
                             debug=bool(args.debug),
                         ):
                             explore_output_upsert_ok = False
                         consecutive_origin_failures_nl = 0
                     except BaseException as step_error:
+                        failed_keys_this_try.add(
+                            (step.origin_iata, step.destination_continent)
+                        )
+                        explore_output_upsert_ok = False
+                        duration_seconds = time.monotonic() - step_start
                         upsert_explore_pairing_status(
                             run_id,
                             step.origin_iata,
                             step.destination_continent,
+                            trip_type_token,
                             "failed",
                             error_message=str(step_error),
+                            cycle_duration_seconds=duration_seconds,
                             debug=bool(args.debug),
                         )
                         if multi_origin_airports and _is_explore_origin_not_set_error(
@@ -4010,10 +4222,14 @@ def main() -> int:
                             while j < len(steps_to_run) and (
                                 steps_to_run[j].origin_iata == step.origin_iata
                             ):
+                                failed_keys_this_try.add(
+                                    (steps_to_run[j].origin_iata, steps_to_run[j].destination_continent)
+                                )
                                 upsert_explore_pairing_status(
                                     run_id,
                                     steps_to_run[j].origin_iata,
                                     steps_to_run[j].destination_continent,
+                                    trip_type_token,
                                     "failed",
                                     error_message=skip_msg,
                                     debug=bool(args.debug),
@@ -4030,7 +4246,8 @@ def main() -> int:
                                     "consecutive airports failed origin set; retrying browser session."
                                 ) from step_error
                             continue
-                        raise
+                        # Do not abort the whole browser session; just record this pair as failed.
+                        continue
                     step_idx_nl += 1
 
             if args.print_rows:
@@ -4068,6 +4285,7 @@ def main() -> int:
                         parse_explore_body_to_rows(
                             raw_body,
                             origin_iata=step.origin_iata,
+                            trip_type_token=capturer.trip_type_token if capturer else "roundtrip",
                             rows_limit=-1,
                             rows_only=rows_only,
                         )
@@ -4160,7 +4378,17 @@ def main() -> int:
             capturer.close()
 
         if session_exit_code is not None:
-            return session_exit_code
+            if failed_keys_this_try and capture_try < total_capture_attempts:
+                # Retry only the failing (origin_iata, destination_continent) pairs.
+                retry_only_keys = failed_keys_this_try
+                steps_to_run = [
+                    s
+                    for s in all_steps
+                    if (s.origin_iata, s.destination_continent) in failed_keys_this_try
+                ]
+                session_exit_code = None
+            else:
+                return session_exit_code
 
         if capture_try < total_capture_attempts:
             print(
@@ -4170,14 +4398,23 @@ def main() -> int:
             )
             time.sleep(capture_retry_delay)
             if not args.manual and not explore_auto_lazy:
-                done_keys = (
-                    set()
-                    if args.force_refresh
-                    else fetch_successful_pairing_keys(run_id, debug=bool(args.debug))
-                )
-                steps_to_run = [
-                    s for s in all_steps if (s.origin_iata, s.destination_continent) not in done_keys
-                ]
+                if retry_only_keys:
+                    steps_to_run = [
+                        s
+                        for s in all_steps
+                        if (s.origin_iata, s.destination_continent) in retry_only_keys
+                    ]
+                else:
+                    done_keys = (
+                        set()
+                        if args.force_refresh
+                        else fetch_successful_pairing_keys(run_id, debug=bool(args.debug))
+                    )
+                    steps_to_run = [
+                        s
+                        for s in all_steps
+                        if (s.origin_iata, s.destination_continent, trip_type_token) not in done_keys
+                    ]
                 if not steps_to_run and all_steps:
                     return 0
 

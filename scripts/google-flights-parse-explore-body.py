@@ -3,7 +3,7 @@
 Parse Google Travel Explore GetExploreDestinations response body into CSV-ish rows.
 
 Expected output row format:
-  <origin>,<destination>,<price>,roundtrip,j
+  <origin>,<destination>,<price>,<trip_type>,j
 
 This is intentionally heuristic because Google returns a nested array blob (often wrapped
 with non-JSON prefixes, and with large portions embedded as string fragments).
@@ -87,6 +87,13 @@ def main() -> int:
         default=None,
         help="Comma-separated destination IATA codes to include (e.g. LHR,CDG). If omitted, prints top N.",
     )
+    parser.add_argument(
+        "--trip-type",
+        required=False,
+        type=str,
+        default="roundtrip",
+        help="Trip type token to emit as the 4th CSV field: roundtrip (default) or oneway.",
+    )
     args = parser.parse_args()
 
     origin = args.origin.strip().upper()
@@ -111,8 +118,17 @@ def main() -> int:
         out = pairs
     else:
         out = pairs[: max(0, limit)]
+
+    trip_type = str(args.trip_type).strip().lower()
+    if trip_type in ("roundtrip", "round-trip", "round_trip"):
+        trip_type_token = "roundtrip"
+    elif trip_type in ("oneway", "one-way", "one_way"):
+        trip_type_token = "oneway"
+    else:
+        raise SystemExit(f"Invalid --trip-type {args.trip_type!r}; expected roundtrip or oneway.")
+
     for dest_iata, price in out:
-        print(f"{origin},{dest_iata},{price},roundtrip,j")
+        print(f"{origin},{dest_iata},{price},{trip_type_token},j")
 
     return 0
 
