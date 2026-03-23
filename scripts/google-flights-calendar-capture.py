@@ -167,6 +167,30 @@ def load_selenium_dependencies() -> None:
     WebDriverException = SeleniumWebDriverException
 
 
+def format_exception_for_stderr(exc: BaseException) -> str:
+    """Selenium timeouts often stringify to ``Message:`` with no following text; keep logs useful."""
+    full = str(exc)
+    raw = full.strip()
+    remainder = ""
+    if raw.startswith("Message:"):
+        remainder = raw[len("Message:") :].strip()
+    if remainder:
+        return full.strip()
+    msg = getattr(exc, "msg", None)
+    msg_s = (str(msg).strip() if msg is not None else "") or ""
+    bits = [type(exc).__name__]
+    if msg_s:
+        bits.append(msg_s)
+    else:
+        bits.append(
+            "(empty selenium msg — typically WebDriverWait/expected_condition timeout)"
+        )
+    screen = getattr(exc, "screen", None)
+    if screen:
+        bits.append(f"screen={screen!r}")
+    return " — ".join(bits)
+
+
 TARGET_PREFIX = (
     "https://www.google.com/_/FlightsFrontendUi/data/travel.frontend.flights."
     "FlightsFrontendService/GetExploreDestinations"
@@ -1934,7 +1958,11 @@ class GoogleFlightsCalendarCapture:
         self._purge_tracked_get_explore_destinations()
         self._log("navigate to Google Travel Explore")
         self.driver.get("https://www.google.com/travel/explore")
-        self._wait_for_flights_form(timeout=25)
+        try:
+            self._wait_for_flights_form(timeout=25)
+        except TimeoutException:
+            self._dump_debug_state("wait_for_flights_form_timeout")
+            raise
         time.sleep(1.2)
         self._accept_cookie_banner_if_present()
         time.sleep(0.6)
@@ -2131,7 +2159,11 @@ class GoogleFlightsCalendarCapture:
         load_selenium_dependencies()
         self.setup_driver()
         self.driver.get("https://www.google.com/travel/explore")
-        self._wait_for_flights_form(timeout=25)
+        try:
+            self._wait_for_flights_form(timeout=25)
+        except TimeoutException:
+            self._dump_debug_state("wait_for_flights_form_timeout")
+            raise
         time.sleep(1)
         self._accept_cookie_banner_if_present()
         self._dismiss_explore_overlays()
@@ -3606,7 +3638,7 @@ def main() -> int:
                     session_exit_code = 0 if explore_output_upsert_ok else 1
             except TimeoutException as error:
                 last_capture_error = error
-                print(str(error), file=sys.stderr)
+                print(format_exception_for_stderr(error), file=sys.stderr)
             except KeyboardInterrupt:
                 raise
             except Exception as error:
@@ -3846,7 +3878,7 @@ def main() -> int:
                 session_exit_code = 0 if explore_output_upsert_ok else 1
         except TimeoutException as error:
             last_capture_error = error
-            print(str(error), file=sys.stderr)
+            print(format_exception_for_stderr(error), file=sys.stderr)
         except KeyboardInterrupt:
             raise
         except Exception as error:
@@ -3878,7 +3910,7 @@ def main() -> int:
                     return 0
 
     if isinstance(last_capture_error, TimeoutException):
-        print(str(last_capture_error), file=sys.stderr)
+        print(format_exception_for_stderr(last_capture_error), file=sys.stderr)
         return 1
     if last_capture_error is not None:
         print(f"Capture failed: {last_capture_error}", file=sys.stderr)
