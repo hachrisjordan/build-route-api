@@ -195,6 +195,11 @@ TARGET_PREFIX = (
     "https://www.google.com/_/FlightsFrontendUi/data/travel.frontend.flights."
     "FlightsFrontendService/GetExploreDestinations"
 )
+GOOGLE_EXPLORE_URL = "https://www.google.com/travel/explore?curr=USD&hl=en-US&gl=US"
+GOOGLE_CONSENT_TEST_URL = (
+    "https://consent.google.com/ml?continue=https://www.google.com/travel/explore"
+    "&gl=DE&m=0&pc=tr&uxe=eomtm&hl=en&src=1"
+)
 IATA_REGEX = re.compile(r"^[A-Z]{3}$")
 IS_DARWIN = sys.platform == "darwin"
 
@@ -386,12 +391,21 @@ class CaptureResult:
 
 
 class GoogleFlightsCalendarCapture:
-    def __init__(self, origin: str, destination: str, timeout_seconds: int, headless: bool, debug: bool):
+    def __init__(
+        self,
+        origin: str,
+        destination: str,
+        timeout_seconds: int,
+        headless: bool,
+        debug: bool,
+        force_consent_test: bool = False,
+    ):
         self.origin = origin
         self.destination = destination
         self.timeout_seconds = timeout_seconds
         self.headless = headless
         self.debug = debug
+        self.force_consent_test = force_consent_test
         self.driver = None
         self._requests: Dict[str, Dict[str, Any]] = {}
         # When False, Network.requestWillBeSent for GetExploreDestinations is ignored (e.g. after destination-only).
@@ -571,6 +585,53 @@ class GoogleFlightsCalendarCapture:
             label="cookie_banner",
         )
 
+    def _clear_google_consent_gate_if_present(self, timeout: int = 20) -> None:
+        """
+        Handle Google consent interstitials (e.g. consent.google.com "Before you continue").
+        """
+        wait = WebDriverWait(self.driver, max(2, timeout))
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+
+        def _is_consent_page() -> bool:
+            try:
+                url = (self.driver.current_url or "").lower()
+                title = (self.driver.title or "").lower()
+                if "consent.google." in url:
+                    return True
+                if "before you continue" in title:
+                    return True
+                body_text = (self.driver.find_element(By.TAG_NAME, "body").text or "").lower()
+                return "before you continue to google" in body_text
+            except Exception:
+                return False
+
+        if not _is_consent_page():
+            return
+
+        self._log("google consent interstitial detected")
+        deadline = time.time() + max(2, timeout)
+        selectors = [
+            # Prefer accept for smoother downstream page behavior.
+            (By.XPATH, "//button[contains(., 'Accept all')]"),
+            (By.XPATH, "//button[contains(., 'I agree')]"),
+            # Fallbacks if accept text differs/changes.
+            (By.XPATH, "//button[contains(., 'Reject all')]"),
+            (By.XPATH, "//button[contains(., 'More options')]"),
+        ]
+
+        while time.time() < deadline:
+            if not _is_consent_page():
+                self._log("google consent interstitial cleared")
+                return
+            self._click_if_present(selectors, timeout=1, label="google_consent")
+            time.sleep(0.6)
+
+        self._dump_debug_state("google_consent_not_cleared")
+        raise TimeoutException(
+            "Google consent interstitial did not clear in time. "
+            "Open noVNC and complete consent once for this browser/profile."
+        )
+
     def _dismiss_explore_overlays(self) -> None:
         """Close first-run / promo layers that block the sidebar route row."""
         self._click_if_present(
@@ -583,6 +644,195 @@ class GoogleFlightsCalendarCapture:
             timeout=2,
             label="explore_overlay",
         )
+
+    def _ensure_currency_usd(self, timeout: int = 15) -> None:
+        """
+        Ensure Explore currency is set to USD.
+        """
+        wait = WebDriverWait(self.driver, max(2, timeout))
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        deadline = time.time() + max(2, timeout)
+
+        def _currency_button_text() -> str:
+            try:
+                # UI variants often render a chip like "USD", "EUR", "VND" without role='button'.
+                text = self.driver.execute_script(
+                    """
+                    const CODES = new Set(['USD','EUR','VND','GBP','JPY','INR','AUD','CAD','SGD','CNY','HKD']);
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const r = el.getBoundingClientRect();
+                      return r.width > 0 && r.height > 0;
+                    };
+                    const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                    const nodes = Array.from(document.querySelectorAll('button,[role="button"],div,span,a'));
+                    for (const el of nodes) {
+                      if (!isVisible(el)) continue;
+                      const r = el.getBoundingClientRect();
+                      if (r.top > 220 || r.left < 0) continue; // top toolbar area
+                      const t = norm(el.innerText);
+                      if (!t || t.length > 30) continue;
+                      if (CODES.has(t) || /^\\b[A-Z]{3}\\b$/.test(t)) return t;
+                      if (t.toLowerCase().includes('currency')) return t;
+                    }
+                    return '';
+                    """
+                )
+                if isinstance(text, str):
+                    text = text.strip()
+                    if text:
+                        return text
+            except Exception:
+                return ""
+            return ""
+
+        def _open_currency_selector() -> bool:
+            opened = self._click_if_present(
+                [
+                    (By.XPATH, "//*[@role='button' and contains(., 'USD')]"),
+                    (By.XPATH, "//*[@role='button' and contains(., 'EUR')]"),
+                    (By.XPATH, "//*[@role='button' and contains(., 'VND')]"),
+                    (By.XPATH, "//*[@role='button' and (contains(., 'currency') or contains(., 'Currency'))]"),
+                    (By.XPATH, "//*[contains(., 'USD') and @role='button']"),
+                    (By.XPATH, "//*[contains(., 'VND') and @role='button']"),
+                ],
+                timeout=2,
+                label="currency_button",
+            )
+            if opened:
+                return True
+            # Fallback: JS click on top toolbar currency chip for role-less variants.
+            try:
+                return bool(
+                    self.driver.execute_script(
+                        """
+                        const CODES = new Set(['USD','EUR','VND','GBP','JPY','INR','AUD','CAD','SGD','CNY','HKD']);
+                        const isVisible = (el) => {
+                          if (!el) return false;
+                          const r = el.getBoundingClientRect();
+                          return r.width > 0 && r.height > 0;
+                        };
+                        const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                        const nodes = Array.from(document.querySelectorAll('button,[role="button"],div,span,a'));
+                        for (const el of nodes) {
+                          if (!isVisible(el)) continue;
+                          const r = el.getBoundingClientRect();
+                          if (r.top > 220 || r.left < 0) continue;
+                          const t = norm(el.innerText);
+                          if (!t || t.length > 30) continue;
+                          if (!(CODES.has(t) || /^\\b[A-Z]{3}\\b$/.test(t) || t.toLowerCase().includes('currency'))) continue;
+                          try { el.scrollIntoView({block:'center', inline:'nearest'}); } catch (e) {}
+                          for (const evt of ['mouseover','mousedown','mouseup','click']) {
+                            el.dispatchEvent(new MouseEvent(evt, {bubbles:true,cancelable:true,view:window}));
+                          }
+                          return true;
+                        }
+                        return false;
+                        """
+                    )
+                )
+            except Exception:
+                return False
+
+        initial = _currency_button_text()
+        if "USD" in initial:
+            self._log("currency already USD")
+            return
+
+        self._log("currency not USD; opening currency selector")
+        opened = _open_currency_selector()
+        if not opened:
+            # Some Explore variants render the top toolbar in a way that is not directly clickable
+            # from Selenium (role-less nodes/experiments). We already open Explore with curr=USD in URL.
+            self._log("currency selector button not found; continue with URL-forced curr=USD")
+            return
+
+        selected_usd = False
+        while time.time() < deadline:
+            if self._click_if_present(
+                [
+                    (
+                        By.XPATH,
+                        "//*[@role='radio' and (.//text()[contains(., 'US Dollar')] "
+                        "or .//text()[contains(., 'USD')] or contains(., 'US Dollar') or contains(., 'USD'))]",
+                    ),
+                    (By.XPATH, "//span[contains(., 'US Dollar')]/ancestor::*[@role='radio'][1]"),
+                    (By.XPATH, "//*[contains(., 'US Dollar') and @role='radio']"),
+                    (By.XPATH, "//*[contains(., 'US Dollar') and (@role='button' or self::button)]"),
+                    (By.XPATH, "//*[contains(., 'USD') and (@role='button' or self::button)]"),
+                ],
+                timeout=1,
+                label="currency_usd_radio",
+            ):
+                selected_usd = True
+            if not selected_usd:
+                try:
+                    selected_usd = bool(
+                        self.driver.execute_script(
+                            """
+                            const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                            const isVisible = (el) => {
+                              const r = el.getBoundingClientRect();
+                              return r.width > 0 && r.height > 0;
+                            };
+                            const candidates = Array.from(document.querySelectorAll('*')).filter(isVisible);
+                            for (const el of candidates) {
+                              const t = norm(el.innerText);
+                              if (!t) continue;
+                              if (!(t.includes('us dollar') || t === 'usd' || t.endsWith(' usd'))) continue;
+                              for (const evt of ['mouseover','mousedown','mouseup','click']) {
+                                el.dispatchEvent(new MouseEvent(evt, {bubbles:true,cancelable:true,view:window}));
+                              }
+                              return true;
+                            }
+                            return false;
+                            """
+                        )
+                    )
+                except Exception:
+                    selected_usd = False
+            if selected_usd and self._click_if_present(
+                [
+                    (By.XPATH, "//button[normalize-space()='OK']"),
+                    (By.XPATH, "//*[@role='button' and normalize-space()='OK']"),
+                ],
+                timeout=1,
+                label="currency_ok",
+            ):
+                time.sleep(0.5)
+                break
+            if selected_usd:
+                try:
+                    if bool(
+                        self.driver.execute_script(
+                            """
+                            const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                            const nodes = Array.from(document.querySelectorAll('button,[role="button"],div,span'));
+                            for (const el of nodes) {
+                              const t = norm(el.innerText);
+                              if (t === 'OK') {
+                                for (const evt of ['mouseover','mousedown','mouseup','click']) {
+                                  el.dispatchEvent(new MouseEvent(evt, {bubbles:true,cancelable:true,view:window}));
+                                }
+                                return true;
+                              }
+                            }
+                            return false;
+                            """
+                        )
+                    ):
+                        time.sleep(0.5)
+                        break
+                except Exception:
+                    pass
+            time.sleep(0.4)
+
+        final = _currency_button_text()
+        if "USD" in final:
+            self._log("currency switched to USD")
+            return
+        self._dump_debug_state("currency_not_usd")
+        raise TimeoutException("Could not switch Explore currency to USD.")
 
     def _click_explore_route_field_js(self, field_type: str) -> bool:
         """
@@ -1956,8 +2206,13 @@ class GoogleFlightsCalendarCapture:
         # Ignore GetExploreDestinations until destination is set (Explore fires once after origin, again after destination).
         self._record_get_explore_destinations = False
         self._purge_tracked_get_explore_destinations()
+        if self.force_consent_test:
+            self._log("force_consent_test enabled: opening consent test URL first")
+            self.driver.get(GOOGLE_CONSENT_TEST_URL)
+            self._clear_google_consent_gate_if_present(timeout=20)
         self._log("navigate to Google Travel Explore")
-        self.driver.get("https://www.google.com/travel/explore")
+        self.driver.get(GOOGLE_EXPLORE_URL)
+        self._clear_google_consent_gate_if_present(timeout=20)
         try:
             self._wait_for_flights_form(timeout=25)
         except TimeoutException:
@@ -1967,6 +2222,7 @@ class GoogleFlightsCalendarCapture:
         self._accept_cookie_banner_if_present()
         time.sleep(0.6)
         self._dismiss_explore_overlays()
+        self._ensure_currency_usd(timeout=15)
         time.sleep(0.4)
         self._dump_debug_state("after_initial_load")
 
@@ -2158,7 +2414,12 @@ class GoogleFlightsCalendarCapture:
         """
         load_selenium_dependencies()
         self.setup_driver()
-        self.driver.get("https://www.google.com/travel/explore")
+        if self.force_consent_test:
+            self._log("force_consent_test enabled: opening consent test URL first")
+            self.driver.get(GOOGLE_CONSENT_TEST_URL)
+            self._clear_google_consent_gate_if_present(timeout=20)
+        self.driver.get(GOOGLE_EXPLORE_URL)
+        self._clear_google_consent_gate_if_present(timeout=20)
         try:
             self._wait_for_flights_form(timeout=25)
         except TimeoutException:
@@ -2167,6 +2428,7 @@ class GoogleFlightsCalendarCapture:
         time.sleep(1)
         self._accept_cookie_banner_if_present()
         self._dismiss_explore_overlays()
+        self._ensure_currency_usd(timeout=15)
         time.sleep(1)
         self.install_dom_mutation_logger()
         self._dump_debug_state("manual_ready")
@@ -2225,6 +2487,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--headless", action="store_true", help="Run browser in headless mode")
     parser.add_argument("--debug", action="store_true", help="Verbose debug logs + save screenshot/html artifacts")
     parser.add_argument("--manual", action="store_true", help="Open browser for manual actions + log DOM mutations")
+    parser.add_argument(
+        "--force-consent-test",
+        action="store_true",
+        help=(
+            "Navigate via consent.google.com before Explore to exercise consent handling locally. "
+            "Useful for validating consent flow changes."
+        ),
+    )
     parser.add_argument(
         "--save-body",
         metavar="PATH",
@@ -3448,6 +3718,7 @@ def main() -> int:
                             timeout_seconds=max(5, int(CAPTURE_TIMEOUT_SECONDS)),
                             headless=bool(args.headless),
                             debug=bool(args.debug),
+                            force_consent_test=bool(args.force_consent_test),
                         )
                         capturer.bootstrap_explore_session()
                     for i, step in enumerate(pending):
@@ -3667,6 +3938,7 @@ def main() -> int:
             timeout_seconds=max(5, int(CAPTURE_TIMEOUT_SECONDS)),
             headless=bool(args.headless),
             debug=bool(args.debug),
+            force_consent_test=bool(args.force_consent_test),
         )
         session_exit_code = None
         explore_output_upsert_ok = True
