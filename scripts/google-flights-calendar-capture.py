@@ -526,7 +526,9 @@ class GoogleFlightsCalendarCapture:
         # Persist a stable Chrome profile so Google consent is accepted once and doesn't block
         # every retry/browser session. Your Docker image already mounts/creates CHROME_DATA_DIR.
         profile_root = os.getenv("CHROME_DATA_DIR") or os.getenv("CHROME_PROFILE_DIR") or "/app/chrome-data"
-        user_data_dir = os.path.join(profile_root, "google-flights-calendar-capture")
+        # Run roundtrip and oneway concurrently without profile contention.
+        mode_slug = "oneway" if self.select_one_way else "roundtrip"
+        user_data_dir = os.path.join(profile_root, f"google-flights-calendar-capture-{mode_slug}")
         try:
             os.makedirs(user_data_dir, exist_ok=True)
         except Exception:
@@ -559,6 +561,10 @@ class GoogleFlightsCalendarCapture:
                 fallback_options.add_argument("--lang=en-US")
                 fallback_options.add_argument("--disable-blink-features=AutomationControlled")
                 fallback_options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
+                fallback_options.add_argument(f"--user-data-dir={user_data_dir}")
+                fallback_options.add_argument("--profile-directory=Default")
+                fallback_options.add_argument("--no-first-run")
+                fallback_options.add_argument("--no-default-browser-check")
                 if self.headless:
                     fallback_options.add_argument("--headless=new")
 
@@ -4151,7 +4157,7 @@ def main() -> int:
             failed_keys_this_try: set[tuple[str, str]] = set()
             done_keys_lazy = (
                 set()
-                if args.force_refresh and capture_try == 1
+                if args.force_refresh
                 else fetch_successful_pairing_keys(run_id, debug=bool(args.debug))
             )
             planner = MultiOriginExploreHandoffPlanner(origins, fetch_home_cached)
