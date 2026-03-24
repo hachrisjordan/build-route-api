@@ -61,7 +61,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, TypeVar
 from datetime import datetime, timezone
 
 # Hardcoded timeout/retry configuration (per user request).
@@ -3242,6 +3242,15 @@ def parse_origins_csv(raw: str) -> List[str]:
 
 
 _EXPLORE_CSV_ROW_RE = re.compile(r"^([A-Z]{3}),([A-Z]{3}),(\d+),")
+_EXPLORE_DATE_PAIR_RE = re.compile(
+    r'\\\"(\d{4}-\d{2}-\d{2})\\\",\\\"(\d{4}-\d{2}-\d{2})\\\",null,(?:true|false),\\\"([A-Z]{3})\\\"'
+)
+_EXPLORE_ONEWAY_DATE_RE = re.compile(
+    r'\\\"(\d{4}-\d{2}-\d{2})\\\",null,null,(?:true|false),\\\"([A-Z]{3})\\\"'
+)
+_EXPLORE_FARE_AIRLINE_RE = re.compile(
+    r'\[\\\"([A-Z0-9]{2,3}|multi)\\\",\\\"([^\\\"]+)\\\",.*?null,\\\"([A-Z]{3})\\\",\\\"/m/'
+)
 
 # Earth radius in miles (matches src/lib/route-helpers.ts getHaversineDistance).
 _HAVERSINE_EARTH_RADIUS_MILES = 3958.8
@@ -3324,6 +3333,261 @@ def fetch_airports_latlon_by_iata(
     return out
 
 
+def _normalize_google_airline_name(name: str) -> str:
+    s = (name or "").strip().lower()
+    if not s:
+        return ""
+    s = s.replace("&", " and ")
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _split_multi_airline_names(raw: str) -> List[str]:
+    s = (raw or "").strip()
+    if not s:
+        return []
+    s = s.replace(", and ", ", ")
+    s = s.replace(" and ", ", ")
+    return [part.strip() for part in s.split(",") if part.strip()]
+
+
+def fetch_airline_code_maps_for_explore(
+    *,
+    execute_max_attempts: int = 1,
+    execute_retry_delay: float = 2.0,
+    debug: bool = False,
+) -> tuple[Set[str], Dict[str, str]]:
+    """
+    Return:
+      - known IATA-like airline codes from `airlines.code`
+      - normalized `airlines.google` name -> airline code
+    """
+    try:
+        from supabase import create_client
+    except ImportError:
+        return set(), {}
+    try:
+        url, key = get_supabase_credentials()
+    except ValueError:
+        return set(), {}
+
+    client = create_client(url, key)
+    attempts = max(1, int(execute_max_attempts))
+    delay = max(0.0, float(execute_retry_delay))
+    response = None
+    for att in range(attempts):
+        try:
+            response = client.table("airlines").select("code,google").execute()
+            break
+        except Exception as exc:
+            if debug:
+                print(
+                    f"[debug] airlines map fetch retry {att + 1}/{attempts}: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+            if att + 1 >= attempts:
+                response = None
+                break
+            time.sleep(delay)
+    if response is None:
+        return set(), {}
+
+    known_codes: Set[str] = set()
+    google_name_to_code: Dict[str, str] = {}
+    for row in getattr(response, "data", None) or []:
+        code = (row.get("code") or "").strip().upper()
+        if 2 <= len(code) <= 3 and re.fullmatch(r"[A-Z0-9]{2,3}", code):
+            known_codes.add(code)
+        google_name = _normalize_google_airline_name((row.get("google") or ""))
+        if google_name and code:
+            google_name_to_code[google_name] = code
+    return known_codes, google_name_to_code
+
+
+def extract_non_multi_airline_google_pairs(body_text: Optional[str]) -> Dict[str, str]:
+    """
+    Extract non-multi airline pairs from fare tuples:
+      ["EY","Etihad",...,null,"YYZ","/m/..."]
+    Returns { "EY": "Etihad", ... }.
+    """
+    out: Dict[str, str] = {}
+    if not body_text:
+        return out
+    for m in _EXPLORE_FARE_AIRLINE_RE.finditer(body_text):
+        carrier_token = (m.group(1) or "").strip().upper()
+        carrier_name = (m.group(2) or "").strip()
+        if carrier_token.lower() == "multi":
+            continue
+        if not re.fullmatch(r"[A-Z0-9]{2,3}", carrier_token):
+            continue
+        if not carrier_name:
+            continue
+        out.setdefault(carrier_token, carrier_name)
+    return out
+
+
+def sync_airlines_google_from_explore_body(
+    body_text: Optional[str],
+    *,
+    execute_max_attempts: int = 1,
+    execute_retry_delay: float = 2.0,
+    debug: bool = False,
+) -> None:
+    """
+    Fill/update `airlines.google` from non-multi tuples in Explore response body.
+    Existing rows are updated only when:
+      - `google` is null/empty, and
+      - normalized `name` matches normalized raw carrier display name.
+    Inserts missing airline rows when needed (code, name, label, google).
+    """
+    pairs = extract_non_multi_airline_google_pairs(body_text)
+    if not pairs:
+        return
+    try:
+        from supabase import create_client
+    except ImportError:
+        return
+    try:
+        url, key = get_supabase_write_credentials()
+    except ValueError:
+        return
+
+    client = create_client(url, key)
+    attempts = max(1, int(execute_max_attempts))
+    delay = max(0.0, float(execute_retry_delay))
+    codes = sorted(pairs.keys())
+
+    # Discover existing rows first.
+    existing_rows_by_code: Dict[str, Dict[str, str]] = {}
+    try:
+        resp = client.table("airlines").select("code,name,google").in_("code", codes).execute()
+        for row in getattr(resp, "data", None) or []:
+            code = (row.get("code") or "").strip().upper()
+            if code:
+                existing_rows_by_code[code] = {
+                    "name": (row.get("name") or "").strip(),
+                    "google": (row.get("google") or "").strip(),
+                }
+    except Exception as exc:
+        if debug:
+            print(f"[debug] airlines existing-code lookup failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return
+
+    for code in sorted(existing_rows_by_code.keys()):
+        row = existing_rows_by_code.get(code) or {}
+        existing_google = (row.get("google") or "").strip()
+        existing_name = (row.get("name") or "").strip()
+        raw_google = (pairs.get(code) or "").strip()
+        # Strict user rule: only fill google from name when name matches raw response.
+        if existing_google:
+            continue
+        if not existing_name or not raw_google:
+            continue
+        if _normalize_google_airline_name(existing_name) != _normalize_google_airline_name(raw_google):
+            continue
+        payload = {"google": raw_google}
+        for att in range(attempts):
+            try:
+                client.table("airlines").update(payload).eq("code", code).execute()
+                break
+            except Exception as exc:
+                if debug:
+                    print(
+                        f"[debug] airlines google update retry {att + 1}/{attempts} code={code}: "
+                        f"{type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                    )
+                if att + 1 >= attempts:
+                    break
+                time.sleep(delay)
+
+    missing_rows = [
+        {
+            "code": code,
+            "name": pairs[code],
+            "label": code,
+            "google": pairs[code],
+        }
+        for code in codes
+        if code not in existing_rows_by_code
+    ]
+    if not missing_rows:
+        return
+    for att in range(attempts):
+        try:
+            client.table("airlines").insert(missing_rows).execute()
+            break
+        except Exception as exc:
+            if debug:
+                print(
+                    f"[debug] airlines insert-missing retry {att + 1}/{attempts}: "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+            if att + 1 >= attempts:
+                break
+            time.sleep(delay)
+
+
+def extract_explore_destination_metadata(
+    body_text: Optional[str],
+    *,
+    trip_type_token: str,
+    known_airline_codes: Set[str],
+    google_name_to_code: Dict[str, str],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Extract destination metadata keyed by destination IATA:
+      {DEST: {"departDate": "YYYY-MM-DD", "arriveDate": "YYYY-MM-DD"|None, "airlines": ["NH","AI"]}}
+    """
+    if not body_text:
+        return {}
+
+    by_dest: Dict[str, Dict[str, Any]] = {}
+
+    for m in _EXPLORE_DATE_PAIR_RE.finditer(body_text):
+        depart_s, arrive_s, dest_iata = m.group(1), m.group(2), m.group(3)
+        entry = by_dest.setdefault(dest_iata, {})
+        entry["departDate"] = depart_s
+        if trip_type_token == "oneway":
+            entry["arriveDate"] = None
+        else:
+            entry["arriveDate"] = arrive_s
+
+    for m in _EXPLORE_ONEWAY_DATE_RE.finditer(body_text):
+        depart_s, dest_iata = m.group(1), m.group(2)
+        entry = by_dest.setdefault(dest_iata, {})
+        entry.setdefault("departDate", depart_s)
+        entry["arriveDate"] = None
+
+    airlines_by_dest: Dict[str, Set[str]] = {}
+    for m in _EXPLORE_FARE_AIRLINE_RE.finditer(body_text):
+        carrier_token = (m.group(1) or "").strip()
+        carrier_name = (m.group(2) or "").strip()
+        dest_iata = (m.group(3) or "").strip().upper()
+        if not dest_iata:
+            continue
+        dest_codes = airlines_by_dest.setdefault(dest_iata, set())
+
+        if carrier_token.lower() != "multi":
+            code = carrier_token.upper()
+            if code in known_airline_codes:
+                dest_codes.add(code)
+            continue
+
+        for raw_name in _split_multi_airline_names(carrier_name):
+            norm_name = _normalize_google_airline_name(raw_name)
+            mapped_code = google_name_to_code.get(norm_name)
+            if mapped_code:
+                dest_codes.add(mapped_code)
+
+    for dest_iata, codes in airlines_by_dest.items():
+        entry = by_dest.setdefault(dest_iata, {})
+        entry["airlines"] = sorted(codes)
+
+    return by_dest
+
+
 def _format_cent_per_mile(price: int, miles: float) -> str:
     # price is USD; multiply USD-per-mile by 100 to store cents-per-mile.
     value = (price / miles) * 100.0
@@ -3381,7 +3645,11 @@ def attach_cent_per_mile_column(
     return attached
 
 
-def parse_explore_csv_row_for_supabase(line: str) -> Optional[Dict[str, Any]]:
+def parse_explore_csv_row_for_supabase(
+    line: str,
+    *,
+    destination_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Convert Explore CSV-ish lines into a Supabase row dict.
 
@@ -3413,6 +3681,25 @@ def parse_explore_csv_row_for_supabase(line: str) -> Optional[Dict[str, Any]]:
         "price": price,
     }
 
+    meta = (destination_metadata or {}).get(destination_iata) or {}
+    depart_date = meta.get("departDate")
+    if isinstance(depart_date, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", depart_date):
+        record["departDate"] = depart_date
+    arrive_date = meta.get("arriveDate")
+    if isinstance(arrive_date, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", arrive_date):
+        record["arriveDate"] = arrive_date
+    elif roundtrip.strip().lower() == "oneway":
+        record["arriveDate"] = None
+    airlines = meta.get("airlines")
+    if isinstance(airlines, list):
+        cleaned = [
+            str(code).strip().upper()
+            for code in airlines
+            if isinstance(code, str) and re.fullmatch(r"[A-Z0-9]{2,3}", code.strip().upper())
+        ]
+        if cleaned:
+            record["airlines"] = sorted(set(cleaned))
+
     if len(parts) == 6:
         cpm_s = parts[5].strip()
         try:
@@ -3428,6 +3715,8 @@ def parse_explore_csv_row_for_supabase(line: str) -> Optional[Dict[str, Any]]:
 def upsert_explore_csv_rows_to_supabase(
     csv_lines: List[str],
     *,
+    body_text: Optional[str],
+    trip_type_token: str,
     debug: bool,
 ) -> None:
     """
@@ -3437,6 +3726,14 @@ def upsert_explore_csv_rows_to_supabase(
     """
     if not csv_lines:
         return
+
+    # Keep airlines.google synchronized from non-multi tuples (e.g. EY->Etihad, JL->JAL).
+    sync_airlines_google_from_explore_body(
+        body_text,
+        execute_max_attempts=3,
+        execute_retry_delay=1.0,
+        debug=debug,
+    )
 
     try:
         from supabase import create_client
@@ -3452,9 +3749,21 @@ def upsert_explore_csv_rows_to_supabase(
             print(f"Skipping Supabase upsert: {error}", file=sys.stderr)
         return
 
+    known_airline_codes, google_name_to_code = fetch_airline_code_maps_for_explore(
+        execute_max_attempts=3,
+        execute_retry_delay=1.0,
+        debug=debug,
+    )
+    destination_metadata = extract_explore_destination_metadata(
+        body_text,
+        trip_type_token=trip_type_token,
+        known_airline_codes=known_airline_codes,
+        google_name_to_code=google_name_to_code,
+    )
+
     records: List[Dict[str, Any]] = []
     for line in csv_lines:
-        record = parse_explore_csv_row_for_supabase(line)
+        record = parse_explore_csv_row_for_supabase(line, destination_metadata=destination_metadata)
         if record:
             records.append(record)
     if not records:
@@ -3536,7 +3845,12 @@ def upsert_explore_output_after_step(
         pass
 
     try:
-        upsert_explore_csv_rows_to_supabase(merged, debug=debug)
+        upsert_explore_csv_rows_to_supabase(
+            merged,
+            body_text=raw_body,
+            trip_type_token=trip_type_token,
+            debug=debug,
+        )
     except Exception as error:
         print(
             f"Supabase Explore row upsert failed ({step.origin_iata}->{step.destination_continent}): {error}",
