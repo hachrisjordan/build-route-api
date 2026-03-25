@@ -63,3 +63,15 @@ docker-run-app.sh
 *.sh
 *.txt
 /.artifacts
+/None
+/$UDIR
+/.chrome-data
+/.chrome-test-wdm
+/.udtmp
+/supabase
+/test-outputs
+/scripts/tests
+/scripts/__pycache__
+*.pyc
+/__tests__
+scripts/google-alerts-test-upsert.ts

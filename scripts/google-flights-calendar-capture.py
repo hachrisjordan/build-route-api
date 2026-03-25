@@ -63,6 +63,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, TypeVar
 from datetime import datetime, timezone
+import threading
 
 # Hardcoded timeout/retry configuration (per user request).
 CAPTURE_TIMEOUT_SECONDS = 60
@@ -524,11 +525,21 @@ class GoogleFlightsCalendarCapture:
         options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
 
         # Persist a stable Chrome profile so Google consent is accepted once and doesn't block
-        # every retry/browser session. Your Docker image already mounts/creates CHROME_DATA_DIR.
-        profile_root = os.getenv("CHROME_DATA_DIR") or os.getenv("CHROME_PROFILE_DIR") or "/app/chrome-data"
+        # every retry/browser session.
+        #
+        # For local-only runs (no mounted CHROME_DATA_DIR/CHROME_PROFILE_DIR), match finnair-auth.py
+        # by using `/tmp/chrome-data` so we don't rely on Docker-only filesystem paths.
+        profile_root_env = os.getenv("CHROME_DATA_DIR") or os.getenv("CHROME_PROFILE_DIR")
+        is_local_no_mounted_profile = not bool(profile_root_env)
+        profile_root = profile_root_env or "/tmp/chrome-data"
         # Run roundtrip and oneway concurrently without profile contention.
         mode_slug = "oneway" if self.select_one_way else "roundtrip"
-        user_data_dir = os.path.join(profile_root, f"google-flights-calendar-capture-{mode_slug}")
+        if is_local_no_mounted_profile:
+            # Local: single profile is fine (you asked for local-only behavior).
+            user_data_dir = profile_root
+        else:
+            # Docker/concurrent safety: isolate per trip mode to avoid Chrome profile contention.
+            user_data_dir = os.path.join(profile_root, f"google-flights-calendar-capture-{mode_slug}")
         try:
             os.makedirs(user_data_dir, exist_ok=True)
         except Exception:
@@ -3494,15 +3505,133 @@ def _send_google_explore_alert_email(
         return False
 
 
+_WAY_TOO_CHEAP_RECOMPUTE_LOCK = threading.Lock()
+_WAY_TOO_CHEAP_RECOMPUTE_THREAD: Optional[threading.Thread] = None
+_WAY_TOO_CHEAP_RECOMPUTE_PENDING = False
+_WAY_TOO_CHEAP_RECOMPUTE_EXECUTE_MAX_ATTEMPTS = 3
+_WAY_TOO_CHEAP_RECOMPUTE_RETRY_DELAY = 1.0
+
+
+def recompute_way_too_cheap_for_all_buckets(
+    *,
+    execute_max_attempts: int = 3,
+    execute_retry_delay: float = 1.0,
+    debug: bool = False,
+) -> None:
+    """Heavier recompute across all (origin_region, destination_region) pairs."""
+    try:
+        from supabase import create_client
+    except ImportError:
+        return
+    try:
+        url, key = get_supabase_write_credentials()
+    except ValueError:
+        return
+    client = create_client(url, key)
+    try:
+        resp = client.table("airports").select("region").execute()
+        regions = sorted(
+            {((row.get("region") or "").strip()) for row in (getattr(resp, "data", None) or [])}
+        )
+    except Exception:
+        return
+    regions = [r for r in regions if r]
+    if not regions:
+        return
+
+    buckets: set[tuple[str, str]] = set()
+    for o in regions:
+        for d in regions:
+            if o != d:
+                buckets.add((o, d))
+    if not buckets:
+        return
+
+    recompute_way_too_cheap_for_buckets(
+        buckets,
+        execute_max_attempts=execute_max_attempts,
+        execute_retry_delay=execute_retry_delay,
+        debug=debug,
+    )
+
+
+def schedule_way_too_cheap_recompute_full_table(
+    *,
+    execute_max_attempts: int = 3,
+    execute_retry_delay: float = 1.0,
+    debug: bool = False,
+) -> None:
+    """
+    Schedule a background full-table recompute of `way_too_cheap`.
+
+    If a worker is already running, mark it as pending so one extra run happens after it finishes.
+    """
+    global _WAY_TOO_CHEAP_RECOMPUTE_THREAD, _WAY_TOO_CHEAP_RECOMPUTE_PENDING
+    global _WAY_TOO_CHEAP_RECOMPUTE_EXECUTE_MAX_ATTEMPTS, _WAY_TOO_CHEAP_RECOMPUTE_RETRY_DELAY
+
+    with _WAY_TOO_CHEAP_RECOMPUTE_LOCK:
+        _WAY_TOO_CHEAP_RECOMPUTE_EXECUTE_MAX_ATTEMPTS = execute_max_attempts
+        _WAY_TOO_CHEAP_RECOMPUTE_RETRY_DELAY = execute_retry_delay
+
+        if _WAY_TOO_CHEAP_RECOMPUTE_THREAD and _WAY_TOO_CHEAP_RECOMPUTE_THREAD.is_alive():
+            _WAY_TOO_CHEAP_RECOMPUTE_PENDING = True
+            if debug:
+                print("[debug] way_too_cheap recompute already running; pending=TRUE", file=sys.stderr)
+            return
+
+        _WAY_TOO_CHEAP_RECOMPUTE_PENDING = False
+
+        def _worker() -> None:
+            global _WAY_TOO_CHEAP_RECOMPUTE_THREAD
+            try:
+                recompute_way_too_cheap_for_all_buckets(
+                    execute_max_attempts=execute_max_attempts,
+                    execute_retry_delay=execute_retry_delay,
+                    debug=debug,
+                )
+            finally:
+                with _WAY_TOO_CHEAP_RECOMPUTE_LOCK:
+                    _WAY_TOO_CHEAP_RECOMPUTE_THREAD = None
+
+        _WAY_TOO_CHEAP_RECOMPUTE_THREAD = threading.Thread(
+            target=_worker, name="way_too_cheap_full_recompute"
+        )
+        _WAY_TOO_CHEAP_RECOMPUTE_THREAD.start()
+
+
+def wait_for_way_too_cheap_recompute_full_table() -> None:
+    """Block until scheduled full-table recompute workers finish."""
+    global _WAY_TOO_CHEAP_RECOMPUTE_PENDING
+    while True:
+        with _WAY_TOO_CHEAP_RECOMPUTE_LOCK:
+            thread = _WAY_TOO_CHEAP_RECOMPUTE_THREAD
+            pending = _WAY_TOO_CHEAP_RECOMPUTE_PENDING
+
+        if thread and thread.is_alive():
+            thread.join()
+            continue
+
+        if pending:
+            with _WAY_TOO_CHEAP_RECOMPUTE_LOCK:
+                _WAY_TOO_CHEAP_RECOMPUTE_PENDING = False
+            schedule_way_too_cheap_recompute_full_table(
+                execute_max_attempts=_WAY_TOO_CHEAP_RECOMPUTE_EXECUTE_MAX_ATTEMPTS,
+                execute_retry_delay=_WAY_TOO_CHEAP_RECOMPUTE_RETRY_DELAY,
+            )
+            continue
+
+        return
+
+
 def recompute_way_too_cheap_for_buckets(
-    buckets: set[tuple[str, str, str]],
+    buckets: set[tuple[str, str]],
     *,
     execute_max_attempts: int = 1,
     execute_retry_delay: float = 2.0,
     debug: bool = False,
 ) -> None:
     """
-    Recompute `way_too_cheap` for the provided (origin_region, destination_region, roundtrip) buckets.
+    Recompute `way_too_cheap` for the provided (origin_region, destination_region) buckets.
 
     Rule per bucket:
     - sort by cpm ascending
@@ -3577,8 +3706,8 @@ def recompute_way_too_cheap_for_buckets(
             break
         offset += page_size
 
-    bucket_rows_numeric: Dict[Tuple[str, str, str], List[Tuple[str, float]]] = {}
-    bucket_rows_all: Dict[Tuple[str, str, str], List[str]] = {}
+    bucket_rows_numeric: Dict[Tuple[str, str], List[Tuple[str, float]]] = {}
+    bucket_rows_all: Dict[Tuple[str, str], List[str]] = {}
     row_snapshot_by_id: Dict[str, Dict[str, Any]] = {}
     for row in all_rows:
         rid = str(row.get("id") or "").strip()
@@ -3595,7 +3724,7 @@ def recompute_way_too_cheap_for_buckets(
         # Exclude rows whose destination region is Unknown from this formula.
         if drr.strip().lower() == "unknown":
             continue
-        bucket = (orr, drr, rt)
+        bucket = (orr, drr)
         if bucket not in buckets:
             continue
         bucket_rows_all.setdefault(bucket, []).append(rid)
@@ -3612,6 +3741,12 @@ def recompute_way_too_cheap_for_buckets(
     new_flag_by_id: Dict[str, bool] = {}
     for bucket, row_ids in bucket_rows_all.items():
         items = bucket_rows_numeric.get(bucket, [])
+        # Safety: origin and destination can't be the same region.
+        if bucket[0] == bucket[1]:
+            for rid in row_ids:
+                updates.append({"id": rid, "way_too_cheap": False})
+                new_flag_by_id[rid] = False
+            continue
         if len(items) < 2:
             for rid in row_ids:
                 updates.append({"id": rid, "way_too_cheap": False})
@@ -4357,18 +4492,18 @@ def upsert_explore_csv_rows_to_supabase(
                 region = (row.get("region") or "").strip()
                 if iata and region:
                     region_by_iata[iata] = region
-            touched_buckets: set[tuple[str, str, str]] = set()
+            touched_buckets: set[tuple[str, str]] = set()
             for r in records:
                 o = (r.get("origin_iata") or "").strip().upper()
                 d = (r.get("destination_iata") or "").strip().upper()
-                rt = (r.get("roundtrip") or "").strip().lower()
                 orr = region_by_iata.get(o)
                 drr = region_by_iata.get(d)
-                if orr and drr and rt:
-                    touched_buckets.add((orr, drr, rt))
+                if orr and drr:
+                    touched_buckets.add((orr, drr))
             if touched_buckets:
-                recompute_way_too_cheap_for_buckets(
-                    touched_buckets,
+                # Background full recompute so `way_too_cheap` stays consistent even across
+                # buckets that are not part of the current upsert batch.
+                schedule_way_too_cheap_recompute_full_table(
                     execute_max_attempts=3,
                     execute_retry_delay=1.0,
                     debug=debug,
@@ -5337,4 +5472,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit_code = main()
+    wait_for_way_too_cheap_recompute_full_table()
+    sys.exit(exit_code)
