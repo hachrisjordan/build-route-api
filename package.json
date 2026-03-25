@@ -6,6 +6,7 @@
     "flight-delay-stats": "tsx scripts/flight-delay-stats.ts",
     "fr24-route-flight-numbers": "tsx scripts/fr24-route-flight-numbers.ts",
     "scrape:vn-avail": "tsx scripts/vn-avail-scraper.ts",
+    "test:google-alerts-upsert": "tsx scripts/google-alerts-test-upsert.ts",
     "dev": "next dev",
         "build": "next build",
         "build:check": "tsc --noEmit && next build",
