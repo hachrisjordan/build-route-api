@@ -3505,6 +3505,153 @@ def _send_google_explore_alert_email(
         return False
 
 
+def _send_google_explore_alert_summary_email(
+    *,
+    to_email: str,
+    routes: List[Dict[str, Any]],
+    debug: bool = False,
+) -> bool:
+    """Send one summary email containing multiple newly-armed routes."""
+    if not routes:
+        return False
+    resend_key = (os.getenv("RESEND_API_KEY") or "").strip()
+    if not resend_key:
+        if debug:
+            print("[debug] google alert summary email skipped: RESEND_API_KEY missing", file=sys.stderr)
+        return False
+    to_addr = (to_email or "").strip()
+    if not to_addr:
+        return False
+    from_addr = (os.getenv("RESEND_FROM_EMAIL") or "onboarding@resend.dev").strip()
+
+    first = routes[0]
+    first_from = (
+        f"{first.get('origin_city')} ({first.get('origin_iata')})"
+        if (first.get("origin_city") or "").strip()
+        else str(first.get("origin_iata") or "")
+    )
+    first_to = (
+        f"{first.get('destination_city')} ({first.get('destination_iata')})"
+        if (first.get("destination_city") or "").strip()
+        else str(first.get("destination_iata") or "")
+    )
+    first_price = first.get("price")
+    first_price_text = f"{float(first_price):.0f} USD" if isinstance(first_price, (int, float)) else "new price"
+    if len(routes) == 1:
+        subject = f"Mistake Fare Alert: {first_from} -> {first_to} from {first_price_text}"
+    else:
+        subject = f"Mistake Fare Alert: {len(routes)} routes turned way too cheap"
+
+    def _route_line(route: Dict[str, Any]) -> str:
+        origin_iata = str(route.get("origin_iata") or "").strip().upper()
+        destination_iata = str(route.get("destination_iata") or "").strip().upper()
+        origin_city = str(route.get("origin_city") or "").strip()
+        destination_city = str(route.get("destination_city") or "").strip()
+        from_label = f"{origin_city} ({origin_iata})" if origin_city else origin_iata
+        to_label = f"{destination_city} ({destination_iata})" if destination_city else destination_iata
+        trip = "Round-trip" if str(route.get("roundtrip") or "").strip().lower() == "roundtrip" else "One-way"
+        airlines = route.get("airline_names") or []
+        airlines_text = ", ".join([str(x).strip() for x in airlines if str(x).strip()]) or "Not available"
+        price = route.get("price")
+        price_text = f"{float(price):.0f} USD" if isinstance(price, (int, float)) else "n/a"
+        return f"- {from_label} -> {to_label} | {trip} | {airlines_text} | {price_text}"
+
+    route_lines = [_route_line(r) for r in routes]
+    text_body = (
+        "We found an unusually cheap price that might be a mistake fare.\n\n"
+        "Newly armed routes in this run:\n"
+        + "\n".join(route_lines)
+        + "\n\nYou are receiving this because your google_alerts filters matched these routes."
+    )
+
+    rows_html = ""
+    for route in routes:
+        origin_iata = str(route.get("origin_iata") or "").strip().upper()
+        destination_iata = str(route.get("destination_iata") or "").strip().upper()
+        origin_city = str(route.get("origin_city") or "").strip()
+        destination_city = str(route.get("destination_city") or "").strip()
+        from_label = f"{origin_city} ({origin_iata})" if origin_city else origin_iata
+        to_label = f"{destination_city} ({destination_iata})" if destination_city else destination_iata
+        trip = "Round-trip" if str(route.get("roundtrip") or "").strip().lower() == "roundtrip" else "One-way"
+        airlines = route.get("airline_names") or []
+        airlines_text = ", ".join([str(x).strip() for x in airlines if str(x).strip()]) or "Not available"
+        price = route.get("price")
+        price_text = f"{float(price):.0f} USD" if isinstance(price, (int, float)) else "n/a"
+        rows_html += (
+            "<tr>"
+            f"<td style='padding:8px 6px;color:#111827;font-size:13px;'>{from_label}</td>"
+            f"<td style='padding:8px 6px;color:#111827;font-size:13px;'>{to_label}</td>"
+            f"<td style='padding:8px 6px;color:#111827;font-size:13px;'>{trip}</td>"
+            f"<td style='padding:8px 6px;color:#111827;font-size:13px;'>{airlines_text}</td>"
+            f"<td style='padding:8px 6px;color:#059669;font-size:13px;font-weight:700;'>{price_text}</td>"
+            "</tr>"
+        )
+
+    html_body = (
+        "<!doctype html>"
+        "<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'></head>"
+        "<body style='margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;'>"
+        "<div style='max-width:760px;margin:0 auto;padding:20px;'>"
+        "<div style='background:#ffffff;border-radius:12px;padding:24px;border:1px solid #e5e7eb;'>"
+        "<div style='display:inline-block;background:#fee2e2;color:#991b1b;padding:6px 12px;border-radius:999px;font-weight:700;font-size:12px;'>"
+        "Mistake Fare Alert</div>"
+        "<h2 style='margin:14px 0 6px 0;color:#111827;'>We found an unusually cheap price that might be a mistake fare.</h2>"
+        "<p style='margin:0 0 12px 0;color:#6b7280;'>Newly armed routes in this run:</p>"
+        "<table style='width:100%;border-collapse:collapse;border:1px solid #e5e7eb;'>"
+        "<thead><tr>"
+        "<th style='text-align:left;padding:8px 6px;color:#6b7280;font-size:12px;border-bottom:1px solid #e5e7eb;'>From</th>"
+        "<th style='text-align:left;padding:8px 6px;color:#6b7280;font-size:12px;border-bottom:1px solid #e5e7eb;'>To</th>"
+        "<th style='text-align:left;padding:8px 6px;color:#6b7280;font-size:12px;border-bottom:1px solid #e5e7eb;'>Trip type</th>"
+        "<th style='text-align:left;padding:8px 6px;color:#6b7280;font-size:12px;border-bottom:1px solid #e5e7eb;'>Operated by</th>"
+        "<th style='text-align:left;padding:8px 6px;color:#6b7280;font-size:12px;border-bottom:1px solid #e5e7eb;'>Price</th>"
+        "</tr></thead>"
+        f"<tbody>{rows_html}</tbody>"
+        "</table>"
+        "<p style='margin-top:18px;color:#6b7280;font-size:13px;'>You are receiving this because your google_alerts filters matched these routes.</p>"
+        "</div></div></body></html>"
+    )
+    try:
+        import requests
+    except Exception as exc:
+        if debug:
+            print(
+                f"[debug] google alert summary email skipped: requests unavailable ({type(exc).__name__}: {exc})",
+                file=sys.stderr,
+            )
+        return False
+    try:
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {resend_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": from_addr,
+                "to": [to_addr],
+                "subject": subject,
+                "html": html_body,
+                "text": text_body,
+            },
+            timeout=20,
+        )
+        if 200 <= resp.status_code < 300:
+            return True
+        if debug:
+            print(
+                f"[debug] google alert summary email failed: status={resp.status_code} body={resp.text}",
+                file=sys.stderr,
+            )
+        return False
+    except Exception as exc:
+        if debug:
+            print(
+                f"[debug] google alert summary email exception: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+        return False
+
+
 _WAY_TOO_CHEAP_RECOMPUTE_LOCK = threading.Lock()
 _WAY_TOO_CHEAP_RECOMPUTE_THREAD: Optional[threading.Thread] = None
 _WAY_TOO_CHEAP_RECOMPUTE_PENDING = False
@@ -4460,57 +4607,387 @@ def upsert_explore_csv_rows_to_supabase(
     chunk_size = max(1, int(SUPABASE_EXPLORE_UPSERT_CHUNK_SIZE))
     on_conflict = "origin_iata,destination_iata,roundtrip,j"
 
-    for i in range(0, len(records), chunk_size):
-        chunk = records[i : i + chunk_size]
-        res = client.table(SUPABASE_EXPLORE_OUTPUT_TABLE).upsert(chunk, on_conflict=on_conflict).execute()
-        status_code = 0
-        if isinstance(res, dict):
-            status_code = int(res.get("status_code", 200) or 200)
-        if status_code >= 400:
-            raise RuntimeError(f"Supabase upsert failed (status_code={status_code}): {res}")
+    def _to_float(v: Any) -> Optional[float]:
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
 
-    # Recompute `way_too_cheap` only for touched buckets.
+    # ---- Pairing-scoped pre-upsert way_too_cheap compute ----
     try:
-        codes: set[str] = set()
+        # Load airports index once for region/country/city matching.
+        airport_rows = getattr(
+            client.table("airports").select("iata,region,country_code,city_name").execute(),
+            "data",
+            None,
+        ) or []
+        region_by_iata: Dict[str, str] = {}
+        country_by_iata: Dict[str, str] = {}
+        city_by_iata: Dict[str, str] = {}
+        for row in airport_rows:
+            iata = (row.get("iata") or "").strip().upper()
+            if not iata:
+                continue
+            region_by_iata[iata] = (row.get("region") or "").strip()
+            country_by_iata[iata] = (row.get("country_code") or "").strip().upper()
+            city_by_iata[iata] = (row.get("city_name") or "").strip()
+
+        def _row_key(row: Dict[str, Any]) -> tuple[str, str, str, str]:
+            return (
+                (row.get("origin_iata") or "").strip().upper(),
+                (row.get("destination_iata") or "").strip().upper(),
+                (row.get("roundtrip") or "").strip().lower(),
+                (row.get("j") or "j").strip(),
+            )
+
+        # Determine current pairing buckets from incoming records.
+        pairing_buckets: set[tuple[str, str]] = set()
+        record_origins: set[str] = set()
+        record_dests: set[str] = set()
+        record_roundtrips: set[str] = set()
+        record_j_vals: set[str] = set()
         for r in records:
-            o = (r.get("origin_iata") or "").strip().upper()
-            d = (r.get("destination_iata") or "").strip().upper()
+            key = _row_key(r)
+            o, d, rt, jv = key
             if o:
-                codes.add(o)
+                record_origins.add(o)
             if d:
-                codes.add(d)
-        if codes:
-            airport_resp = (
-                client.table("airports")
-                .select("iata,region")
-                .in_("iata", sorted(codes))
+                record_dests.add(d)
+            if rt:
+                record_roundtrips.add(rt)
+            if jv:
+                record_j_vals.add(jv)
+            orr = region_by_iata.get(o, "").strip()
+            drr = region_by_iata.get(d, "").strip()
+            if orr and drr:
+                pairing_buckets.add((orr, drr))
+
+        # Existing state for touched row keys (transition baseline old flag).
+        old_flag_by_key: Dict[tuple[str, str, str, str], Optional[bool]] = {}
+        if record_origins and record_dests and record_roundtrips and record_j_vals:
+            existing_resp = (
+                client.table(SUPABASE_EXPLORE_OUTPUT_TABLE)
+                .select("origin_iata,destination_iata,roundtrip,j,way_too_cheap")
+                .in_("origin_iata", sorted(record_origins))
+                .in_("destination_iata", sorted(record_dests))
+                .in_("roundtrip", sorted(record_roundtrips))
+                .in_("j", sorted(record_j_vals))
                 .execute()
             )
-            region_by_iata: Dict[str, str] = {}
-            for row in getattr(airport_resp, "data", None) or []:
-                iata = (row.get("iata") or "").strip().upper()
-                region = (row.get("region") or "").strip()
-                if iata and region:
-                    region_by_iata[iata] = region
-            touched_buckets: set[tuple[str, str]] = set()
-            for r in records:
-                o = (r.get("origin_iata") or "").strip().upper()
-                d = (r.get("destination_iata") or "").strip().upper()
-                orr = region_by_iata.get(o)
-                drr = region_by_iata.get(d)
-                if orr and drr:
-                    touched_buckets.add((orr, drr))
-            if touched_buckets:
-                # Background full recompute so `way_too_cheap` stays consistent even across
-                # buckets that are not part of the current upsert batch.
-                schedule_way_too_cheap_recompute_full_table(
-                    execute_max_attempts=3,
-                    execute_retry_delay=1.0,
+            for row in getattr(existing_resp, "data", None) or []:
+                old_flag_by_key[_row_key(row)] = row.get("way_too_cheap")
+
+        # Pairing baseline pool: only rows with cpm < 20 in current pairing buckets.
+        candidate_rows_by_key: Dict[tuple[str, str, str, str], Dict[str, Any]] = {}
+        page_size = 2000
+        off = 0
+        while True:
+            base_resp = (
+                client.table(SUPABASE_EXPLORE_OUTPUT_TABLE)
+                .select("origin_iata,destination_iata,roundtrip,j,cpm,price,airlines")
+                .lt("cpm", 20)
+                .range(off, off + page_size - 1)
+                .execute()
+            )
+            base_rows = getattr(base_resp, "data", None) or []
+            if not base_rows:
+                break
+            for row in base_rows:
+                o, d, rt, jv = _row_key(row)
+                if not o or not d or not rt:
+                    continue
+                orr = region_by_iata.get(o, "").strip()
+                drr = region_by_iata.get(d, "").strip()
+                if not orr or not drr:
+                    continue
+                if (orr, drr) not in pairing_buckets:
+                    continue
+                cpm = _to_float(row.get("cpm"))
+                if cpm is None or cpm >= 20:
+                    continue
+                candidate_rows_by_key[(o, d, rt, jv)] = {
+                    "origin_iata": o,
+                    "destination_iata": d,
+                    "roundtrip": rt,
+                    "j": jv,
+                    "cpm": cpm,
+                    "price": row.get("price"),
+                    "airlines": _normalize_text_array(row.get("airlines")),
+                    "origin_region": orr,
+                    "destination_region": drr,
+                }
+            if len(base_rows) < page_size:
+                break
+            off += page_size
+
+        # Merge new rows into pairing candidate pool where cpm < 20.
+        for r in records:
+            key = _row_key(r)
+            o, d, rt, jv = key
+            if not o or not d or not rt:
+                continue
+            orr = region_by_iata.get(o, "").strip()
+            drr = region_by_iata.get(d, "").strip()
+            cpm = _to_float(r.get("cpm"))
+            if not orr or not drr or cpm is None or cpm >= 20:
+                continue
+            if (orr, drr) not in pairing_buckets:
+                continue
+            candidate_rows_by_key[key] = {
+                "origin_iata": o,
+                "destination_iata": d,
+                "roundtrip": rt,
+                "j": jv,
+                "cpm": cpm,
+                "price": r.get("price"),
+                "airlines": _normalize_text_array(r.get("airlines")),
+                "origin_region": orr,
+                "destination_region": drr,
+            }
+
+        # Compute flagged keys in pairing pools (bucket by region pair only).
+        bucket_items: Dict[tuple[str, str], List[tuple[tuple[str, str, str, str], float]]] = {}
+        for key, row in candidate_rows_by_key.items():
+            orr = (row.get("origin_region") or "").strip()
+            drr = (row.get("destination_region") or "").strip()
+            cpm = _to_float(row.get("cpm"))
+            if not orr or not drr or cpm is None:
+                continue
+            bucket_items.setdefault((orr, drr), []).append((key, cpm))
+
+        flagged_keys: set[tuple[str, str, str, str]] = set()
+        for bucket, items in bucket_items.items():
+            orr, drr = bucket
+            if not orr or not drr or orr == drr or drr.lower() == "unknown":
+                continue
+            if len(items) < 2:
+                continue
+            items_sorted = sorted(items, key=lambda x: (x[1], x[0]))
+            n = len(items_sorted)
+            bottom_n = max(2, int(math.ceil(n * 0.10)))
+            bottom = items_sorted[:bottom_n]
+            best_gap = -1.0
+            breakpoint: Optional[float] = None
+            gap_curr: Optional[float] = None
+            gap_next: Optional[float] = None
+            for i in range(len(bottom) - 1):
+                curr_cpm = bottom[i][1]
+                next_cpm = bottom[i + 1][1]
+                gap = next_cpm - curr_cpm
+                if gap > best_gap:
+                    best_gap = gap
+                    breakpoint = curr_cpm
+                    gap_curr = curr_cpm
+                    gap_next = next_cpm
+            ratio_ok = False
+            if gap_curr is not None and gap_next is not None and gap_curr > 0:
+                ratio_ok = (gap_next / gap_curr) >= 1.20
+            if ratio_ok and breakpoint is not None:
+                for key, cpm in items_sorted:
+                    if cpm <= breakpoint and cpm < 15.0:
+                        flagged_keys.add(key)
+
+        # Apply final pre-upsert flag value to outgoing records.
+        new_flag_by_key: Dict[tuple[str, str, str, str], bool] = {}
+        outgoing_snapshot_by_key: Dict[tuple[str, str, str, str], Dict[str, Any]] = {}
+        for r in records:
+            key = _row_key(r)
+            o, d, rt, _ = key
+            cpm = _to_float(r.get("cpm"))
+            orr = region_by_iata.get(o, "").strip()
+            drr = region_by_iata.get(d, "").strip()
+            is_true = bool(
+                cpm is not None
+                and cpm < 20
+                and cpm < 15
+                and orr
+                and drr
+                and drr.lower() != "unknown"
+                and orr != drr
+                and key in flagged_keys
+            )
+            r["way_too_cheap"] = is_true
+            new_flag_by_key[key] = is_true
+            outgoing_snapshot_by_key[key] = {
+                "origin_iata": o,
+                "destination_iata": d,
+                "roundtrip": rt,
+                "price": r.get("price"),
+                "cpm": cpm,
+                "airlines": _normalize_text_array(r.get("airlines")),
+                "origin_region": orr,
+                "destination_region": drr,
+            }
+
+        # Persist rows now that way_too_cheap is finalized.
+        for i in range(0, len(records), chunk_size):
+            chunk = records[i : i + chunk_size]
+            res = client.table(SUPABASE_EXPLORE_OUTPUT_TABLE).upsert(chunk, on_conflict=on_conflict).execute()
+            status_code = 0
+            if isinstance(res, dict):
+                status_code = int(res.get("status_code", 200) or 200)
+            if status_code >= 400:
+                raise RuntimeError(f"Supabase upsert failed (status_code={status_code}): {res}")
+
+        # Transition diff (pairing-scoped touched keys only).
+        became_true_keys: List[tuple[str, str, str, str]] = []
+        became_false_keys: List[tuple[str, str, str, str]] = []
+        for key, new_val in new_flag_by_key.items():
+            old_val = old_flag_by_key.get(key)
+            old_is_true = old_val is True
+            new_is_true = bool(new_val)
+            if (not old_is_true) and new_is_true:
+                became_true_keys.append(key)
+            elif old_is_true and (not new_is_true):
+                became_false_keys.append(key)
+
+        if not became_true_keys and not became_false_keys:
+            return
+
+        # Alert transitions + active_route maintenance.
+        alert_rows = getattr(
+            client.table("google_alerts")
+            .select(
+                "id,email,type,origin_region,origin_country,origin_airport,"
+                "destination_region,destination_country,destination_airport,"
+                "airlines_included,airlines_excluded,active_route"
+            )
+            .execute(),
+            "data",
+            None,
+        ) or []
+        if not alert_rows:
+            return
+
+        airline_name_by_code: Dict[str, str] = {}
+        airline_codes_needed: Set[str] = set()
+        for key in became_true_keys:
+            for c in _normalize_text_array(outgoing_snapshot_by_key.get(key, {}).get("airlines")):
+                airline_codes_needed.add(c.upper())
+        if airline_codes_needed:
+            airline_resp = (
+                client.table("airlines")
+                .select("code,name")
+                .in_("code", sorted(airline_codes_needed))
+                .execute()
+            )
+            for row in getattr(airline_resp, "data", None) or []:
+                code = (row.get("code") or "").strip().upper()
+                name = (row.get("name") or "").strip()
+                if code and name:
+                    airline_name_by_code[code] = name
+
+        transition_map: Dict[tuple[str, str, str, str], str] = {}
+        for k in became_true_keys:
+            transition_map[k] = "armed"
+        for k in became_false_keys:
+            transition_map[k] = "cleared"
+
+        for alert in alert_rows:
+            alert_id = str(alert.get("id") or "").strip()
+            if not alert_id:
+                continue
+            to_email = (alert.get("email") or "").strip()
+            alert_type = (alert.get("type") or "all").strip().lower()
+            if alert_type not in {"oneway", "roundtrip", "all"}:
+                alert_type = "all"
+
+            origin_region_filters = _normalize_text_array(alert.get("origin_region"))
+            origin_country_filters = [v.upper() for v in _normalize_text_array(alert.get("origin_country"))]
+            origin_airport_filters = [v.upper() for v in _normalize_text_array(alert.get("origin_airport"))]
+            destination_region_filters = _normalize_text_array(alert.get("destination_region"))
+            destination_country_filters = [v.upper() for v in _normalize_text_array(alert.get("destination_country"))]
+            destination_airport_filters = [v.upper() for v in _normalize_text_array(alert.get("destination_airport"))]
+            airlines_included_filters = [v.upper() for v in _normalize_text_array(alert.get("airlines_included"))]
+            airlines_excluded_filters = [v.upper() for v in _normalize_text_array(alert.get("airlines_excluded"))]
+
+            active_route = _normalize_text_array(alert.get("active_route"))
+            active_route_set = set(active_route)
+            changed = False
+            # Deduped: send at most one summary email per alert row per run.
+            email_routes: List[Dict[str, Any]] = []
+
+            for key, transition_kind in transition_map.items():
+                snap = outgoing_snapshot_by_key.get(key) or {}
+                origin_iata = (snap.get("origin_iata") or "").strip().upper()
+                destination_iata = (snap.get("destination_iata") or "").strip().upper()
+                roundtrip = (snap.get("roundtrip") or "").strip().lower()
+                if not origin_iata or not destination_iata or not roundtrip:
+                    continue
+                if alert_type != "all" and roundtrip != alert_type:
+                    continue
+                origin_region = (snap.get("origin_region") or "").strip()
+                destination_region = (snap.get("destination_region") or "").strip()
+                origin_country = (country_by_iata.get(origin_iata) or "").strip().upper()
+                destination_country = (country_by_iata.get(destination_iata) or "").strip().upper()
+                if not _matches_google_alert_side(
+                    side_region_filters=origin_region_filters,
+                    side_country_filters=origin_country_filters,
+                    side_airport_filters=origin_airport_filters,
+                    row_region=origin_region,
+                    row_country=origin_country,
+                    row_airport=origin_iata,
+                ):
+                    continue
+                if not _matches_google_alert_side(
+                    side_region_filters=destination_region_filters,
+                    side_country_filters=destination_country_filters,
+                    side_airport_filters=destination_airport_filters,
+                    row_region=destination_region,
+                    row_country=destination_country,
+                    row_airport=destination_iata,
+                ):
+                    continue
+                route_airline_codes = [c.upper() for c in _normalize_text_array(snap.get("airlines"))]
+                if not _route_matches_airline_filters(
+                    route_airline_codes=route_airline_codes,
+                    included_filters=airlines_included_filters,
+                    excluded_filters=airlines_excluded_filters,
+                ):
+                    continue
+                route_key = f"{origin_iata}_{destination_iata}_{roundtrip}"
+                if transition_kind == "armed":
+                    if route_key not in active_route_set:
+                        active_route_set.add(route_key)
+                        changed = True
+                        airline_names = [airline_name_by_code.get(c, c) for c in route_airline_codes]
+                        email_routes.append(
+                            {
+                                "route_key": route_key,
+                                "origin_iata": origin_iata,
+                                "destination_iata": destination_iata,
+                                "origin_city": city_by_iata.get(origin_iata) or "",
+                                "destination_city": city_by_iata.get(destination_iata) or "",
+                                "airline_names": airline_names,
+                                "roundtrip": roundtrip,
+                                "price": snap.get("price"),
+                            }
+                        )
+                else:
+                    if route_key in active_route_set:
+                        active_route_set.remove(route_key)
+                        changed = True
+
+            if changed:
+                client.table("google_alerts").update(
+                    {"active_route": sorted(active_route_set), "updated_at": datetime.now(timezone.utc).isoformat()}
+                ).eq("id", alert_id).execute()
+            if email_routes:
+                _send_google_explore_alert_summary_email(
+                    to_email=to_email,
+                    routes=email_routes,
                     debug=debug,
                 )
     except Exception as exc:
         if debug:
-            print(f"[debug] recompute way_too_cheap skipped: {type(exc).__name__}: {exc}", file=sys.stderr)
+            print(
+                f"[debug] way_too_cheap pre-upsert pairing flow fallback: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+        # If pairing-scoped compute fails, fail loudly to avoid silent inconsistent flags.
+        raise
 
 
 def upsert_explore_output_after_step(
@@ -5472,6 +5949,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    exit_code = main()
-    wait_for_way_too_cheap_recompute_full_table()
-    sys.exit(exit_code)
+    sys.exit(main())

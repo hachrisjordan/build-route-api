@@ -7,6 +7,7 @@
     "fr24-route-flight-numbers": "tsx scripts/fr24-route-flight-numbers.ts",
     "scrape:vn-avail": "tsx scripts/vn-avail-scraper.ts",
     "test:google-alerts-upsert": "tsx scripts/google-alerts-test-upsert.ts",
+    "backfill:google-alerts-run": "tsx scripts/google-alerts-backfill-run.ts",
     "dev": "next dev",
         "build": "next build",
         "build:check": "tsc --noEmit && next build",
