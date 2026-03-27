@@ -56,7 +56,9 @@ import json
 import math
 import os
 import re
+import shutil
 import sys
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -510,6 +512,22 @@ class GoogleFlightsCalendarCapture:
                         break
                 if not chromedriver_path:
                     chromedriver_path = "/usr/bin/chromedriver"
+
+        # In containers, `undetected_chromedriver` may patch/touch the driver binary. If we point at a
+        # system path (e.g. /usr/bin/chromedriver), concurrent runs can trigger "Text file busy"
+        # or "chrome not reachable". Use a per-run temp copy instead.
+        try:
+            if chromedriver_path and os.path.exists(chromedriver_path) and chromedriver_path.startswith(
+                ("/usr/bin/", "/usr/local/bin/")
+            ):
+                tmp_dir = tempfile.mkdtemp(prefix="chromedriver-")
+                tmp_driver = os.path.join(tmp_dir, "chromedriver")
+                shutil.copy2(chromedriver_path, tmp_driver)
+                os.chmod(tmp_driver, 0o755)
+                chromedriver_path = tmp_driver
+        except Exception:
+            # If we can't copy, fall back to the original path.
+            pass
 
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
