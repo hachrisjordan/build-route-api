@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import { Resend } from 'resend';
 import { getSupabaseAdminClient } from '../src/lib/supabase-admin';
+import { formatDiscordMistakeFareRouteContent, postDiscordWebhook } from '../src/lib/discord-google-alerts-webhook';
 
 type PriceRow = {
   id: string;
@@ -13,6 +14,8 @@ type PriceRow = {
   price: number | null;
   airlines: string[] | null;
   way_too_cheap: boolean | null;
+  departDate: string | null;
+  arriveDate: string | null;
 };
 
 type AirportInfo = {
@@ -45,6 +48,9 @@ type RouteSummary = {
   roundtrip: string;
   airlineNames: string[];
   price: number | null;
+  cpm: number | null;
+  departDate: string | null;
+  arriveDate: string | null;
 };
 
 function normalizeArray(value: unknown): string[] {
@@ -233,6 +239,8 @@ async function main(): Promise<void> {
   const supabase = getSupabaseAdminClient();
   const runId = `backfill-${new Date().toISOString()}`;
   const shouldSendEmail = (process.env.BACKFILL_SEND_EMAIL || 'true').toLowerCase() !== 'false';
+  const shouldSendDiscord = (process.env.BACKFILL_SEND_DISCORD || 'true').toLowerCase() !== 'false';
+  const discordWebhookUrl = (process.env.DISCORD_GOOGLE_ALERTS_WEBHOOK_URL || '').trim();
   const isDryRun = (process.env.BACKFILL_DRY_RUN || 'false').toLowerCase() === 'true';
   const resendApiKey = process.env.RESEND_API_KEY || '';
   const resendFromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
@@ -257,7 +265,7 @@ async function main(): Promise<void> {
   const priceRowsRaw = await fetchAllRows(async (from, to) => {
     const { data, error } = await supabase
       .from('google_flights_explore_destination_prices')
-      .select('id,origin_iata,destination_iata,roundtrip,j,cpm,price,airlines,way_too_cheap')
+      .select('id,origin_iata,destination_iata,roundtrip,j,cpm,price,airlines,way_too_cheap,departDate,arriveDate')
       .range(from, to);
     if (error) throw new Error(`Failed loading prices: ${error.message}`);
     return data || [];
@@ -273,6 +281,14 @@ async function main(): Promise<void> {
     price: toNumberOrNull(r.price),
     airlines: normalizeArray(r.airlines).map(toUpper),
     way_too_cheap: r.way_too_cheap === true ? true : r.way_too_cheap === false ? false : null,
+    departDate:
+      typeof r.departDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.departDate.trim())
+        ? r.departDate.trim()
+        : null,
+    arriveDate:
+      typeof r.arriveDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.arriveDate.trim())
+        ? r.arriveDate.trim()
+        : null,
   }));
 
   const oldFlagByKey = new Map<string, boolean | null>();
@@ -347,6 +363,7 @@ async function main(): Promise<void> {
   for (const row of priceRows) rowByKey.set(keyForRow(row), row);
 
   let emailsSent = 0;
+  let discordPosts = 0;
   let alertsTouched = 0;
   for (const alert of alertRows) {
     const alertId = String(alert.id || '').trim();
@@ -409,6 +426,9 @@ async function main(): Promise<void> {
             roundtrip: row.roundtrip,
             airlineNames: routeCodes.map((c) => airlineNameByCode.get(c) || c),
             price: row.price,
+            cpm: row.cpm,
+            departDate: row.departDate,
+            arriveDate: row.arriveDate,
           });
         }
       } else if (becameFalse.has(key)) {
@@ -428,21 +448,54 @@ async function main(): Promise<void> {
       alertsTouched += 1;
     }
 
-    if (summaryRoutes.length > 0 && shouldSendEmail && !isDryRun) {
-      const toEmail = String(alert.email || '').trim();
-      if (toEmail && resendApiKey) {
-        const message = buildSummaryEmail(summaryRoutes);
-        const { error } = await resend.emails.send({
-          from: resendFromEmail,
-          to: toEmail,
-          subject: message.subject,
-          html: message.html,
-          text: message.text,
-        });
-        if (error) {
-          throw new Error(`Failed summary email for alert ${alertId}: ${error.message}`);
+    if (summaryRoutes.length > 0 && !isDryRun) {
+      const message = buildSummaryEmail(summaryRoutes);
+      if (shouldSendEmail) {
+        const toEmail = String(alert.email || '').trim();
+        if (toEmail && resendApiKey) {
+          const { error } = await resend.emails.send({
+            from: resendFromEmail,
+            to: toEmail,
+            subject: message.subject,
+            html: message.html,
+            text: message.text,
+          });
+          if (error) {
+            throw new Error(`Failed summary email for alert ${alertId}: ${error.message}`);
+          }
+          emailsSent += 1;
         }
-        emailsSent += 1;
+      }
+      if (shouldSendDiscord && discordWebhookUrl) {
+        for (const r of summaryRoutes) {
+          try {
+            const content = formatDiscordMistakeFareRouteContent({
+              originIata: r.originIata,
+              destinationIata: r.destinationIata,
+              originCity: r.originCity,
+              destinationCity: r.destinationCity,
+              roundtrip: r.roundtrip,
+              price: r.price,
+              cpm: r.cpm,
+              airlineNames: r.airlineNames,
+              departDate: r.departDate,
+              arriveDate: r.arriveDate,
+            });
+            const { ok, status, bodySnippet } = await postDiscordWebhook(discordWebhookUrl, { content });
+            if (!ok) {
+              console.warn(
+                `[google-alerts-backfill-run] Discord post failed alert=${alertId} route=${r.routeKey} status=${status} body=${bodySnippet}`
+              );
+            } else {
+              discordPosts += 1;
+            }
+          } catch (err) {
+            console.warn(
+              `[google-alerts-backfill-run] Discord post exception alert=${alertId} route=${r.routeKey}:`,
+              err instanceof Error ? err.message : err
+            );
+          }
+        }
       }
     }
   }
@@ -453,7 +506,9 @@ async function main(): Promise<void> {
   console.log(`[google-alerts-backfill-run] transitioned_false=${becameFalse.size}`);
   console.log(`[google-alerts-backfill-run] alerts_touched=${alertsTouched}`);
   console.log(`[google-alerts-backfill-run] emails_sent=${emailsSent}`);
+  console.log(`[google-alerts-backfill-run] discord_posts=${discordPosts}`);
   console.log(`[google-alerts-backfill-run] send_email=${shouldSendEmail}`);
+  console.log(`[google-alerts-backfill-run] send_discord=${shouldSendDiscord}`);
   console.log(`[google-alerts-backfill-run] dry_run=${isDryRun}`);
 }
 

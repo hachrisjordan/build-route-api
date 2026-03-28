@@ -64,7 +64,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, TypeVar
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import threading
 
 # Hardcoded timeout/retry configuration (per user request).
@@ -3670,6 +3670,126 @@ def _send_google_explore_alert_summary_email(
         return False
 
 
+def _normalize_iso_date_value(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        try:
+            s = value.isoformat()
+            return s[:10] if len(s) >= 10 else None
+        except Exception:
+            pass
+    s = str(value).strip()
+    return s[:10] if len(s) >= 10 and s[4] == "-" and s[7] == "-" else None
+
+
+def _google_travel_flights_business_url(
+    origin_iata: str,
+    destination_iata: str,
+    roundtrip: str,
+    depart_date: Optional[str] = None,
+    return_date: Optional[str] = None,
+) -> str:
+    from urllib.parse import quote
+
+    o = origin_iata.strip().upper()
+    d = destination_iata.strip().upper()
+    rt = (roundtrip or "").strip().lower()
+    is_rt = rt == "roundtrip"
+    dep = depart_date or (date.today() + timedelta(days=30)).isoformat()
+    if is_rt:
+        if return_date:
+            ret = return_date
+        else:
+            try:
+                dep_d = date.fromisoformat(dep)
+            except ValueError:
+                dep_d = date.today() + timedelta(days=30)
+                dep = dep_d.isoformat()
+            ret = (dep_d + timedelta(days=7)).isoformat()
+        q = f"Flights to {d} from {o} on {dep} through {ret} business class round trip"
+    else:
+        q = f"Flights to {d} from {o} on {dep} one way business class"
+    return f"https://www.google.com/travel/flights?q={quote(q, safe='')}"
+
+
+def _post_discord_google_explore_alert_single(
+    *,
+    origin_iata: str,
+    destination_iata: str,
+    origin_city: str,
+    destination_city: str,
+    airline_names: List[str],
+    roundtrip: str,
+    price: Optional[float],
+    cpm: Optional[float],
+    depart_date: Optional[str] = None,
+    return_date: Optional[str] = None,
+    debug: bool = False,
+) -> bool:
+    """Post to Discord when DISCORD_GOOGLE_ALERTS_WEBHOOK_URL is set (do not commit URL)."""
+    webhook = (os.getenv("DISCORD_GOOGLE_ALERTS_WEBHOOK_URL") or "").strip()
+    if not webhook:
+        if debug:
+            print(
+                "[debug] google alert discord skipped: DISCORD_GOOGLE_ALERTS_WEBHOOK_URL missing",
+                file=sys.stderr,
+            )
+        return False
+    trip_label = "Round-trip" if roundtrip == "roundtrip" else "One-way"
+    from_label = f"{origin_city} ({origin_iata})" if origin_city else origin_iata
+    to_label = f"{destination_city} ({destination_iata})" if destination_city else destination_iata
+    price_text = f"{price:.0f} USD" if isinstance(price, (int, float)) else "n/a"
+    cpm_text = f"{float(cpm):.4f}" if isinstance(cpm, (int, float)) else "n/a"
+    airlines_text = ", ".join(airline_names) if airline_names else "Not available"
+    flights_url = _google_travel_flights_business_url(
+        origin_iata,
+        destination_iata,
+        roundtrip,
+        depart_date=depart_date,
+        return_date=return_date,
+    )
+    content = (
+        f"**Mistake Fare Alert**: {from_label} → {to_label}\n"
+        f"Trip: {trip_label} | Price: {price_text} | CPM: {cpm_text}\n"
+        f"Airlines: {airlines_text}\n"
+        f"{flights_url}"
+    )
+    if len(content) > 1900:
+        content = content[:1880] + "\n…(truncated)"
+    try:
+        import requests
+    except Exception as exc:
+        if debug:
+            print(
+                f"[debug] google alert discord skipped: requests ({type(exc).__name__}: {exc})",
+                file=sys.stderr,
+            )
+        return False
+    try:
+        resp = requests.post(
+            webhook,
+            headers={"Content-Type": "application/json"},
+            json={"content": content},
+            timeout=20,
+        )
+        if resp.status_code == 204 or (200 <= resp.status_code < 300):
+            return True
+        if debug:
+            print(
+                f"[debug] google alert discord failed: status={resp.status_code} body={resp.text[:300]}",
+                file=sys.stderr,
+            )
+        return False
+    except Exception as exc:
+        if debug:
+            print(
+                f"[debug] google alert discord exception: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+        return False
+
+
 _WAY_TOO_CHEAP_RECOMPUTE_LOCK = threading.Lock()
 _WAY_TOO_CHEAP_RECOMPUTE_THREAD: Optional[threading.Thread] = None
 _WAY_TOO_CHEAP_RECOMPUTE_PENDING = False
@@ -3859,7 +3979,10 @@ def recompute_way_too_cheap_for_buckets(
     while True:
         page_resp = _execute_with_retries(
             lambda off=offset: client.table(SUPABASE_EXPLORE_OUTPUT_TABLE)
-            .select("id,cpm,price,airlines,way_too_cheap,origin_iata,destination_iata,roundtrip")
+            .select(
+                "id,cpm,price,airlines,way_too_cheap,origin_iata,destination_iata,roundtrip,"
+                "departDate,arriveDate"
+            )
             .range(off, off + page_size - 1)
             .execute()
         )
@@ -4146,6 +4269,8 @@ def recompute_way_too_cheap_for_buckets(
                             "roundtrip": roundtrip,
                             "price": snap.get("price"),
                             "cpm": snap.get("cpm"),
+                            "depart_date": _normalize_iso_date_value(snap.get("departDate")),
+                            "return_date": _normalize_iso_date_value(snap.get("arriveDate")),
                         }
                     )
             else:
@@ -4181,6 +4306,19 @@ def recompute_way_too_cheap_for_buckets(
                 roundtrip=email_payload["roundtrip"],
                 price=email_payload.get("price"),
                 cpm=email_payload.get("cpm"),
+                debug=debug,
+            )
+            _post_discord_google_explore_alert_single(
+                origin_iata=email_payload["origin_iata"],
+                destination_iata=email_payload["destination_iata"],
+                origin_city=email_payload.get("origin_city") or "",
+                destination_city=email_payload.get("destination_city") or "",
+                airline_names=email_payload.get("airline_names") or [],
+                roundtrip=email_payload["roundtrip"],
+                price=email_payload.get("price"),
+                cpm=email_payload.get("cpm"),
+                depart_date=email_payload.get("depart_date"),
+                return_date=email_payload.get("return_date"),
                 debug=debug,
             )
 
@@ -4837,6 +4975,8 @@ def upsert_explore_csv_rows_to_supabase(
                 "airlines": _normalize_text_array(r.get("airlines")),
                 "origin_region": orr,
                 "destination_region": drr,
+                "departDate": r.get("departDate"),
+                "arriveDate": r.get("arriveDate"),
             }
 
         # Persist rows now that way_too_cheap is finalized.
@@ -4981,6 +5121,9 @@ def upsert_explore_csv_rows_to_supabase(
                                 "airline_names": airline_names,
                                 "roundtrip": roundtrip,
                                 "price": snap.get("price"),
+                                "cpm": snap.get("cpm"),
+                                "depart_date": _normalize_iso_date_value(snap.get("departDate")),
+                                "return_date": _normalize_iso_date_value(snap.get("arriveDate")),
                             }
                         )
                 else:
@@ -4998,6 +5141,20 @@ def upsert_explore_csv_rows_to_supabase(
                     routes=email_routes,
                     debug=debug,
                 )
+                for route_payload in email_routes:
+                    _post_discord_google_explore_alert_single(
+                        origin_iata=str(route_payload.get("origin_iata") or ""),
+                        destination_iata=str(route_payload.get("destination_iata") or ""),
+                        origin_city=str(route_payload.get("origin_city") or ""),
+                        destination_city=str(route_payload.get("destination_city") or ""),
+                        airline_names=list(route_payload.get("airline_names") or []),
+                        roundtrip=str(route_payload.get("roundtrip") or ""),
+                        price=route_payload.get("price"),
+                        cpm=route_payload.get("cpm"),
+                        depart_date=route_payload.get("depart_date"),
+                        return_date=route_payload.get("return_date"),
+                        debug=debug,
+                    )
     except Exception as exc:
         if debug:
             print(
