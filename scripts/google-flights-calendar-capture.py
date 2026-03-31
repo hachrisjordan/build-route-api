@@ -81,6 +81,11 @@ SUPABASE_EXPLORE_OUTPUT_TABLE = "google_flights_explore_destination_prices"
 SUPABASE_EXPLORE_PAIRING_STATUS_TABLE = "google_flights_explore_pairing_status"
 SUPABASE_EXPLORE_UPSERT_CHUNK_SIZE = 100
 
+# If any carrier on the row matches, `way_too_cheap` must be false (see DB trigger).
+WAY_TOO_CHEAP_BLOCKED_AIRLINE_CODES: frozenset[str] = frozenset(
+    """ES 3O AL P4 T9 FN SH MN JE NE FA AQ AK 07 PA BX HD IX ZM RS DG SJ EU PN QG ZE G8 Y5 UO 6E QZ 7C S2 JQ 3K GK BL LJ JT 8L OD MJ DD XW 2P MM PQ DR TZ XO BC LQ SG 9C 7G FD XJ SL VZ TT TR IT 2T JW VJ VA DJ IW 28 BV CO DE 7H U2 DS EW E2 2L LS IG ZB HG DY BQ H9 DP FR OS XG TO HV TB X3 V7 VY W6 WW AD A2 EF G3 4O H2 VB FC Y4 Q6 G9 9P FZ XY J9 R5 OV FL G4 F8 F9 B6 WN NK SY WG VX WS WR""".split()
+)
+
 ExploreStepMode = Literal["both", "dest_only", "origin_only"]
 
 # Directory containing this file (…/scripts); repo root is one level up.
@@ -3381,6 +3386,13 @@ def _normalize_text_array(value: Any) -> List[str]:
     return out
 
 
+def _route_has_way_too_cheap_blocked_airline(airlines: Any) -> bool:
+    for c in _normalize_text_array(airlines):
+        if c.upper() in WAY_TOO_CHEAP_BLOCKED_AIRLINE_CODES:
+            return True
+    return False
+
+
 def _matches_google_alert_side(
     *,
     side_region_filters: List[str],
@@ -4068,6 +4080,10 @@ def recompute_way_too_cheap_for_buckets(
             }
         for rid in row_ids:
             is_flagged = rid in flagged_ids
+            if is_flagged:
+                snap = row_snapshot_by_id.get(rid) or {}
+                if _route_has_way_too_cheap_blocked_airline(snap.get("airlines")):
+                    is_flagged = False
             updates.append({"id": rid, "way_too_cheap": is_flagged})
             new_flag_by_id[rid] = is_flagged
 
@@ -4963,6 +4979,7 @@ def upsert_explore_csv_rows_to_supabase(
                 and drr.lower() != "unknown"
                 and orr != drr
                 and key in flagged_keys
+                and not _route_has_way_too_cheap_blocked_airline(r.get("airlines"))
             )
             r["way_too_cheap"] = is_true
             new_flag_by_key[key] = is_true

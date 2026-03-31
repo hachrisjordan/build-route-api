@@ -1,5 +1,7 @@
 import { differenceInDays, parse, format } from 'date-fns';
-import { getAmExBrowserHeaders } from '@/lib/amex-api-headers';
+import { getAmExHeaderMeta } from '@/lib/amex-api-headers';
+import { ensureAmexCookieEnvFromStore } from '@/lib/amex-cookie-store';
+import { recoverFromAmex403 } from '@/lib/amex-cookie-refresh';
 
 const AMEX_API_URL = 'https://tlsonlwrappersvcs.americanexpress.com/consumertravel/services/v1/en-US/hotelOffers';
 
@@ -109,22 +111,46 @@ export async function fetchHotelOffers(
   checkOut: string
 ): Promise<HotelOffer[]> {
   const url = buildAmExUrl(checkIn, checkOut, hotelIds);
-  
-  console.log(`[price-checker] Fetching offers for ${hotelIds.length} hotels, ${checkIn} to ${checkOut}`);
-  
-  try {
+
+  console.log(
+    `[price-checker] Fetching offers for ${hotelIds.length} hotels, ${checkIn} to ${checkOut}`
+  );
+
+  const attemptRequest = async () => {
+    const { headers, headerPreset, headerVersion } = getAmExHeaderMeta();
+
     const response = await fetch(url, {
       method: 'GET',
-      headers: getAmExBrowserHeaders(),
+      headers,
     });
 
     if (!response.ok) {
-      console.error(`[price-checker] AmEx API error: ${response.status} ${response.statusText}`);
+      console.error(
+        `[price-checker] AmEx API error: ${response.status} ${response.statusText} (reason=amex_403?=${response.status === 403}, preset=${headerPreset}, ver=${headerVersion}, hotels=${hotelIds.length}, range=${checkIn}->${checkOut})`
+      );
+    }
+
+    return response;
+  };
+
+  try {
+    // Ensure we have any stored cookie before the first attempt
+    await ensureAmexCookieEnvFromStore();
+
+    let response = await attemptRequest();
+
+    if (response.status === 403) {
+      console.log('[price-checker] AmEx 403 detected – attempting cookie refresh and single retry...');
+      await recoverFromAmex403();
+      response = await attemptRequest();
+    }
+
+    if (!response.ok) {
       return [];
     }
 
     const data = await response.json();
-    
+
     if (!data.hotels || !Array.isArray(data.hotels)) {
       console.log('[price-checker] No hotels in response');
       return [];
@@ -132,7 +158,6 @@ export async function fetchHotelOffers(
 
     console.log(`[price-checker] Found ${data.hotels.length} offers`);
     return data.hotels;
-    
   } catch (error) {
     console.error('[price-checker] Error fetching hotel offers:', error);
     return [];

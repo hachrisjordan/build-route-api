@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getAmExBrowserHeaders } from '@/lib/amex-api-headers';
+import { getAmExHeaderMeta } from '@/lib/amex-api-headers';
+import { ensureAmexCookieEnvFromStore } from '@/lib/amex-cookie-store';
 
 const AmExHotelOffersSchema = z.object({
   checkIn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Check-in date must be in YYYY-MM-DD format'),
@@ -84,13 +85,18 @@ export async function POST(req: NextRequest) {
     const url = buildAmExUrl(checkIn, checkOut, ecom_hotel_ids);
 
     // Make request to AmEx API with browser-like headers
+    await ensureAmexCookieEnvFromStore();
+    const { headers, headerPreset, headerVersion } = getAmExHeaderMeta();
+
     const response = await fetch(url, {
       method: 'GET',
-      headers: getAmExBrowserHeaders(),
+      headers,
     });
 
     if (!response.ok) {
-      console.error(`AmEx API error: ${response.status} ${response.statusText}`);
+      console.error(
+        `AmEx API error: ${response.status} ${response.statusText} (reason=amex_403?=${response.status === 403}, preset=${headerPreset}, ver=${headerVersion}, hotels=${ecom_hotel_ids.length}, range=${checkIn}->${checkOut})`
+      );
       return NextResponse.json(
         { 
           error: 'AmEx API error', 

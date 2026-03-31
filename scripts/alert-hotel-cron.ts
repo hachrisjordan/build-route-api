@@ -137,24 +137,8 @@ function parseDateSet(dateValue: number): ParsedDateSet {
   return { checkIn, checkOut, nights, raw: dateValue };
 }
 
-/**
- * Get browser-like headers for AmEx API
- */
-function getBrowserHeaders(): Record<string, string> {
-  return {
-    'Accept': '*/*',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Connection': 'keep-alive',
-    'Origin': 'https://www.americanexpress.com',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'same-site',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
-    'sec-ch-ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-  };
-}
+// Use shared AmEx browser headers (same as Next.js API + calendar cron)
+const { getAmExBrowserHeaders, getAmExHeaderMeta } = require('../src/lib/amex-api-headers');
 
 /**
  * Build AmEx API URL
@@ -181,15 +165,20 @@ async function fetchHotelOffers(
   checkOut: string
 ): Promise<HotelOffer[]> {
   const url = buildAmExUrl(checkIn, checkOut, hotelIds);
-  
+
   try {
+    const { headers, headerPreset, headerVersion } = getAmExHeaderMeta();
+
     const response = await fetch(url, {
       method: 'GET',
-      headers: getBrowserHeaders(),
+      headers,
     });
 
     if (!response.ok) {
-      console.error(`[CRON] AmEx API error: ${response.status}`);
+      // 403s are common when AmEx tightens bot detection; log enough context to debug
+      console.error(
+        `[CRON] AmEx API error: ${response.status} ${response.statusText} (reason=amex_403?=${response.status === 403}, preset=${headerPreset}, ver=${headerVersion}, hotels=${hotelIds.length}, range=${checkIn}->${checkOut})`
+      );
       return [];
     }
 

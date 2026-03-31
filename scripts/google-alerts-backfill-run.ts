@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { Resend } from 'resend';
 import { getSupabaseAdminClient } from '../src/lib/supabase-admin';
 import { formatDiscordMistakeFareRouteContent, postDiscordWebhook } from '../src/lib/discord-google-alerts-webhook';
+import { routeHasWayTooCheapBlockedAirline } from '../src/lib/way-too-cheap-blocked-airlines';
 
 type PriceRow = {
   id: string;
@@ -116,6 +117,10 @@ function computeWayTooCheap(rows: PriceRow[], airportByIata: Map<string, Airport
       continue;
     }
     if (origin.region === destination.region) {
+      result.set(key, false);
+      continue;
+    }
+    if (routeHasWayTooCheapBlockedAirline(row.airlines)) {
       result.set(key, false);
       continue;
     }
