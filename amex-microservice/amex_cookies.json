@@ -1,0 +1,193 @@
+[
+  {
+    "domain": ".americanexpress.com",
+    "expiry": 1809075461,
+    "httpOnly": false,
+    "name": "AMCV_5C36123F5245AF470A490D45%40AdobeOrg",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "870038026%7CMCMID%7C92212794025524416539220172897714114181%7CMCAID%7CNONE%7CMCOPTOUT-1774954661s%7CNONE%7CvVersion%7C5.0.0"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "httpOnly": false,
+    "name": "s_sess",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "%20omn_intlink%3Dus-travel-fhr-explore-offers%3B%20s_tp%3D4581%3B%20s_ppv%3Dus%25257Ctravel%25257Coffers%25257Chotels%25257Cluxury-hotel-offers%252C22%252C22%252C993%3B%20s_cc%3Dtrue%3B"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "expiry": 1806497397,
+    "httpOnly": false,
+    "name": "_abck",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "069DF87AB56C06922A60E04DE8E49609~0~YAAQERkhF22xNxSdAQAAXY/xQw8dU/Htdy4qwG5V4hp0Jv6Wl+322TTvZuhXnxz9wJY6FfHujcQW3bHAhZBOefAMzkLFZAmtg+98WAhT5KO+dnIsdvnwCMn+AcQGDXdgKPBow7FpRWJamx1b7yQxp5/gDBzll1sMzq49JmyESmSJ7wZdiHYlVkP+LMCXAt1KwXUezuQGAilfyhdcOTa+yQnlGO/p1x9U+fhSxVGVyURh35mgOSS21YaTNDACg712NGlMzJJ49OSJ9Tb8DM6pxZ1ZXjF6uSKLRvMXw1MMj2XU0Y9qWSEMAGrdLc17n1D/90+xRQ7TtE2c8O3sOn43kF9vtd6nZMX8nEmnI6l2ve1DgSdAvnIDuCBCDkIcW33Lf3fU77iiFP1fJ7dk90epvvG9JCh9heZfggIR2rFxj0507Kun+xyhd+iga2BAuB22440kvaDWwx1nEP+CiTVEUiWDfyN1NsHIe1b4BJnwsX3G7n3B+8jjaYW5S8o6hC/nbZH2i3UgNh+4VY/sj6N/ShH8AAxeqJ8AobhuQzaEO+R3vVXdRZZIJhoI7v+lQ5LEipFz64VcCAsnr9mDKW4UAUp4YKGSrqrvgFrZr4/TS6/ei8t6g8GFMIAUiYib00yJA3gXsE1UrbMJ+mk=~-1~-1~-1~AAQAAAAF%2f%2f%2f%2f%2f3aYddzIC1q4CL3NU96v2rBzXiYS8sQNHQGpwjav5ZBUY1FMOLy1QxL9OwHI9x%2f703P9v2D4DNCZ6US3qLVFYJpcC3K5Udes34jlxraYl++2gK+gxsnBHw8z7tMjKZOxmMAiI7Q%3d~-1"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "httpOnly": false,
+    "name": "TLTSID",
+    "path": "/",
+    "sameSite": "Strict",
+    "secure": false,
+    "value": "70900159412844072074053415554102"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "httpOnly": false,
+    "name": "dtSa",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "-"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "expiry": 1774963197,
+    "httpOnly": false,
+    "name": "_cs_mk",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "0.4602487160952097_1774961373367"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "expiry": 1806497397,
+    "httpOnly": true,
+    "name": "agent-id",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": true,
+    "value": "1385bba1-f97a-485f-b81c-b276d1d3d119"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "expiry": 1774968561,
+    "httpOnly": true,
+    "name": "ak_bmsc",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "7FFA6D7102CB4EB907320109AB8168AD~000000000000000000000000000000~YAAQERkhF0iGNxSdAQAAtR/xQx/k1j8XQ64Y8fpSLGdBjlt6K97tOVXkbp0PHZ43Xp2FaANMZXa/ToQU5tDtV71YoL9BhI61BgcNPB631YekFZVTnL/T5/B29F6+N5jPk/TfqE6PhGcH3yjPEpWob1TDDN3U1Bzw3Cc/O1OKrMq6AJSwwzmuOwpX547GLJj0LyqFss854fNt68e2oJRM8moyMnx5X8PjxGn2K3d7tWUmvc6uWQZd1PTDt97gAQ76PbxNqNqi4t8K6zqE78PbrFsUb8frizs435sAd6+mHVSgHI3JcRGIEdny+UPV0Bt+WNtLFbJFo0ELovRxo0rh0BkKRLp4+q7Vn27qwnYDgby7uZdgOqzZiBpQ04BKPLdpfGsBuNOfAihyD7B6GNYBTGGw46HdSMu6Qgdnq+h/L7OIrN+qNZ7Fa2B6zJrUSUTYU/lODOccERq4NI/7+uEgHTD0CM89tQTzDg=="
+  },
+  {
+    "domain": ".americanexpress.com",
+    "expiry": 1774975763,
+    "httpOnly": false,
+    "name": "bm_sz",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "4C2FA62CED320BF2E173D5E20F35756D~YAAQERkhFzV5NxSdAQAAVwrxQx+B6Ol3GJAiWWR6QOXk73d5mfs+mpw8TCndztk4Qaow8McX5zVS7giQxggLplZUVdfb+XhFR+gd/dLj4xxPnNs5AazcHuwQNB9GkVcAmLBhIwOQsL4ioDp/0MIhBuGbLUVwN/m3tDhPW+pVG8nu0ja0XQyGlKLRwXgKHU/IYeYXJeLDrf7ya2cubqDw2vi3YQJMFpB+aWQyUntEWRlkuYpj+2phWl4wXBS3KzrIb8NhqylRw8VoRsSddELoShZ0lFbqIddDnl5QYvT+AAFFuelTfB89RyMR5Cv8vhtaF3JtnFRandNRbS7ONeUmeIWIB0PPnKbTjR4tIL+JswY/LN7Kc/cczCbSiV3+1sJ9S9eyQ3brQoEYwwx/GS2xWlUIZN0Y1QBh3OQtXT0hBsK4saVRtD91nDzZIs8wDpiil/PLTcmVvw==~4408641~4470323"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "httpOnly": false,
+    "name": "dtCookiee4jp20gt",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "v_4_srv_4_sn_0U0I57DJA15L13AOHES2NV02TO8U49L4_perc_100000_ol_0_mul_1_app-3A_1_rcs-3Acss_0"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "expiry": 1774968595,
+    "httpOnly": false,
+    "name": "bm_sv",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "9BBC0BEF01C59F0A675ADB333227DC65~YAAQERkhF9CuNxSdAQAAionxQx9ruxWIgbn8ttbzv9DtSjlVKagZ/29ECvL6VnC7vM8wQwHEO7svhCm9W+Dzdnr1TdII6N/dQfnvIe4d3ZEu6kd1GmFAY3biyBw9iJnMEon1J8rWNA2YNAMLNWz9DOsm4ziWqQHMCRfyQF8fgq3cHl+Y1Yg8CdXcDFP2ehgas8cdPFt7M9CPfcH2cxnukoggK9cXudvv9b30IhxC03iHy2yTrXnbmWbt8ZeM4k9rP7w7ePgHLDVU~1"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "expiry": 1809521396,
+    "httpOnly": false,
+    "name": "rxVisitor",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "17749474553268S9J249RLKNB5RDVGHFK6PBME0FGGLGE"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "httpOnly": false,
+    "name": "rxvt",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "1774963196863|1774961373233"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "httpOnly": false,
+    "name": "axplocale",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": true,
+    "value": "en-US"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "httpOnly": false,
+    "name": "dtPC",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "-6134$161396860_695h-vOHUFDVFEUFHJQUWPULPCUCNIRDFMJNQD-0e0"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "httpOnly": false,
+    "name": "dtCookie",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "v_4_srv_-2D6134_sn_0U0I57DJA15L13AOHES2NV02TO8U49L4"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "httpOnly": false,
+    "name": "TS01a91ed4",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "01d4f2e23e8488e96f70daf415fff1158634a44044fb0833cafd51c625be706536c383b2b41e70169dd0f56462ab7a3ddb43c70b2d"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "expiry": 1809089398,
+    "httpOnly": false,
+    "name": "s_ecid",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "MCMID%7C92212794025524416539220172897714114181"
+  },
+  {
+    "domain": "www.americanexpress.com",
+    "expiry": 1777553397,
+    "httpOnly": true,
+    "name": "akaalb_www",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "1777553397~op=www_prebooking_MLP_LBM:travelprebooking|~rv=56~m=travelprebooking:0|~os=9184cb63cc50160c7345890467a4f9a2~id=639d4dad714b50c7ce3c98ab67695498"
+  },
+  {
+    "domain": ".americanexpress.com",
+    "expiry": 1809089397,
+    "httpOnly": false,
+    "name": "s_pers",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "%20s_tslv%3D1774961397078%7C1838033397078%3B%20s_tbm%3Dtrue%7C1774963197182%3B%20gpv_v41%3Dus%257Ctravel%257Coffers%257Chotels%257Cluxury-hotel-offers%7C1774963197186%3B"
+  }
+]

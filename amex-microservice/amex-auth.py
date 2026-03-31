@@ -14,6 +14,8 @@ Later, Node/Next.js code can build the AMEX_COOKIE header from those stored cook
 
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -179,6 +181,24 @@ class AmexCookieManager:
             if chrome_bin and os.path.exists(chrome_bin):
                 options.binary_location = chrome_bin
 
+            # Pin undetected-chromedriver to the locally installed Chrome version.
+            # This avoids "ChromeDriver only supports Chrome version X" errors.
+            version_main: Optional[int] = None
+            if chrome_bin:
+                try:
+                    out = subprocess.check_output(
+                        [chrome_bin, "--version"],
+                        stderr=subprocess.STDOUT,
+                    ).decode("utf-8", errors="ignore")
+                    # Examples:
+                    # - "Google Chrome 146.0.7680.165"
+                    # - "Chromium 146.0.7680.165"
+                    match = re.search(r"(\d+)\.", out)
+                    if match:
+                        version_main = int(match.group(1))
+                except Exception:
+                    version_main = None
+
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
@@ -189,7 +209,11 @@ class AmexCookieManager:
             if headless:
                 options.add_argument("--headless=new")
 
-            self.driver = uc.Chrome(options=options, headless=headless)
+            self.driver = uc.Chrome(
+                options=options,
+                headless=headless,
+                version_main=version_main,
+            )
             self.driver.execute_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )
@@ -269,7 +293,7 @@ class AmexCookieManager:
     # ---- interactive flow --------------------------------------------------
 
     def manual_login_flow(self) -> None:
-        """Open AmEx offers page and let user handle any challenges/login, then capture cookies."""
+        """Open AmEx offers page, wait, then capture cookies automatically."""
         if not self.driver:
             raise RuntimeError("Driver not initialised")
 
@@ -281,13 +305,11 @@ class AmexCookieManager:
         self.driver.get(target_url)
         time.sleep(5)
 
-        print("\n2️⃣ In the browser window:")
-        print("   - Solve any challenges / captchas.")
-        print("   - Log in if AmEx requires it.")
-        print("   - Wait until hotel offers / content load.")
-        input("3️⃣ When the page looks stable, press Enter here to capture cookies...")
+        print("\n2️⃣ Waiting for AmEx page to stabilise before capturing cookies...")
+        # Give the page time to finish redirects / JS challenges.
+        time.sleep(20)
 
-        print("4️⃣ Capturing cookies...")
+        print("3️⃣ Capturing cookies automatically...")
         if self.save_cookies():
             print("🎉 AmEx cookies captured and stored. You can now use them from Node.")
         else:

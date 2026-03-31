@@ -5,6 +5,8 @@ require('dotenv').config();
 // Import dependencies
 const { getSupabaseAdminClient } = require('../src/lib/supabase-admin');
 const { sendPriceDropEmail } = require('../src/lib/hotel-alert/email-service');
+const { ensureAmexCookieEnvFromStore } = require('../src/lib/amex-cookie-store');
+const { recoverFromAmex403 } = require('../src/lib/amex-cookie-refresh');
 
 // Import price checker - using dynamic import for TypeScript module
 import type { AlertData, PriceCheckResult } from '../src/lib/hotel-alert/price-checker';
@@ -138,7 +140,7 @@ function parseDateSet(dateValue: number): ParsedDateSet {
 }
 
 // Use shared AmEx browser headers (same as Next.js API + calendar cron)
-const { getAmExBrowserHeaders, getAmExHeaderMeta } = require('../src/lib/amex-api-headers');
+const { getAmExHeaderMeta } = require('../src/lib/amex-api-headers');
 
 /**
  * Build AmEx API URL
@@ -167,18 +169,30 @@ async function fetchHotelOffers(
   const url = buildAmExUrl(checkIn, checkOut, hotelIds);
 
   try {
-    const { headers, headerPreset, headerVersion } = getAmExHeaderMeta();
+    await ensureAmexCookieEnvFromStore();
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers,
-    });
+    const attemptRequest = async () => {
+      const { headers, headerPreset, headerVersion } = getAmExHeaderMeta();
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+      });
+      if (!response.ok) {
+        console.error(
+          `[CRON] AmEx API error: ${response.status} ${response.statusText} (reason=amex_403?=${response.status === 403}, preset=${headerPreset}, ver=${headerVersion}, hotels=${hotelIds.length}, range=${checkIn}->${checkOut})`
+        );
+      }
+      return response;
+    };
+
+    let response = await attemptRequest();
+    if (response.status === 403) {
+      await recoverFromAmex403();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      response = await attemptRequest();
+    }
 
     if (!response.ok) {
-      // 403s are common when AmEx tightens bot detection; log enough context to debug
-      console.error(
-        `[CRON] AmEx API error: ${response.status} ${response.statusText} (reason=amex_403?=${response.status === 403}, preset=${headerPreset}, ver=${headerVersion}, hotels=${hotelIds.length}, range=${checkIn}->${checkOut})`
-      );
       return [];
     }
 
@@ -252,13 +266,13 @@ async function checkPricesForAlert(alert: AlertRecord): Promise<PriceCheckResult
 
   if (parsedDateSets.length === 0) return null;
 
-  // Fetch all date sets concurrently for better performance
-  const offerResults = await Promise.all(
-    parsedDateSets.map(async (dateSet) => {
-      const offers = await fetchHotelOffers(hotels, dateSet.checkIn, dateSet.checkOut);
-      return { offers, dateSet };
-    })
-  );
+  // Fetch date sets sequentially to reduce burst 403/rate-limit pressure.
+  const offerResults: Array<{ offers: HotelOffer[]; dateSet: ParsedDateSet }> = [];
+  for (const dateSet of parsedDateSets) {
+    const offers = await fetchHotelOffers(hotels, dateSet.checkIn, dateSet.checkOut);
+    offerResults.push({ offers, dateSet });
+    await new Promise(resolve => setTimeout(resolve, 400));
+  }
 
   // Flatten and filter results
   const allOffers: Array<{ offer: HotelOffer; dateSet: ParsedDateSet }> = [];
