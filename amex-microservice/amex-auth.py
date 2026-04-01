@@ -2,6 +2,9 @@
 """
 AmEx Cookie Fetcher using undetected-chromedriver
 
+Driver selection matches finnair-auth.py: prefer CHROMEDRIVER_PATH + CHROME_BIN (Dockerfile sets
+/usr/bin/chromedriver + /usr/bin/chromium-browser) so the distro chromedriver matches CPU arch.
+
 Flow:
 - Opens the AmEx luxury hotel offers page in a real Chromium (undetected-chromedriver).
 - You solve any challenges / log in if needed.
@@ -41,7 +44,7 @@ try:
 
     SUPABASE_AVAILABLE = True
 except ImportError:
-    print("⚠️  Supabase client not installed. Run `pip install supabase-py` to enable DB storage.")
+    print("⚠️  Supabase client not installed. Run `pip install supabase` (PyPI package name: supabase) to enable DB storage.")
     SUPABASE_AVAILABLE = False
     Client = Any  # type: ignore
 
@@ -163,57 +166,119 @@ class AmexCookieManager:
     # ---- driver setup ------------------------------------------------------
 
     def setup_driver(self, headless: bool = False):
-        """Configure undetected-chromedriver with Docker-friendly flags."""
+        """
+        Same strategy as finnair-auth.py: use CHROME_BIN + CHROMEDRIVER_PATH in Docker
+        (Alpine's /usr/bin/chromium-browser + /usr/bin/chromedriver, matching CPU arch).
+        Without an on-disk driver, uc downloads one — that path often breaks on aarch64.
+        """
         try:
             options = uc.ChromeOptions()
 
-            # Best-effort Chrome binary discovery
+            default_chrome_paths = [
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "/usr/bin/google-chrome",
+                "/usr/bin/chromium-browser",
+            ]
             chrome_bin = os.getenv("CHROME_BIN")
             if not chrome_bin:
-                for path in [
-                    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                    "/usr/bin/google-chrome",
-                    "/usr/bin/chromium-browser",
-                ]:
+                for path in default_chrome_paths:
                     if os.path.exists(path):
                         chrome_bin = path
                         break
             if chrome_bin and os.path.exists(chrome_bin):
                 options.binary_location = chrome_bin
 
-            # Pin undetected-chromedriver to the locally installed Chrome version.
-            # This avoids "ChromeDriver only supports Chrome version X" errors.
+            chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+            if not chromedriver_path:
+                try:
+                    from webdriver_manager.chrome import ChromeDriverManager
+
+                    chromedriver_path = ChromeDriverManager().install()
+                    print(f"✅ Using webdriver-manager ChromeDriver: {chromedriver_path}")
+                except Exception as e:
+                    print(f"⚠️  webdriver-manager failed: {e}")
+                    for path in (
+                        "/opt/homebrew/bin/chromedriver",
+                        "/usr/local/bin/chromedriver",
+                        "/usr/bin/chromedriver",
+                    ):
+                        if os.path.exists(path):
+                            chromedriver_path = path
+                            break
+                    else:
+                        chromedriver_path = "/usr/bin/chromedriver"
+
+            has_packaged_driver = bool(chromedriver_path and os.path.isfile(chromedriver_path))
+
             version_main: Optional[int] = None
-            if chrome_bin:
+            if not has_packaged_driver and chrome_bin:
                 try:
                     out = subprocess.check_output(
                         [chrome_bin, "--version"],
                         stderr=subprocess.STDOUT,
                     ).decode("utf-8", errors="ignore")
-                    # Examples:
-                    # - "Google Chrome 146.0.7680.165"
-                    # - "Chromium 146.0.7680.165"
                     match = re.search(r"(\d+)\.", out)
                     if match:
                         version_main = int(match.group(1))
                 except Exception:
                     version_main = None
 
+            # Docker-friendly flags (aligned with finnair-auth.py; JS stays enabled for AmEx pages)
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
+            options.add_argument("--disable-software-rasterizer")
             options.add_argument("--disable-extensions")
+            options.add_argument("--disable-plugins")
             options.add_argument("--disable-blink-features=AutomationControlled")
             options.add_argument("--user-data-dir=/tmp/amex-chrome-data")
 
             if headless:
                 options.add_argument("--headless=new")
 
-            self.driver = uc.Chrome(
-                options=options,
-                headless=headless,
-                version_main=version_main,
-            )
+            try:
+                if has_packaged_driver:
+                    self.driver = uc.Chrome(
+                        driver_executable_path=chromedriver_path,
+                        options=options,
+                        version_main=None,
+                        use_subprocess=True,
+                        headless=headless,
+                    )
+                else:
+                    self.driver = uc.Chrome(
+                        options=options,
+                        headless=headless,
+                        version_main=version_main,
+                        use_subprocess=True,
+                    )
+            except Exception as e:
+                err = str(e)
+                if (
+                    "Status code was: -9" in err
+                    or "unexpectedly exited" in err
+                    or "cannot reuse" in err
+                    or "cannot connect to chrome" in err.lower()
+                ):
+                    print("⚠️  Primary Chrome startup failed; retrying without packaged driver path...")
+                    fallback_options = uc.ChromeOptions()
+                    if chrome_bin and os.path.exists(chrome_bin):
+                        fallback_options.binary_location = chrome_bin
+                    fallback_options.add_argument("--no-sandbox")
+                    fallback_options.add_argument("--disable-dev-shm-usage")
+                    fallback_options.add_argument("--disable-gpu")
+                    fallback_options.add_argument("--user-data-dir=/tmp/amex-chrome-data")
+                    if headless:
+                        fallback_options.add_argument("--headless=new")
+                    self.driver = uc.Chrome(
+                        options=fallback_options,
+                        version_main=version_main,
+                        headless=headless,
+                        use_subprocess=True,
+                    )
+                else:
+                    raise
+
             self.driver.execute_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )

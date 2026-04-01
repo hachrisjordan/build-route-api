@@ -2,9 +2,11 @@
 
 require('dotenv').config();
 
-// Import Supabase admin client and AmEx headers (same as working amex-hotel-calendar / FHR)
+// Import Supabase admin client and AmEx headers (same as alert-hotel-cron / API routes)
 const { getSupabaseAdminClient } = require('../src/lib/supabase-admin');
-const { getAmExBrowserHeaders } = require('../src/lib/amex-api-headers');
+const { getAmExHeaderMeta } = require('../src/lib/amex-api-headers');
+const { ensureAmexCookieEnvFromStore } = require('../src/lib/amex-cookie-store');
+const { recoverFromAmex403 } = require('../src/lib/amex-cookie-refresh');
 
 const AMEX_API_URL = 'https://tlsonlwrappersvcs.americanexpress.com/consumertravel/services/v1/en-US/hotelOffers';
 const BATCH_SIZE = 200; // hotels per API request
@@ -12,6 +14,13 @@ const MAX_CALLS_PER_BATCH = 36; // API calls per chunk (then delay)
 const CALENDAR_DAYS = 360; // consecutive date pairs from today (check-in days 0..359)
 const DELAY_BETWEEN_CHUNKS_MS = 500;
 const UPSERT_CHUNK_SIZE = 2000; // rows per DB upsert to avoid statement timeouts
+
+/** Serialize 403 recovery so parallel chunk requests do not spawn amex-auth.py many times at once. */
+let amexRecoverChain: Promise<void> = Promise.resolve();
+function recoverFromAmex403Serialized(): Promise<void> {
+  amexRecoverChain = amexRecoverChain.then(() => recoverFromAmex403());
+  return amexRecoverChain;
+}
 
 const USAGE = `Usage: npx tsx scripts/amex-hotel-offers-cron.ts <nights> | update-hotel-only
   nights             Run full job: number of nights per stay (check-out = check-in + nights).
@@ -41,11 +50,6 @@ interface HotelOffer {
 interface AmExApiResponse {
   hotels: HotelOffer[];
 }
-
-/**
- * Uses shared getAmExBrowserHeaders (same as amex-hotel-calendar FHR). Includes Referer and
- * AMEX_COOKIE from env when set, which are required to avoid 403 from AmEx API.
- */
 
 /**
  * Fetch all hotel IDs from the hotel table
@@ -148,15 +152,33 @@ async function fetchHotelOffersBatch(
   }
 
   try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: getAmExBrowserHeaders(),
-    });
+    await ensureAmexCookieEnvFromStore();
+
+    const attemptRequest = async () => {
+      const { headers, headerPreset, headerVersion } = getAmExHeaderMeta();
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(
+          `[CRON] API error for batch ${checkIn}-${checkOut}: ${response.status} ${response.statusText} (amex_403?=${response.status === 403}, preset=${headerPreset}, ver=${headerVersion}, hotels=${hotelIds.length})`
+        );
+        if (!quiet) console.error(`[CRON] Error response: ${errorText.substring(0, 300)}...`);
+        return response;
+      }
+      return response;
+    };
+
+    let response = await attemptRequest();
+    if (response.status === 403) {
+      await recoverFromAmex403Serialized();
+      await new Promise((r) => setTimeout(r, 500));
+      response = await attemptRequest();
+    }
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[CRON] API error for batch ${checkIn}-${checkOut}: ${response.status} ${response.statusText}`);
-      if (!quiet) console.error(`[CRON] Error response: ${errorText.substring(0, 300)}...`);
       return [];
     }
 
@@ -324,6 +346,13 @@ async function runCronJob(nights: number, options: RunCronOptions = {}) {
   console.log(`[CRON] Starting AmEx hotel offers (multi-date calendar) job (nights=${nights})...`);
 
   try {
+    await ensureAmexCookieEnvFromStore();
+    if (!process.env.AMEX_COOKIE) {
+      console.warn(
+        '[CRON] No AMEX_COOKIE after env/Supabase – AmEx will likely return 403 until program.cookies for code=AMEX is populated or AMEX_COOKIE is set on the container.'
+      );
+    }
+
     if (!options.skipPurge) {
       const { deleted } = await purgeCalendarCacheByNights(nights);
       console.log(
@@ -454,7 +483,7 @@ if (require.main === module) {
         console.log('[CRON] Cron job finished successfully');
         process.exit(0);
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
         console.error('[CRON] Cron job failed:', error);
         process.exit(1);
       });
