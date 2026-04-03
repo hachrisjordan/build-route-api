@@ -36,14 +36,23 @@ from dotenv import load_dotenv
 from supabase import Client, create_client
 
 # Embedded JSON.parse('\\x5b\\x5b1,\\x5bnull,2510\\x5d,...\\x5bnull,3000\\x5d,\\x5bnull,3850\\x5d,3,')
+# Variants observed:
+# - Leading index is numeric and can vary (1,2,3,4,...)
+# - Early values can be negative (e.g. [3,[null,2200],[null,2100],[null,-101],[null,1750],[null,2750],3,...])
 META_BAND_HEX_ESCAPED = re.compile(
-    r"\\x5b\\x5b1,\\x5bnull,(\d+)\\x5d,\\x5bnull,(\d+)\\x5d,\\x5bnull,(\d+)\\x5d,"
-    r"\\x5bnull,(\d+)\\x5d,\\x5bnull,(\d+)\\x5d,3,"
+    r"\\x5b(?:\\x5b)?\d+,\\x5bnull,(-?\d+)\\x5d,\\x5bnull,(-?\d+)\\x5d,\\x5bnull,(-?\d+)\\x5d,"
+    r"\\x5bnull,(-?\d+)\\x5d,\\x5bnull,(-?\d+)\\x5d,3,"
 )
-# Same structure with normal brackets (AF_initDataCallback data: ...)
+# Same structure with normal brackets (AF_initDataCallback data: ...).
+# Accepts [[n,... and [n,... variants where n is numeric.
 META_BAND_PLAIN = re.compile(
-    r"\[\[1,\s*\[null,\s*(\d+)\],\s*\[null,\s*(\d+)\],\s*\[null,\s*(\d+)\],\s*"
-    r"\[null,\s*(\d+)\],\s*\[null,\s*(\d+)\],\s*3,",
+    r"\[(?:\[)?\d+,\s*\[null,\s*(-?\d+)\],\s*\[null,\s*(-?\d+)\],\s*\[null,\s*(-?\d+)\],\s*"
+    r"\[null,\s*(-?\d+)\],\s*\[null,\s*(-?\d+)\],\s*3,",
+)
+# Variant where the 3rd slot can be [] instead of [null,<n>], observed in DEN-BOG snapshots.
+META_BAND_PLAIN_EMPTY_THIRD = re.compile(
+    r"\[(?:\[)?\d+,\s*\[null,\s*-?\d+\],\s*\[null,\s*-?\d+\],\s*\[\],\s*"
+    r"\[null,\s*(-?\d+)\],\s*\[null,\s*(-?\d+)\],\s*3,",
 )
 
 DEFAULT_UA = (
@@ -125,16 +134,17 @@ def fetch_candidates(
     limit: int,
     origin_filter: Optional[str],
     destination_filter: Optional[str],
-    require_existing_minmax: bool,
+    override_existing_minmax: bool,
     airport_regions: Dict[str, str],
 ) -> List[RouteRow]:
     out: List[RouteRow] = []
+    effective_limit = limit if limit > 0 else 1_000_000_000
     page_size = 1000
     from_idx = 0
     o_f = origin_filter.upper() if origin_filter else None
     d_f = destination_filter.upper() if destination_filter else None
 
-    while len(out) < limit:
+    while len(out) < effective_limit:
         res = (
             sb.table("google_flights_explore_destination_prices")
             .select("id,origin_iata,destination_iata,roundtrip,price,cpm,min_price,max_price")
@@ -159,7 +169,8 @@ def fetch_candidates(
                 continue
             mn = _to_int(row.get("min_price"))
             mx = _to_int(row.get("max_price"))
-            if require_existing_minmax and (mn is None or mx is None):
+            # Default behavior: skip routes already processed with both min/max set.
+            if not override_existing_minmax and (mn is not None and mx is not None):
                 continue
             out.append(
                 RouteRow(
@@ -173,7 +184,7 @@ def fetch_candidates(
                     max_price=mx,
                 )
             )
-            if len(out) >= limit:
+            if len(out) >= effective_limit:
                 break
         if len(rows) < page_size:
             break
@@ -188,8 +199,8 @@ def build_search_url(origin: str, dest: str, roundtrip: str) -> str:
         trip = "round trip"
     else:
         trip = "one way"
-    # Match example: "Flights to YTZ from CGK business class one way"
-    q = f"Flights to {dest} from {origin} business class {trip}"
+    # Match requested format: "flights from SEA to EZE business class one way"
+    q = f"flights from {origin} to {dest} business class {trip}"
     return f"https://www.google.com/travel/flights?q={quote_plus(q)}&curr=USD"
 
 
@@ -199,6 +210,14 @@ def extract_price_band_usd(html: str) -> Optional[Tuple[int, int]]:
         if not m:
             continue
         low, high = int(m.group(4)), int(m.group(5))
+        if low > high:
+            low, high = high, low
+        if 100 <= low <= 200_000 and 100 <= high <= 200_000:
+            return low, high
+    # Fallback for datasets where the third bucket is an empty array: [..., [], [null,min], [null,max], 3, ...]
+    m2 = META_BAND_PLAIN_EMPTY_THIRD.search(html)
+    if m2:
+        low, high = int(m2.group(1)), int(m2.group(2))
         if low > high:
             low, high = high, low
         if 100 <= low <= 200_000 and 100 <= high <= 200_000:
@@ -308,14 +327,19 @@ def main(argv: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(
         description="Fetch Google Flights HTML and parse USD min/max band; update Supabase."
     )
-    parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Max rows to process. Default 0 = no limit (process all eligible rows).",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--origin", default="")
     parser.add_argument("--destination", default="")
     parser.add_argument(
-        "--baseline-existing-minmax-only",
+        "--override",
         action="store_true",
-        help="Only rows that already have min_price and max_price set.",
+        help="Include rows that already have min_price and max_price set.",
     )
     parser.add_argument("--timeout", type=int, default=45)
     parser.add_argument(
@@ -327,7 +351,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument(
         "--workers",
         type=int,
-        default=10,
+        default=50,
         help="Parallel fetch threads (each uses its own requests.Session).",
     )
     parser.add_argument(
@@ -370,10 +394,10 @@ def main(argv: Sequence[str]) -> int:
     regions = load_airport_region_map(sb)
     candidates = fetch_candidates(
         sb,
-        limit=max(1, args.limit),
+        limit=args.limit,
         origin_filter=args.origin.strip() or None,
         destination_filter=args.destination.strip() or None,
-        require_existing_minmax=args.baseline_existing_minmax_only,
+        override_existing_minmax=args.override,
         airport_regions=regions,
     )
 

@@ -43,6 +43,10 @@ RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel
 COPY requirements.txt ./
 RUN pip3 install --no-cache-dir -r requirements.txt
 
+# Ensure Python Playwright has its bundled browser binaries available.
+# (Node Playwright installs as well, but keeping this explicit prevents runtime "missing browser" issues.)
+RUN python3 -m playwright install chromium
+
 # Install additional Python packages for microservices
 RUN pip3 install --no-cache-dir \
     undetected-chromedriver \
