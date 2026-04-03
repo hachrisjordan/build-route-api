@@ -632,11 +632,19 @@ def explore(
             except Exception:
                 pass
 
-            # Explore page polls for more destinations over 1-3s intervals
-            # Wait until no new responses arrive for 5s
-            last_count = 0
+            # Wait up to 60s for the first Explore API capture. In some environments
+            # (consent/cookie flows, slower networks), the first matching response can be delayed.
+            first_capture_wait_s = 60
+            for _ in range(first_capture_wait_s):
+                if captured_responses:
+                    break
+                page.wait_for_timeout(1000)
+
+            # Preserve existing behavior after first capture (or timeout):
+            # poll briefly and stop once responses stabilize.
+            last_count = len(captured_responses)
             stable_ticks = 0
-            for _ in range(10):  # max 10s after networkidle
+            for _ in range(10):  # max 10s stabilization window
                 page.wait_for_timeout(1000)
                 if len(captured_responses) == last_count:
                     stable_ticks += 1
