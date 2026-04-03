@@ -21,6 +21,3 @@
 0 9,21 * * * /app/node_modules/.bin/tsx /app/scripts/fr24-airport-cron.ts >> /app/batch.log 2>&1
 0 9,21 * * * /app/node_modules/.bin/tsx /app/scripts/fr24-airport-cron.ts >> /app/batch.log 2>&1
 
-# Kells Google Flights Explore (hourly)
-# Uses Playwright interception to write destination-price rows + pairing status into Supabase.
-0 * * * * flock -n /tmp/google-flights-explore.lock -c 'cd /app && /opt/venv/bin/python3 scripts/gflights_explore.py ADD,AKL,AMM,AMS,ARN,ATH,ATL,AUH,AUS,BAH,BER,BEY,BKK,BNA,BNE,BOG,BOM,BOS,BRU,CAI,CAN,CDG,CEB,CGK,CKG,CMB,CMN,CPH,CPT,CTS,DEL,DEN,DFW,DOH,DTW,DUB,DUS,DXB,EWR,EZE,FCO,FLL,FRA,GIG,GRU,GVA,HAM,HAN,HEL,HGH,HKG,HND,HNL,IAD,IAH,ICN,IST,JED,JNB,JFK,KEF,KUL,LAS,LAX,LGW,LHR,LIM,LIN,LIS,MAD,MCO,MEL,MEX,MIA,MNL,MSP,MSY,MUC,NBO,NRT,ORD,OSL,OTP,PDX,PEK,PER,PHL,PHX,PKX,PMI,PTY,PVG,RDU,RSW,RUH,SAN,SCL,SEA,SFO,SGN,SHA,SIN,SJU,SKG,SLC,STR,SYD,SZX,TFU,TLV,TPA,TPE,VIE,WAW,XMN,YUL,YVR,YYZ,ZAG,ZRH business --quiet --supabase >> /app/google-flights-calendar.log 2>&1'
