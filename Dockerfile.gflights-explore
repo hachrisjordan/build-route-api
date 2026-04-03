@@ -35,13 +35,13 @@ RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 ENV VIRTUAL_ENV="/opt/venv"
 
-RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel
+RUN /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel
 
 COPY requirements.txt ./
 
 # Main app requirements + Playwright for Kells gflights_explore
-RUN pip3 install --no-cache-dir -r requirements.txt \
-  && pip3 install --no-cache-dir \
+RUN /opt/venv/bin/pip install --no-cache-dir -r requirements.txt \
+  && /opt/venv/bin/pip install --no-cache-dir \
     "playwright>=1.40" \
     undetected-chromedriver \
     selenium \
@@ -51,7 +51,8 @@ RUN pip3 install --no-cache-dir -r requirements.txt \
     flask
 
 # Download Chromium binaries used by playwright.
-RUN python3 -m playwright install chromium
+RUN /opt/venv/bin/python3 -c "import playwright; print('playwright-import-ok')"
+RUN /opt/venv/bin/python3 -m playwright install chromium
 
 # Copy only the scripts needed for the hourly job.
 COPY scripts/gflights_explore.py scripts/gflights_explore_rerun_from_status.py scripts/ogfiles.py ./scripts/
